@@ -1,0 +1,66 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.token
+*.secret
+*.secrets
+secrets/
+credentials/
+.local/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Node / frontend if added later
+node_modules/
+.next/
+dist/
+build/
+
+# Local artifacts
+data/
+outputs/
+artifacts/
+tmp/
+temp/
+*.mp4
+*.mov
+*.wav
+*.mp3
+*.ass
+*.srt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent private runtime data
+.agents/runs/
+.agents/logs/
+.agents/tmp/
+.agents/cache/
+.agents/memory/
+.agents/secrets/
+.agents/artifacts/
+.agents/*.json
+.agents/*.log
