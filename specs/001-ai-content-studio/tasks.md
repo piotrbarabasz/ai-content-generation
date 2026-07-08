@@ -2,7 +2,7 @@
 
 ## Phase 1: Repository foundation
 
-- [ ] T001 Repository scaffold and documentation index
+- [X] T001 Repository scaffold and documentation index
 Goal: Create the top-level project skeleton and a README that explains the MVP scope, repo layout, and where to find the design sources.
 Files to create or modify: `README.md`, `backend/`, `backend/app/`, `backend/tests/`, `docs/INDEX.md`
 Dependencies: None
@@ -11,7 +11,7 @@ Test requirements: None.
 Parallelizable: no
 Notes: Include references to `docs/spec-kit/00-product-context.md`, `docs/spec-kit/01-source-repo-synthesis.md`, `docs/spec-kit/02-domain-model-draft.md`, `docs/spec-kit/03-module-contracts-draft.md`, `docs/spec-kit/04-workflow-presets-draft.md`, `docs/spec-kit/05-mvp-boundary.md`, `docs/source-repo-insights/shorts/repo-modular-pipeline-insights.md`, `docs/source-repo-insights/shorts/repo-product-insights.md`, `docs/source-repo-insights/long-form/repo-modular-pipeline-insights.md`, and `docs/source-repo-insights/long-form/repo-product-insights.md`.
 
-- [ ] T002 Add Python project tooling and test conventions
+- [X] T002 Add Python project tooling and test conventions
 Goal: Define the Python 3.11 development baseline, dependency management, linting, formatting, and pytest configuration.
 Files to create or modify: `pyproject.toml`, `pytest.ini`, `.gitignore`, `backend/requirements.txt`
 Dependencies: T001
@@ -20,7 +20,7 @@ Test requirements: None.
 Parallelizable: yes
 Notes: Keep the setup minimal and compatible with backend-first development.
 
-- [ ] T003 Create package and test skeletons
+- [X] T003 Create package and test skeletons
 Goal: Add importable package markers and shared test scaffolding so future modules can be implemented without path hacks.
 Files to create or modify: `backend/app/__init__.py`, `backend/app/api/__init__.py`, `backend/app/domain/__init__.py`, `backend/app/modules/__init__.py`, `backend/app/providers/__init__.py`, `backend/app/storage/__init__.py`, `backend/app/workflow/__init__.py`, `backend/tests/conftest.py`
 Dependencies: T001
@@ -31,7 +31,7 @@ Notes: Keep the package layout aligned with the implementation plan in `specs/00
 
 ## Phase 2: Domain models
 
-- [ ] T004 Implement shared domain primitives
+- [X] T004 Implement shared domain primitives
 Goal: Define the common enums, IDs, timestamps, statuses, and base model helpers used by the feature domain.
 Files to create or modify: `backend/app/domain/base.py`, `backend/app/domain/enums.py`, `backend/app/domain/types.py`
 Dependencies: T003
@@ -40,7 +40,7 @@ Test requirements: Add basic unit coverage later in Phase 10 for enum and type b
 Parallelizable: yes
 Notes: Keep these primitives independent of the workflow engine and storage layer.
 
-- [ ] T005 Implement project and configuration domain models
+- [X] T005 Implement project and configuration domain models
 Goal: Create the core project-level models for project setup and workflow configuration.
 Files to create or modify: `backend/app/domain/project.py`, `backend/app/domain/content_brief.py`, `backend/app/domain/workflow_config.py`, `backend/app/domain/provider_config.py`
 Dependencies: T004
@@ -204,7 +204,7 @@ Notes: Call out what is reused, what is refactored, and what stays out of scope 
 
 ## Phase 12: Remediation - workflow config, providers and security
 
-- [ ] T021 Implement canonical WorkflowConfig schema and enum validation
+- [X] T021 Implement canonical WorkflowConfig schema and enum validation
 Goal: Freeze the WorkflowConfig schema and reject invalid enum values, enabled/disabled module conflicts and invalid preset/content-type combinations.
 Files to create or modify: `backend/app/domain/workflow_config.py`, `backend/app/domain/enums.py`, `backend/app/api/schemas.py`
 Dependencies: T005, T014
@@ -231,7 +231,7 @@ Test requirements: Add tests for missing provider, invalid provider type, disabl
 Parallelizable: no
 Notes: Fail fast before any module writes artifacts.
 
-- [ ] T024 Add security and secret hygiene foundation
+- [X] T024 Add security and secret hygiene foundation
 Goal: Make provider secret handling, runtime artifacts and sample env files explicit and safe.
 Files to create or modify: `.gitignore`, `.env.example`, `README.md`
 Dependencies: T001, T002
