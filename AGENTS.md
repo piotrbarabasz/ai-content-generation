@@ -8,6 +8,9 @@ These instructions govern repository work performed through the project-scoped C
 - `plan.md`, `data-model.md`, `contracts/**`, `research.md`, and `quickstart.md` in the active feature directory are the technical sources of truth.
 - `tasks.md` is the implementation queue, not proof that a dependency exists in code.
 - `.specify/memory/constitution.md` governs architecture and delivery decisions.
+- `.specify/workstreams/` contains static milestone and epic manifests. The
+  local `.specify/runtime/active-epic` file selects the current epic and is
+  ignored runtime state, not a tracked source of truth.
 - A specification or other Spec Kit artifact must not be modified without an explicit task package that authorizes the exact file and change. In the standard implementation loop, the programmer and debugger must never modify Spec Kit artifacts.
 
 ## Starting the implementation loop
@@ -21,6 +24,34 @@ $speckit-loop T006
 
 - `$speckit-loop next` selects one unchecked task only after declared dependencies and actual repository evidence show that it is ready.
 - `$speckit-loop T###` validates and processes only that exact unchecked task.
+- Before baseline capture, the loop must run the read-only active-epic branch
+  guard: `python -m backend.app.tooling.workstream_validation --guard <selector>`.
+- The guard never creates or switches branches and never commits, pushes,
+  changes manifests, or writes runtime state.
+
+To prepare an epic locally, use `$speckit-epic-start E###`. This workflow may
+create or switch only the declared epic branch after confirming that the
+repository is clean, the local base branch exists, the epic is `active`, and
+all epic dependencies are `completed`. It must not fetch, pull, rebase, merge,
+push, commit, create a PR, reset a branch, or modify workstream manifests.
+It may write only the ignored `.specify/runtime/active-epic` selector. If the
+working tree is dirty or the epic is not active, it must stop and report the
+exact paths or required human manifest change.
+
+To review the complete active epic before a pull request, use
+`$speckit-epic-review`. The review is strictly read-only, runs only manifest
+`required_checks`, and must inspect task evidence, the full branch diff,
+commits, acceptance criteria, architecture invariants, security and scope
+drift. It never creates a PR or performs commit, push, merge, deploy, fetch,
+pull, rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
+`SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
+LLM review remains required.
+
+To prepare an epic pull request, use `$speckit-epic-pr`. It requires an already
+reviewed, clean, pushed epic branch and may create only a draft PR. It must not
+push, merge, enable auto-merge, change branch protection, update epic status, or
+create a PR when any gate is missing; in that case it returns ready-to-copy PR
+title and body instead.
 - `$speckit-implement` is the bounded implementation worker used by `spec_programmer` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
 - Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T###` invocation.
 - Review failures may use no more than two repair cycles. A second failed review ends the run without closure.

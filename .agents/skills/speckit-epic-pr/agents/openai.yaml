@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Kit Epic PR"
+  short_description: "Prepare a draft PR safely"
+  default_prompt: "Prepare the active epic draft PR metadata and create only a draft PR when all safety gates pass."

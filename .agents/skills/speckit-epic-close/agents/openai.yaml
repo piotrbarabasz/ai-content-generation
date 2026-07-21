@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Kit Epic Close"
+  short_description: "Close a merged epic safely"
+  default_prompt: "Close the specified epic only after verifying merge evidence, completed tasks, and base branch history."

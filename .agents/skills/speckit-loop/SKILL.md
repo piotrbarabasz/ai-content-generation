@@ -68,7 +68,29 @@ If any mandatory checklist has unchecked items:
 
 Continue only when every mandatory checklist is complete.
 
-## 4. Capture the pre-loop baseline
+## 4. Validate the active epic and branch guard
+
+Before capturing the baseline or invoking any agent, run:
+
+```powershell
+python -m backend.app.tooling.workstream_validation --guard <selector>
+```
+
+The guard reads `.specify/runtime/active-epic`, the matching manifest under
+`.specify/workstreams/`, and the current branch. It must stop when the active
+epic or manifest is missing, the epic is not `active`, the branch is `master`
+or `main`, the branch does not match the manifest, a dependency is not
+`completed`, or the selected task is outside the active epic. Errors must show
+the active epic, expected branch, current branch, selector, exact reason, and
+a safe next step.
+
+The guard is read-only: it never creates or switches branches, commits,
+pushes, changes manifests, or writes runtime state. A successful guard is
+required before baseline capture. `next` may consider only unchecked tasks in
+the active epic; an explicit `T###` must belong to that epic. The one-task
+per-run and closer-only completion rules remain unchanged.
+
+## 5. Capture the pre-loop baseline
 
 Before invoking the first agent, run and retain the exact output of:
 
@@ -86,7 +108,7 @@ Also expand untracked directories with `git ls-files --others --exclude-standard
 
 Preserve raw command output and the expanded path inventory. Earlier unrelated changes do not fail the loop by themselves. Include them in every manager and reviewer handoff. If implementation or validation needs a path that was dirty at baseline, stop before implementation. No agent may overwrite, absorb, normalize, revert, or claim ownership of that path.
 
-## 5. Select and explore one task
+## 6. Select and explore one task
 
 Invoke only direct configured subagents; `max_depth = 1` means subagents must not spawn other subagents.
 
@@ -146,7 +168,7 @@ COMPLETION_POLICY
 
 Make implementation and test allowlists exact and minimal. List the selected `tasks.md` only under `ALLOWED_BOOKKEEPING_FILES`, and reserve it exclusively for `spec_closer`. It must remain forbidden to programmer and debugger. Stop if an allowed implementation or test path conflicts with the baseline.
 
-## 6. Implement the package
+## 7. Implement the package
 
 Give `spec_programmer` only the final package plus the relevant `$speckit-implement` instruction.
 
@@ -162,7 +184,7 @@ Require the programmer to:
 - refrain from commit, push, merge, force-push, release, and deployment;
 - stop after this task and return the `$speckit-implement` report.
 
-## 7. Debug and validate
+## 8. Debug and validate
 
 Give `spec_debugger` the package and programmer report. Run only package-approved commands, task-focused first and broader checks second. Commands may include, when supported by the repository and selected by the manager:
 
@@ -175,7 +197,7 @@ git diff --check
 
 Do not require `ruff` unless repository configuration proves it is available. Do not make real provider calls or network requests. Require the debugger to report every command, exit status, and result. Permit only minimal fixes in the implementation and test allowlists; stop on baseline conflicts, forbidden paths, or broader required changes.
 
-## 8. Review independently
+## 9. Review independently
 
 Give `spec_reviewer`:
 
@@ -201,7 +223,7 @@ SAFE_TO_CLOSE: yes | no
 
 Accept `SAFE_TO_CLOSE: yes` only with `VERDICT: PASS`.
 
-## 9. Bound repair handling
+## 10. Bound repair handling
 
 On `FAIL`, return the verdict to `spec_manager` for classification:
 
@@ -210,7 +232,7 @@ On `FAIL`, return the verdict to `spec_manager` for classification:
 
 Keep repairs inside the original package, serialize write-capable roles, rerun the package validation needed for changed code, and invoke `spec_reviewer` again. Count each FAIL handling pass as a repair cycle. Allow no more than two repair cycles. When the second review failure is reached, stop without another repair, do not invoke closer, do not edit `tasks.md`, and report blockers plus the latest validation results.
 
-## 10. Close only after PASS
+## 11. Close only after PASS
 
 Invoke `spec_closer` only when the reviewer returned both:
 
@@ -223,7 +245,7 @@ Give closer only the exact task ID, the correct `tasks.md` path, the complete re
 
 After closer finishes, invoke `spec_manager` for a read-only verification and final summary confirming that only the expected checkbox token changed, no other task was marked, task text stayed identical, and no next task started. If verification fails, report failure; do not attempt unrelated repair.
 
-## 11. Report and stop
+## 12. Report and stop
 
 End with:
 

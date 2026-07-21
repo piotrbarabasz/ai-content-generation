@@ -55,6 +55,7 @@ temp/
 Thumbs.db
 
 # Agent private runtime data
+.specify/runtime/
 .agents/runs/
 .agents/logs/
 .agents/tmp/

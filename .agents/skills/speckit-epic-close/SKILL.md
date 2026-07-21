@@ -1,0 +1,96 @@
+---
+name: speckit-epic-close
+description: Perform bookkeeping-only closure of one Spec Kit epic after independently verifying its merged PR, completed tasks, and inclusion in the base branch history.
+---
+
+# Spec Kit Epic Close
+
+Run `$speckit-epic-close E###` from the repository root. This workflow is
+bookkeeping only and must not merge, close a PR, delete a branch, modify tasks,
+or perform unrelated changes.
+
+## Preconditions
+
+1. Accept only an exact uppercase `E###` argument. Otherwise stop with:
+
+   ```text
+   Usage:
+     $speckit-epic-close E001
+   ```
+2. Read `.specify/runtime/active-epic`, the selected epic manifest, and its
+   milestone manifest. Require the runtime selector to match the selected epic.
+3. Run:
+
+   ```powershell
+   python -m backend.app.tooling.workstream_validation
+   ```
+
+   Stop before writes if manifest validation fails.
+4. Capture working-tree evidence with:
+
+   ```powershell
+   git status --short
+   git diff --name-only
+   git diff --cached --name-only
+   git ls-files --others --exclude-standard
+   ```
+
+   Stop if there are unrelated changes. Do not reset, stash, stage, normalize,
+   or overwrite anything.
+5. Require epic status `active` or `review`, every listed task checked, and
+   task evidence consistent with the epic. Never modify task checkboxes.
+
+## Merge evidence
+
+Do not trust a user statement that the PR was merged. Prefer authoritative PR
+metadata when a configured GitHub integration is available and confirm the PR
+state is `merged` with the expected head and base. Otherwise verify local Git
+history with read-only commands:
+
+```powershell
+git branch --show-current
+git merge-base --is-ancestor <epic_head> <base_branch>
+git log --oneline --first-parent <base_branch>
+```
+
+The selected epic HEAD must be part of the base branch history. A branch merely
+existing, a PR being closed, or a local diff being empty is not merge evidence.
+If the evidence is unavailable or contradictory, stop without edits.
+
+## Bookkeeping procedure
+
+After all preconditions pass:
+
+1. Change only the selected epic manifest `status` from `active` or `review` to
+   `completed`.
+2. Evaluate the milestone. Change its status only when every listed epic has
+   status `completed` and every `completion_criteria` item is supported by
+   evidence. Otherwise leave it unchanged.
+3. Show the exact manifest diff and verify no task or unrelated file changed.
+4. Remove `.specify/runtime/active-epic` only when it contains the selected
+   epic ID. Do not remove the runtime directory or any other runtime file.
+5. Never delete the local or remote branch automatically. Never close or merge
+   the PR. Never push, fetch, pull, rebase, or change branch protection.
+
+Use the existing `validate_close_preconditions` helper where practical. The
+close operation remains root-orchestrated and deterministic; no new agent is
+needed for bookkeeping.
+
+## Required report
+
+Return exactly:
+
+```text
+EPIC_ID:
+EPIC_STATUS:
+MILESTONE_ID:
+MILESTONE_STATUS:
+MERGE_EVIDENCE:
+MANIFEST_FILES_CHANGED:
+ACTIVE_EPIC_CLEARED:
+BRANCH_DELETED: no
+```
+
+If blocked, report the exact reason and safe next step in `MERGE_EVIDENCE`,
+leave manifests and runtime state unchanged, and set
+`MANIFEST_FILES_CHANGED: none` and `ACTIVE_EPIC_CLEARED: no.

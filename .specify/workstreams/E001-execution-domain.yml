@@ -1,0 +1,27 @@
+id: E001
+title: Execution Domain
+milestone: M001
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E001-execution-domain
+status: active
+risk: medium
+depends_on: []
+tasks:
+  - T001
+  - T002
+  - T003
+  - T004
+  - T005
+  - T006
+required_checks:
+  - python -m pytest
+  - git diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

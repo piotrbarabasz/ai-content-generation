@@ -1,0 +1,34 @@
+id: E006
+title: Integration and Quality
+milestone: M001
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E006-tests-quality
+status: planned
+risk: medium
+depends_on:
+  - E002
+  - E003
+  - E004
+  - E005
+tasks:
+  - T017
+  - T018
+  - T019
+  - T039
+  - T040
+  - T041
+  - T042
+  - T043
+  - T044
+required_checks:
+  - python -m pytest
+  - git diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

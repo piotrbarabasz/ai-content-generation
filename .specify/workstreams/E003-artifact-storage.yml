@@ -1,0 +1,28 @@
+id: E003
+title: Artifact Storage
+milestone: M001
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E003-artifact-storage
+status: planned
+risk: high
+depends_on:
+  - E001
+tasks:
+  - T009
+  - T010
+  - T021
+  - T022
+  - T023
+  - T024
+required_checks:
+  - python -m pytest
+  - git diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

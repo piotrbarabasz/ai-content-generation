@@ -16,6 +16,7 @@ The first implementation slice establishes the backend foundation, domain models
 - `docs/spec-kit/` - product, domain, module and preset source documents
 - `docs/source-repo-insights/` - source repository analysis for shorts and long-form pipelines
 - `specs/001-ai-content-studio/` - active feature specification, plan and tasks
+- `.specify/workstreams/` - milestone and epic manifests grouping feature tasks
 
 ## Local Setup
 
@@ -50,6 +51,23 @@ $speckit-loop T006
 ```
 
 The task is closed only after the reviewer returns `PASS` and confirms it is safe to close. The loop never starts another task automatically and does not commit, push or deploy changes. Review the complete diff and validation results before making any manual commit.
+
+Delivery hierarchy is milestone → epic → task → commit: an epic groups tasks on one branch and into one pull request, while each task remains an independent `$speckit-loop` run and a human-controlled commit.
+
+Before running `$speckit-loop`, place the active epic ID (for example `E001`)
+in the local ignored file `.specify/runtime/active-epic` and check out the branch
+declared by that epic manifest. The loop validates this context before baseline
+capture and never creates or switches branches.
+
+After all tasks in an epic are complete, run `$speckit-epic-review` for a
+read-only review of the full epic diff, commits, tests, acceptance criteria,
+security and scope. It reports whether a human may create the PR; it never
+creates, merges or pushes one.
+
+When the reviewed epic branch is already pushed, `$speckit-epic-pr` can create
+only a draft PR after all safety gates pass. It never pushes, merges, enables
+auto-merge or changes epic status; otherwise it prepares title and body for
+manual use.
 
 ## Design References
 

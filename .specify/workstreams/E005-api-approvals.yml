@@ -1,0 +1,24 @@
+id: E005
+title: API and Approvals
+milestone: M001
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E005-api-approvals
+status: planned
+risk: high
+depends_on:
+  - E004
+tasks:
+  - T037
+  - T038
+required_checks:
+  - python -m pytest
+  - git diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

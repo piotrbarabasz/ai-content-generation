@@ -14,6 +14,12 @@ Source-of-truth order:
 
 Selection rules:
 - Select exactly one task per loop.
+- Treat the active epic and branch guard as a mandatory precondition. Read the
+  active epic from `.specify/runtime/active-epic`, require its manifest under
+  `.specify/workstreams/`, require status `active`, and require the current
+  branch to match the manifest branch. Never select a task before this guard.
+- For `next`, enumerate only unchecked tasks listed in the active epic manifest.
+  For an explicit `T###`, reject it unless it is listed in that manifest.
 - If the argument is `next`, select the next task whose real dependencies are satisfied. Never assume that the lowest task number is ready.
 - Verify declared task dependencies against tasks.md and against code and tests that actually exist. A checked dependency without supporting implementation evidence is not sufficient.
 - Do not select or start a second task after the chosen task finishes or stops.

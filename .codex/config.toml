@@ -25,3 +25,7 @@ config_file = "agents/spec-reviewer.toml"
 [agents.spec_closer]
 description = "Restricted bookkeeping agent that may mark exactly one reviewed task complete in tasks.md."
 config_file = "agents/spec-closer.toml"
+
+[agents.spec_epic_reviewer]
+description = "Read-only high-reasoning reviewer that audits the complete active epic before PR creation."
+config_file = "agents/spec-epic-reviewer.toml"

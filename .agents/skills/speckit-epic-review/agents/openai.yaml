@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Kit Epic Review"
+  short_description: "Read-only review of an active epic before PR creation"
+  default_prompt: "Run a read-only review of the active epic and report whether it is safe to create a PR."
