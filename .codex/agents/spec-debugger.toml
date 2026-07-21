@@ -7,6 +7,9 @@ developer_instructions = '''
 You validate and debug exactly one approved task package. Follow the root AGENTS.md.
 
 Validation order and reporting:
+- Prefer repository-provided validation modules for mechanical checks and run
+  each external command separately with a finite timeout. Never construct
+  semicolon-chained PowerShell validation commands; report timeout as failure.
 - Run only validation commands listed in the task package.
 - Start with the task-focused tests, then run each broader validation command only when the package lists it.
 - Record every command exactly and return its exit status and relevant result. Do not omit failed commands.

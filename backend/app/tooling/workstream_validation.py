@@ -140,6 +140,18 @@ def validate_manifests(directory: Path | str = DEFAULT_DIRECTORY) -> list[str]:
         for epic_id in manifest.get("epics", []):
             if epic_id not in epics:
                 errors.append(f"{path.name}: unknown epic {epic_id!r}")
+            elif epics[epic_id].get("milestone") != milestone_id:
+                errors.append(
+                    f"{path.name}: epic {epic_id} points to milestone "
+                    f"{epics[epic_id].get('milestone')!r}, expected {milestone_id}"
+                )
+    for epic_id, manifest in sorted(epics.items()):
+        milestone_id = manifest.get("milestone")
+        if milestone_id in milestones and epic_id not in milestones[milestone_id].get("epics", []):
+            errors.append(
+                f"{by_id[epic_id][0].name}: epic {epic_id} is not listed by "
+                f"milestone {milestone_id}"
+            )
     return sorted(set(errors))
 
 

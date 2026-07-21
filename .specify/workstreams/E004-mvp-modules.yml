@@ -1,6 +1,6 @@
 id: E004
 title: MVP Modules and Presets
-milestone: M001
+milestone: M002
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E004-mvp-modules

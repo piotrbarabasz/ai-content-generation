@@ -1,6 +1,6 @@
 id: E005
 title: API and Approvals
-milestone: M001
+milestone: M002
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E005-api-approvals

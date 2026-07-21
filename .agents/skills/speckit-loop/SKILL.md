@@ -74,6 +74,7 @@ Before capturing the baseline or invoking any agent, run:
 
 ```powershell
 python -m backend.app.tooling.workstream_validation --guard <selector>
+python -m backend.app.tooling.repository_checks --mode preflight
 ```
 
 The guard reads `.specify/runtime/active-epic`, the matching manifest under
@@ -89,6 +90,11 @@ pushes, changes manifests, or writes runtime state. A successful guard is
 required before baseline capture. `next` may consider only unchecked tasks in
 the active epic; an explicit `T###` must belong to that epic. The one-task
 per-run and closer-only completion rules remain unchanged.
+
+Use repository-provided validation modules for mechanical checks. Agents MUST
+NOT build semicolon-chained PowerShell validation commands. Run each external
+command separately with a finite timeout; a timeout is a structured failure and
+must not trigger an indefinite wait or automatic retry.
 
 ## 5. Capture the pre-loop baseline
 

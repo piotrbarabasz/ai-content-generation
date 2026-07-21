@@ -54,30 +54,30 @@ Milestone: M001
 Epic: E001
 Risk: medium
 Implementation files: `backend/app/domain/base.py`, `backend/app/domain/enums.py`, `backend/app/domain/types.py`
-Test files: `backend/tests/unit/test_t004.py`
+Test files: none
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Define the common enums, IDs, timestamps, statuses, and base model helpers used by the feature domain.
 Dependencies: T003
 Acceptance criteria: Shared domain primitives exist and can be reused by all entity models without duplicate status definitions.
-Test requirements: Add direct unit coverage for enum and type behavior in this task.
+Test requirements: Original completion evidence covered the implementation and repository validation; direct behavioral coverage is explicitly provided by remediation task T045.
 Parallelizable: yes
-Notes: Keep these primitives independent of the workflow engine and storage layer.
+Notes: Keep these primitives independent of the workflow engine and storage layer. Original completion evidence was the implemented domain primitive files, repository validation, and the passing task review; dedicated direct tests are added separately in T045.
 
 - [X] T005 Implement project and configuration domain models
 Milestone: M001
 Epic: E001
 Risk: medium
 Implementation files: `backend/app/domain/project.py`, `backend/app/domain/content_brief.py`, `backend/app/domain/workflow_config.py`, `backend/app/domain/provider_config.py`
-Test files: `backend/tests/unit/test_t005.py`
+Test files: none
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Create the core project-level models for project setup and workflow configuration.
 Dependencies: T004
 Acceptance criteria: `Project`, `ContentBrief`, `WorkflowConfig`, and `ProviderConfig` validate the required fields from the spec and data model.
-Test requirements: Add direct model validation tests in this task.
+Test requirements: Original completion evidence covered the implementation and repository validation; direct behavioral coverage is explicitly provided by remediation task T046.
 Parallelizable: no
-Notes: Keep workflow config generic enough to support enabled and disabled modules plus provider selection.
+Notes: Keep workflow config generic enough to support enabled and disabled modules plus provider selection. Original completion evidence was the implemented project/configuration model files, repository validation, and the passing task review; dedicated direct tests are added separately in T046.
 
 - [ ] T006 Implement run, artifact, and output domain models
 Milestone: M001
@@ -88,9 +88,9 @@ Test files: `backend/tests/unit/test_t006.py`
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Create the execution and output models used by the workflow engine and export path.
-Dependencies: T004, T005
+Dependencies: T004, T005, T045, T046
 Acceptance criteria: The run and output models capture workflow status, artifact references, and the distinct narrative/render concepts required by the MVP.
-Test requirements: Add model and serialization tests later in Phase 10.
+Test requirements: Add direct model construction, validation, and serialization tests in this task, including artifact references and the NarrativeSegment versus RenderScene distinction.
 Parallelizable: no
 Notes: Add artifact reference fields to `WorkflowRun` and `GenerationJob` here so later storage work does not need a second data model refactor.
 
@@ -205,7 +205,7 @@ Final PR review required: yes
 Goal: Create the Short Video preset and Long-form Script + Voiceover preset with explicit module lists and default configuration.
 Dependencies: T005, T006, T008, T011, T012
 Acceptance criteria: Each preset declares content type, genre defaults, duration defaults, required modules, optional modules, default provider config, and expected artifacts.
-Test requirements: Add preset tests later in Phase 10.
+Test requirements: Add direct tests for preset declarations, defaults, module lists, provider configuration, and expected artifacts in this task. Cross-preset registration and API smoke coverage remains in T019.
 Parallelizable: no
 Notes: Keep preset definitions declarative so they can be reused by API and tests.
 
@@ -222,7 +222,7 @@ Final PR review required: yes
 Goal: Add the FastAPI application entrypoint and request/response schemas for projects, workflow configs, workflow runs, artifacts, and export bundles.
 Dependencies: T003, T005, T006, T009, T010
 Acceptance criteria: The API layer has importable shared schemas and an application object that can be started without extra glue code.
-Test requirements: Add API smoke tests later in Phase 10.
+Test requirements: Add direct schema validation and application-construction tests in this task. End-to-end API smoke coverage remains in T019.
 Parallelizable: no
 Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily.
 
@@ -237,7 +237,7 @@ Final PR review required: yes
 Goal: Expose create project, get project, create workflow config, start workflow run, get workflow run status, list artifacts, and export bundle endpoints.
 Dependencies: T014, T013
 Acceptance criteria: The API can create and retrieve project data, start a workflow run, inspect run status, list artifacts, and request an export bundle.
-Test requirements: Add endpoint smoke tests later in Phase 10.
+Test requirements: Add direct route behavior tests for request validation, project/configuration/run handlers, and artifact/export responses in this task. Full API smoke coverage remains in T019.
 Parallelizable: no
 Notes: Avoid making the CLI the only usable interface.
 
@@ -254,7 +254,7 @@ Final PR review required: yes
 Goal: Implement approval checkpoints, approval decisions and allowed state transitions.
 Dependencies: T006, T008, T015
 Acceptance criteria: Approval checkpoints support not_required, pending, approved, rejected, changes_requested and skipped states; rejection preserves artifacts and records an approval decision.
-Test requirements: Add approval-state tests later in Phase 10.
+Test requirements: Add direct approval model and state-transition tests in this task. Cross-workflow pause/resume and API approval coverage remains in T041.
 Parallelizable: no
 Notes: Keep approval simplified for MVP, but model it explicitly in the workflow state.
 
@@ -312,7 +312,7 @@ Milestone: M001
 Epic: E004
 Risk: high
 Implementation files: `docs/migration/shorts-repo-migration-plan.md`, `docs/migration/long-form-repo-migration-plan.md`
-Test files: `none` (documentation or configuration validation is covered by the repository checks)
+Test files: `none`
 Validation commands: `git diff --check`
 Final PR review required: yes
 Goal: Create migration plans that map the shorts and long-form repositories into the unified AI Content Studio architecture.
@@ -374,7 +374,7 @@ Milestone: M001
 Epic: E003
 Risk: high
 Implementation files: `.gitignore`, `.env.example`, `README.md`
-Test files: `none` (documentation or configuration validation is covered by the repository checks)
+Test files: `backend/tests/static/test_secret_hygiene.py`
 Validation commands: `git diff --check`
 Final PR review required: yes
 Goal: Make provider secret handling, runtime artifacts and sample env files explicit and safe.
@@ -691,3 +691,35 @@ Acceptance criteria: Tests cover transient retry, required module failure, optio
 Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Static secret checks should be narrow to avoid false positives.
+
+## Phase 17: Remediation - direct domain tests
+
+- [ ] T045 Add direct tests for shared domain primitives
+Milestone: M001
+Epic: E001
+Risk: medium
+Implementation files: none
+Test files: `backend/tests/unit/test_t045_domain_primitives.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t045_domain_primitives.py`; `git diff --check`
+Final PR review required: yes
+Goal: Add direct behavioral coverage for shared domain primitives without changing their implementation.
+Dependencies: T004
+Acceptance criteria: Tests cover real enum behavior, type behavior, base model validation, and serialization rather than import-only checks.
+Test requirements: These are the direct behavioral test cases for this task.
+Parallelizable: yes
+Notes: This remediation task supplies the direct evidence that was not part of the original T004 completion package.
+
+- [ ] T046 Add direct tests for project and configuration domain models
+Milestone: M001
+Epic: E001
+Risk: medium
+Implementation files: none
+Test files: `backend/tests/unit/test_t046_project_config_models.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t046_project_config_models.py`; `git diff --check`
+Final PR review required: yes
+Goal: Add direct behavioral coverage for project and configuration domain models without changing their implementation.
+Dependencies: T005, T045
+Acceptance criteria: Tests cover valid models, missing required fields, invalid values, serialization, configuration validation, and the absence of duplicated status definitions.
+Test requirements: These are the direct behavioral test cases for this task.
+Parallelizable: yes
+Notes: This remediation task supplies the direct evidence that was not part of the original T005 completion package.

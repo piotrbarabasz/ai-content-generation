@@ -1,0 +1,10 @@
+id: M003
+title: Integration and Quality
+status: planned
+goal: Validate complete workflows and cross-cutting quality, security, and regression behavior.
+epics:
+  - E006
+completion_criteria:
+  - Cross-task integration and full workflow scenarios pass deterministically.
+  - Export, approval, provider, retry, and secret-hygiene regressions are covered.
+  - The final epic review confirms scope, security, and test evidence.

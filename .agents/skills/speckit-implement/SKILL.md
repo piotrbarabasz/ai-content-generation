@@ -70,6 +70,10 @@ Report the blocking condition and stop if any check fails. Never overwrite, reve
 
 ## Validation
 
+Use repository-provided validation modules for mechanical checks. Do not build
+semicolon-chained PowerShell validation commands. Run each external command
+separately with a finite timeout; report timeout as a structured failure.
+
 Run only applicable commands from `VALIDATION_COMMANDS`, beginning with task-focused checks. Do not invent an unconfigured linter or broaden validation beyond the package. Record each exact command, exit status, and result. A failing command may be diagnosed, but any fix must remain inside the same allowlists and acceptance criteria.
 
 Stop when a fix needs wider scope, a forbidden path, or a baseline-dirty path. Leave systematic post-implementation validation to `spec_debugger` when the handoff requires it.

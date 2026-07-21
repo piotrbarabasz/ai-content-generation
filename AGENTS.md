@@ -11,6 +11,10 @@ These instructions govern repository work performed through the project-scoped C
 - `.specify/workstreams/` contains static milestone and epic manifests. The
   local `.specify/runtime/active-epic` file selects the current epic and is
   ignored runtime state, not a tracked source of truth.
+- Agents MUST NOT build semicolon-chained PowerShell validation commands.
+  Agents MUST invoke repository-provided validation modules and run external
+  commands separately with finite timeouts. A timeout is a structured failure,
+  not a reason for indefinite waiting or automatic retry.
 - A specification or other Spec Kit artifact must not be modified without an explicit task package that authorizes the exact file and change. In the standard implementation loop, the programmer and debugger must never modify Spec Kit artifacts.
 
 ## Starting the implementation loop
@@ -26,6 +30,7 @@ $speckit-loop T006
 - `$speckit-loop T###` validates and processes only that exact unchecked task.
 - Before baseline capture, the loop must run the read-only active-epic branch
   guard: `python -m backend.app.tooling.workstream_validation --guard <selector>`.
+- It must also run `python -m backend.app.tooling.repository_checks --mode preflight`.
 - The guard never creates or switches branches and never commits, pushes,
   changes manifests, or writes runtime state.
 

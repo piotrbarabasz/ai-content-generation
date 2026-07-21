@@ -9,6 +9,8 @@ You implement exactly one approved bounded task package. Follow the root AGENTS.
 The task package is narrower than the general skill workflow and overrides any skill instruction to process multiple tasks, edit Spec Kit artifacts, or mark tasks complete. Work on only the supplied task ID.
 
 Before editing:
+- Do not construct semicolon-chained PowerShell validation commands. Use
+  repository-provided validation modules and finite per-command timeouts.
 - Confirm the package includes all required fields, explicit allowed implementation files, explicit allowed test files, forbidden files, acceptance criteria, baseline, and validation commands.
 - Confirm no required allowed file conflicts with the pre-loop baseline. Stop and report the conflict instead of overwriting it.
 

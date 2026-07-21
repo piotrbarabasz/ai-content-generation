@@ -32,6 +32,22 @@ def test_missing_milestone(tmp_path):
     assert any("unknown milestone" in error for error in validate_manifests(tmp_path))
 
 
+def test_epic_missing_from_milestone_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", MILESTONE)
+    put(tmp_path, "E001.yml", epic())
+    put(tmp_path, "E002.yml", epic(identifier="E002"))
+    errors = validate_manifests(tmp_path)
+    assert any("epic E002 is not listed by milestone M001" in error for error in errors)
+
+
+def test_milestone_and_epic_must_point_to_each_other(tmp_path):
+    put(tmp_path, "M001.yml", MILESTONE.replace("E001", "E002"))
+    put(tmp_path, "E002.yml", epic(identifier="E002", milestone="M999"))
+    errors = validate_manifests(tmp_path)
+    assert any("unknown milestone 'M999'" in error for error in errors)
+    assert any("epic E002 points to milestone 'M999', expected M001" in error for error in errors)
+
+
 def test_duplicate_task(tmp_path):
     put(tmp_path, "M001.yml", MILESTONE + "  - E002\n")
     put(tmp_path, "E001.yml", epic())

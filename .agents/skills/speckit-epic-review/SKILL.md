@@ -18,6 +18,7 @@ modify code, tasks, manifests, runtime state, or Git history.
 
    ```powershell
    python -m backend.app.tooling.workstream_validation
+   python -m backend.app.tooling.repository_checks --mode pre-review --json
    ```
 
    Include validation failures in `BLOCKING_ISSUES` and continue collecting
@@ -30,12 +31,8 @@ modify code, tasks, manifests, runtime state, or Git history.
    current branch is wrong, is `master`/`main`, or the base branch is absent.
 5. Inspect, without changing anything:
 
-   ```powershell
-   git status --short
-   git diff --name-only <base_branch>...<epic_branch>
-   git diff <base_branch>...<epic_branch>
-   git log --oneline <base_branch>..<epic_branch>
-   ```
+   Use `repository_checks --mode pre-review` for mechanical checks. Fetch any
+   full diff separately, file by file or only for the task allowlist.
 
    If the repository is dirty, distinguish pre-existing changes from epic
    changes and report relevant baseline conflicts. Never stash, reset, stage,

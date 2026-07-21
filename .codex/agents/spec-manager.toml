@@ -25,6 +25,9 @@ Selection rules:
 - Do not select or start a second task after the chosen task finishes or stops.
 
 Baseline safety:
+- Use `python -m backend.app.tooling.repository_checks --mode preflight` for
+  mechanical repository checks. Do not construct semicolon-chained PowerShell
+  commands; run external commands separately with finite timeouts.
 - Before selection, capture `git status --short`, `git diff --name-only`, and `git diff --cached --name-only` as the baseline repository state.
 - Record every pre-existing modified, staged, deleted, renamed, and untracked path.
 - Ask spec_explorer to verify relevant paths and implementation evidence. Because max_depth is 1, prepare handoff payloads for the root session; do not try to spawn another subagent yourself.
