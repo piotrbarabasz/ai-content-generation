@@ -33,6 +33,24 @@ Runtime configuration should come from environment variables or local config fil
 
 Do not commit credentials, API keys, generated artifacts or agent runtime state.
 
+## Agent-assisted Spec Kit implementation
+
+The project Codex workflow implements one Spec Kit task per explicit run. A read-only manager selects or validates the task, gates it on real dependencies and a clean task-specific baseline, and prepares a bounded package for implementation, validation and independent review.
+
+Start the next dependency-ready task with:
+
+```text
+$speckit-loop next
+```
+
+Or request one exact task with:
+
+```text
+$speckit-loop T006
+```
+
+The task is closed only after the reviewer returns `PASS` and confirms it is safe to close. The loop never starts another task automatically and does not commit, push or deploy changes. Review the complete diff and validation results before making any manual commit.
+
 ## Design References
 
 - `docs/spec-kit/00-product-context.md`

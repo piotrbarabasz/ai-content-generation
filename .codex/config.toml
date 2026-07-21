@@ -1,0 +1,27 @@
+[agents]
+max_threads = 4
+max_depth = 1
+
+[agents.spec_manager]
+description = "Read-only coordinator that selects one ready Spec Kit task, builds the bounded task package, and controls handoffs."
+config_file = "agents/spec-manager.toml"
+
+[agents.spec_explorer]
+description = "Read-only repository explorer that verifies dependencies, paths, tests, validation commands, and baseline conflicts."
+config_file = "agents/spec-explorer.toml"
+
+[agents.spec_programmer]
+description = "Implementation agent that applies the smallest change for exactly one approved task package."
+config_file = "agents/spec-programmer.toml"
+
+[agents.spec_debugger]
+description = "Validation and debugging agent that runs only approved commands and makes minimal in-scope fixes."
+config_file = "agents/spec-debugger.toml"
+
+[agents.spec_reviewer]
+description = "Independent read-only reviewer that compares one implementation with its task package and baseline."
+config_file = "agents/spec-reviewer.toml"
+
+[agents.spec_closer]
+description = "Restricted bookkeeping agent that may mark exactly one reviewed task complete in tasks.md."
+config_file = "agents/spec-closer.toml"
