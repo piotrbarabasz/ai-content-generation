@@ -27,6 +27,7 @@ def test_merged_merge_commit_uses_github_metadata():
     assert result.valid is True
     assert result.strategy == "github_pr_metadata"
     assert result.squash_supported is True
+    assert result.rebase_supported is True
     assert result.local_fallback is False
 
 
@@ -43,6 +44,7 @@ def test_merged_rebase_uses_github_metadata():
     assert result.valid is True
     assert result.strategy == "github_pr_metadata"
     assert result.squash_supported is True
+    assert result.rebase_supported is True
 
 
 def test_merged_squash_uses_github_metadata_even_if_local_history_is_unavailable():
@@ -59,6 +61,7 @@ def test_merged_squash_uses_github_metadata_even_if_local_history_is_unavailable
     assert result.valid is True
     assert result.strategy == "github_pr_metadata"
     assert result.squash_supported is True
+    assert result.rebase_supported is True
     assert result.local_fallback is False
 
 
@@ -147,7 +150,9 @@ def test_local_ancestry_pass_uses_fallback():
     assert result.valid is True
     assert result.strategy == "local_ancestry"
     assert result.squash_supported is False
+    assert result.rebase_supported is False
     assert result.local_fallback is True
+    assert result.details["history_kind"] == "merge_commit"
     assert calls == [
         ["git", "merge-base", "--is-ancestor", "a" * 40, "master"],
         ["git", "log", "--oneline", "--first-parent", "master"],
@@ -179,4 +184,5 @@ def test_local_ancestry_fail_rejects_squash_like_history():
     assert result.valid is False
     assert result.strategy == "local_ancestry"
     assert result.squash_supported is False
+    assert result.rebase_supported is False
     assert any("squash merges cannot be proven" in reason for reason in result.reasons)

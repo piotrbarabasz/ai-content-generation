@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 from app.tooling import workstream_validation
@@ -8,22 +9,29 @@ from app.tooling.workstream_validation import (
     validate_active_epic,
     validate_close_preconditions,
     validate_manifests,
+    validate_task_epic_consistency,
 )
 
 
 ROOT = Path(__file__).resolve().parents[4]
+FEATURE_PATH = "specs/001-ai-content-studio"
 
 
 def put(directory, name, text):
     (directory / name).write_text(text, encoding="utf-8")
 
 
-def task_block(identifier="T001", epic_id="E001", dependencies="None"):
+def task_block(identifier="T001", epic_id="E001", milestone_id="M001", dependencies="None"):
     return (
         f"- [ ] {identifier} Task\n"
+        f"Milestone: {milestone_id}\n"
         f"Epic: {epic_id}\n"
         f"Dependencies: {dependencies}\n"
     )
+
+
+def task_consistency_block(identifier="T001", epic_id="E001", milestone_id="M001", dependencies="None"):
+    return task_block(identifier, epic_id, milestone_id, dependencies)
 
 
 def milestone(
@@ -48,6 +56,11 @@ def milestone(
     )
 
 
+def _write_workstreams(directory: Path, manifests: dict[str, str]) -> None:
+    for name, text in manifests.items():
+        put(directory, name, text)
+
+
 def epic(
     identifier="E001",
     milestone_id="M001",
@@ -59,6 +72,8 @@ def epic(
     dependency="",
     pr_policy=None,
     commit_policy=None,
+    feature=FEATURE_PATH,
+    required_checks=None,
 ):
     if tasks is None:
         tasks = ["T001"]
@@ -75,18 +90,20 @@ def epic(
             "commit_requires_human": True,
             "auto_commit": False,
         }
+    if required_checks is None:
+        required_checks = ["python -m pytest", "git --no-pager diff --check"]
 
     manifest = {
         "id": identifier,
         "title": "Test epic",
         "milestone": milestone_id,
-        "feature": "specs/001-ai-content-studio",
+        "feature": feature,
         "base_branch": base,
         "branch": branch,
         "status": status,
         "risk": risk,
         "depends_on": depends_on,
-        "required_checks": ["python -m pytest"],
+        "required_checks": required_checks,
         "pr_policy": pr_policy,
         "commit_policy": commit_policy,
     }
@@ -95,6 +112,32 @@ def epic(
         return yaml.safe_dump(manifest, sort_keys=False) + tasks_block
     manifest["tasks"] = tasks
     return yaml.safe_dump(manifest, sort_keys=False)
+
+
+def _patch_repo_root(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(workstream_validation, "ROOT", tmp_path)
+    monkeypatch.setattr(workstream_validation, "DEFAULT_DIRECTORY", tmp_path / ".specify" / "workstreams")
+    monkeypatch.setattr(workstream_validation, "ACTIVE_EPIC_FILE", tmp_path / ".specify" / "runtime" / "active-epic")
+    monkeypatch.setattr(workstream_validation, "TASKS_FILE", tmp_path / "specs" / "001-ai-content-studio" / "tasks.md")
+
+
+def _create_feature_tree(
+    tmp_path: Path,
+    *,
+    include_spec: bool = True,
+    include_plan: bool = True,
+    include_tasks: bool = True,
+    feature: str = FEATURE_PATH,
+) -> Path:
+    feature_dir = tmp_path / feature
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    if include_spec:
+        (feature_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    if include_plan:
+        (feature_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    if include_tasks:
+        (feature_dir / "tasks.md").write_text("- [ ] T001 Task\n", encoding="utf-8")
+    return feature_dir
 
 
 def test_valid_milestone_and_epic(tmp_path):
@@ -207,6 +250,52 @@ def test_valid_policies_are_accepted(tmp_path):
     assert validate_manifests(tmp_path) == []
 
 
+def test_feature_validation_accepts_existing_feature(tmp_path, monkeypatch):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _create_feature_tree(tmp_path)
+    put(workstreams, "M001.yml", milestone())
+    put(tmp_path, "workstreams/E001.yml", epic())
+    _patch_repo_root(monkeypatch, tmp_path)
+    assert validate_manifests(workstreams) == []
+
+
+def test_feature_validation_rejects_missing_feature_directory(tmp_path, monkeypatch):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    put(workstreams, "M001.yml", milestone())
+    put(workstreams, "E001.yml", epic())
+    _patch_repo_root(monkeypatch, tmp_path)
+    errors = validate_manifests(workstreams)
+    assert any("feature directory does not exist" in error for error in errors)
+
+
+def test_feature_validation_rejects_path_traversal(tmp_path, monkeypatch):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _create_feature_tree(tmp_path)
+    put(workstreams, "M001.yml", milestone())
+    put(
+        workstreams,
+        "E001.yml",
+        epic(feature="../specs/001-ai-content-studio"),
+    )
+    _patch_repo_root(monkeypatch, tmp_path)
+    errors = validate_manifests(workstreams)
+    assert any("feature must be 'specs/001-ai-content-studio'" in error for error in errors)
+
+
+def test_feature_validation_rejects_missing_spec_md(tmp_path, monkeypatch):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _create_feature_tree(tmp_path, include_spec=False)
+    put(workstreams, "M001.yml", milestone())
+    put(workstreams, "E001.yml", epic())
+    _patch_repo_root(monkeypatch, tmp_path)
+    errors = validate_manifests(workstreams)
+    assert any("missing spec.md" in error for error in errors)
+
+
 def test_missing_policies_are_invalid(tmp_path):
     put(tmp_path, "M001.yml", milestone())
     put(
@@ -249,6 +338,72 @@ def test_missing_policy_field_is_invalid(tmp_path):
     )
     errors = validate_manifests(tmp_path)
     assert any("pr_policy missing required field auto_merge" in error for error in errors)
+
+
+def test_required_checks_as_string_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks="python -m pytest"))
+    errors = validate_manifests(tmp_path)
+    assert any("required_checks must be a list" in error for error in errors)
+
+
+def test_required_checks_empty_list_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=[]))
+    errors = validate_manifests(tmp_path)
+    assert any("required_checks must be a non-empty list" in error for error in errors)
+
+
+def test_required_checks_empty_element_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=[""]))
+    errors = validate_manifests(tmp_path)
+    assert any("must be a non-empty string" in error for error in errors)
+
+
+def test_required_checks_duplicate_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=["python -m pytest", "python -m pytest"]))
+    errors = validate_manifests(tmp_path)
+    assert any("duplicate command" in error for error in errors)
+
+
+def test_required_checks_semicolon_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=["python -m pytest; git status"]))
+    errors = validate_manifests(tmp_path)
+    assert any("forbidden shell operator" in error for error in errors)
+
+
+def test_required_checks_double_ampersand_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=["python -m pytest && git status"]))
+    errors = validate_manifests(tmp_path)
+    assert any("forbidden shell operator" in error for error in errors)
+
+
+def test_required_checks_pipe_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=["python -m pytest | tee output.txt"]))
+    errors = validate_manifests(tmp_path)
+    assert any("forbidden shell operator" in error for error in errors)
+
+
+def test_required_checks_forbidden_git_command_is_invalid(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(tmp_path, "E001.yml", epic(required_checks=["git push origin main"]))
+    errors = validate_manifests(tmp_path)
+    assert any("forbidden git command" in error for error in errors)
+
+
+def test_required_checks_valid_pytest_and_git_diff_check(tmp_path):
+    put(tmp_path, "M001.yml", milestone())
+    put(
+        tmp_path,
+        "E001.yml",
+        epic(required_checks=["python -m pytest", "git --no-pager diff --check"]),
+    )
+    assert validate_manifests(tmp_path) == []
 
 
 def test_policy_with_bad_type_is_invalid(tmp_path):
@@ -560,6 +715,129 @@ def test_guard_rejects_uncompleted_dependency(tmp_path, monkeypatch):
     assert any("dependency E001 is not completed" in error for error in errors)
 
 
+def test_task_epic_consistency_accepts_matching_repo(tmp_path, monkeypatch):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    runtime = tmp_path / "active-epic"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001",), completion=("Tests pass",)),
+            "M002.yml": milestone(identifier="M002", epics=("E002",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T001"]),
+            "E002.yml": epic(identifier="E002", milestone_id="M002", tasks=["T002"]),
+        },
+    )
+    tasks.write_text(
+        task_consistency_block("T001", "E001", "M001")
+        + "\n"
+        + task_consistency_block("T002", "E002", "M002"),
+        encoding="utf-8",
+    )
+    runtime.write_text("E001\n", encoding="utf-8")
+    monkeypatch.setattr(
+        workstream_validation.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"stdout": "epic/E001\n", "returncode": 0})(),
+    )
+    assert validate_task_epic_consistency(tasks, workstreams) == []
+    assert workstream_validation.validate_guard("next", runtime, workstreams, tasks) == []
+
+
+def test_task_epic_consistency_reports_wrong_milestone(tmp_path):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T001"]),
+        },
+    )
+    tasks.write_text(task_consistency_block("T001", "E001", "M002"), encoding="utf-8")
+    errors = validate_task_epic_consistency(tasks, workstreams)
+    assert any("task.Milestone does not match the epic milestone" in error for error in errors)
+
+
+def test_task_epic_consistency_reports_wrong_epic(tmp_path):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001", "E002"), completion=("Tests pass",)),
+            "M002.yml": milestone(identifier="M002", epics=("E002",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T001"]),
+            "E002.yml": epic(identifier="E002", milestone_id="M002", tasks=["T002"]),
+        },
+    )
+    tasks.write_text(task_consistency_block("T001", "E002", "M001"), encoding="utf-8")
+    errors = validate_task_epic_consistency(tasks, workstreams)
+    assert any("listed in the wrong epic manifest" in error for error in errors)
+
+
+def test_task_epic_consistency_reports_task_omitted_from_manifest_and_missing_task(tmp_path):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T999"]),
+        },
+    )
+    tasks.write_text(task_consistency_block("T001", "E001", "M001"), encoding="utf-8")
+    errors = validate_task_epic_consistency(tasks, workstreams)
+    assert any("omitted from all epic manifests" in error for error in errors)
+    assert any("not listed by its epic manifest" in error for error in errors)
+    assert any("manifest references a task that does not exist in tasks.md" in error for error in errors)
+
+
+def test_task_epic_consistency_reports_multiple_manifest_ownership(tmp_path):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001", "E002"), completion=("Tests pass",)),
+            "M002.yml": milestone(identifier="M002", epics=("E002",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T001"]),
+            "E002.yml": epic(identifier="E002", milestone_id="M002", tasks=["T001"]),
+        },
+    )
+    tasks.write_text(task_consistency_block("T001", "E001", "M001"), encoding="utf-8")
+    errors = validate_task_epic_consistency(tasks, workstreams)
+    assert any("present in multiple epic manifests" in error for error in errors)
+
+
+def test_task_epic_consistency_reports_unknown_epic_and_milestone(tmp_path):
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    tasks = tmp_path / "tasks.md"
+    _write_workstreams(
+        workstreams,
+        {
+            "M001.yml": milestone(identifier="M001", epics=("E001",), completion=("Tests pass",)),
+            "E001.yml": epic(identifier="E001", milestone_id="M001", tasks=["T002"]),
+        },
+    )
+    tasks.write_text(task_consistency_block("T001", "E999", "M999"), encoding="utf-8")
+    errors = validate_task_epic_consistency(tasks, workstreams)
+    assert any("unknown epic" in error for error in errors)
+    assert any("unknown milestone" in error for error in errors)
+
+
 def test_close_rejects_unmerged_epic():
     errors = validate_close_preconditions("review", False, True, False)
     assert "merge evidence is required before closing the epic" in errors
+
+
+def test_workstream_validation_import_smoke():
+    from app.tooling import workstream_validation as imported_module
+
+    assert imported_module.validate_manifests is workstream_validation.validate_manifests

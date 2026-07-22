@@ -1,5 +1,7 @@
 # AI Content Studio
 
+[![agent-system-validation](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/agent-system-validation.yml/badge.svg?branch=master)](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/agent-system-validation.yml)
+
 AI Content Studio is a Python-first modular workflow engine for AI-assisted content production. The MVP focuses on two workflows:
 
 - Short Video (`short_video`)
@@ -23,7 +25,8 @@ The first implementation slice establishes the backend foundation, domain models
 Use Python 3.11 or newer.
 
 ```powershell
-py -3 -m unittest discover -s backend/tests
+py -3 -m pip install -r backend/requirements.txt
+py -3 -m pytest backend/tests
 ```
 
 The tests are written with `unittest` and are also pytest-discoverable once pytest is installed.

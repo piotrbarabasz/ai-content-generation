@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .task_consistency import format_finding, validate_consistency
 from .workstream_validation import _load_yaml_manifest as _load_workstream_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -148,12 +149,7 @@ def _field_value(lines: list[tuple[int, str]], field_name: str) -> tuple[int, st
 
 
 def _format_findings(findings: list[dict[str, Any]]) -> list[str]:
-    formatted: list[str] = []
-    for finding in findings:
-        formatted.append(
-            f"{finding['path']}:{finding['line']} {finding['task']} {finding['phrase']} - {finding['reason']}"
-        )
-    return formatted
+    return [format_finding(finding) for finding in findings]
 
 
 def _report_task_line(findings: list[dict[str, Any]], path: Path, line_number: int, task: str, phrase: str, reason: str) -> None:
@@ -164,6 +160,32 @@ def _parse_dependency_list(value: str) -> list[str]:
     if _is_none_value(value):
         return []
     return [dependency.strip().strip("`") for dependency in value.split(",") if dependency.strip()]
+
+
+def _build_relevant_tasks(records: dict[str, dict[str, Any]], selected: set[str] | None) -> set[str] | None:
+    if not selected:
+        return None
+    relevant: set[str] = set(selected)
+    queue = list(selected)
+    while queue:
+        current = queue.pop()
+        record = records.get(current)
+        if record is None:
+            continue
+        for dependency in record["dependencies"]:
+            if dependency not in relevant:
+                relevant.add(dependency)
+                queue.append(dependency)
+    return relevant
+
+
+def _finding_in_scope(finding: dict[str, Any], relevant_tasks: set[str] | None) -> bool:
+    if relevant_tasks is None:
+        return True
+    task = finding.get("task")
+    if not task:
+        return True
+    return str(task) in relevant_tasks
 
 
 def _load_epic_dependencies(directory: Path) -> tuple[dict[str, list[str]], list[dict[str, Any]]]:
@@ -188,9 +210,36 @@ def _load_epic_dependencies(directory: Path) -> tuple[dict[str, list[str]], list
             continue
         identifier = manifest.get("id")
         if isinstance(identifier, str) and re.fullmatch(r"E\d{3}", identifier):
-            depends_on = [dependency for dependency in manifest.get("depends_on", []) if isinstance(dependency, str)]
+            depends_on = [dependency for dependency in (manifest.get("depends_on") or []) if isinstance(dependency, str)]
             epic_dependencies[identifier] = depends_on
     return epic_dependencies, findings
+
+
+def _load_epic_milestones(directory: Path) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    epic_milestones: dict[str, str] = {}
+    findings: list[dict[str, Any]] = []
+    if not directory.is_dir():
+        findings.append(
+            {
+                "path": str(directory),
+                "line": 0,
+                "task": "",
+                "phrase": "",
+                "reason": f"missing workstreams directory: {directory}",
+            }
+        )
+        return epic_milestones, findings
+    for path in sorted(directory.glob("*.yml")):
+        try:
+            manifest = _load_workstream_manifest(path)
+        except (OSError, ValueError) as exc:
+            findings.append({"path": str(path), "line": 0, "task": "", "phrase": "", "reason": str(exc)})
+            continue
+        identifier = manifest.get("id")
+        milestone = manifest.get("milestone")
+        if isinstance(identifier, str) and re.fullmatch(r"E\d{3}", identifier) and isinstance(milestone, str):
+            epic_milestones[identifier] = milestone
+    return epic_milestones, findings
 
 
 def _epic_reaches(epic_dependencies: dict[str, list[str]], source: str, target: str) -> bool:
@@ -223,6 +272,7 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
         ]
     selected = {task.strip() for task in (tasks or []) if task.strip()}
     records: dict[str, dict[str, Any]] = {}
+    findings.extend(validate_consistency(TASKS_FILE, WORKSTREAMS_DIR))
     with TASKS_FILE.open(encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, 1):
             line = raw_line.rstrip("\n")
@@ -243,8 +293,6 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
                 _report_task_line(findings, TASKS_FILE, line_number, task_id, task_id, "invalid task ID")
 
     for task_id, start_line, lines in _iter_task_blocks(TASKS_FILE):
-        if selected and task_id not in selected:
-            continue
         header = lines[0][1]
         if not TASK_HEADER_PATTERN.match(header):
             _report_task_line(findings, TASKS_FILE, start_line, task_id, "", "invalid task header")
@@ -322,6 +370,8 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
         records[task_id] = {
             "task_id": task_id,
             "start_line": start_line,
+            "milestone": milestone[1].strip() if milestone else "",
+            "milestone_line": milestone[0] if milestone else start_line,
             "epic": epic[1].strip() if epic else "",
             "epic_line": epic[0] if epic else start_line,
             "dependencies": _parse_dependency_list(dependencies[1]) if dependencies else [],
@@ -330,14 +380,44 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
 
     epic_dependencies, manifest_findings = _load_epic_dependencies(WORKSTREAMS_DIR)
     findings.extend(manifest_findings)
+    epic_milestones, milestone_findings = _load_epic_milestones(WORKSTREAMS_DIR)
+    findings.extend(milestone_findings)
+    relevant_tasks = _build_relevant_tasks(records, selected)
+
+    if selected:
+        for task_id in sorted(selected - records.keys()):
+            _report_task_line(
+                findings,
+                TASKS_FILE,
+                0,
+                task_id,
+                task_id,
+                "unknown task selector",
+            )
+
+    for task_id, record in records.items():
+        source_epic = record["epic"]
+        if not source_epic:
+            continue
+        expected_milestone = epic_milestones.get(source_epic)
+        task_milestone = record["milestone"]
+        if expected_milestone is None or not task_milestone:
+            continue
+        if task_milestone != expected_milestone:
+            _report_task_line(
+                findings,
+                TASKS_FILE,
+                record["milestone_line"],
+                task_id,
+                task_milestone,
+                f"milestone {task_milestone} does not match epic {source_epic} milestone {expected_milestone}",
+            )
 
     graph: dict[str, list[str]] = {}
     for task_id, record in records.items():
         graph[task_id] = [dependency for dependency in record["dependencies"] if dependency in records]
 
     for task_id, record in records.items():
-        if selected and task_id not in selected:
-            continue
         source_epic = record["epic"]
         if not source_epic:
             continue
@@ -410,6 +490,9 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
 
     for task_id in sorted(graph):
         visit(task_id)
+
+    if relevant_tasks is not None:
+        findings = [finding for finding in findings if _finding_in_scope(finding, relevant_tasks)]
 
     return findings
 

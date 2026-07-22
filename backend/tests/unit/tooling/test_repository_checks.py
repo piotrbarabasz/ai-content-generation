@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
@@ -13,8 +15,260 @@ def _write_workstream(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _full_task_block(identifier: str, epic_id: str, milestone_id: str, implementation: str, test_file: str, dependencies: str = "None") -> str:
+    return (
+        f"- [ ] {identifier} Implement task\n"
+        f"Milestone: {milestone_id}\n"
+        f"Epic: {epic_id}\n"
+        "Risk: low\n"
+        f"Implementation files: {implementation}\n"
+        f"Test files: {test_file}\n"
+        f"Dependencies: {dependencies}\n"
+        "Validation commands: python -m pytest\n"
+        "Acceptance criteria: behavior\n"
+        "Test requirements: Add direct tests.\n"
+    )
+
+
+def _full_milestone(identifier: str, epics: list[str]) -> str:
+    epics_text = "".join(f"  - {epic}\n" for epic in epics)
+    return (
+        f"id: {identifier}\n"
+        f"title: Milestone {identifier}\n"
+        "status: planned\n"
+        "goal: goal\n"
+        "epics:\n"
+        f"{epics_text}"
+        "completion_criteria:\n"
+        "  - Tests pass\n"
+    )
+
+
+def _full_epic(identifier: str, milestone_id: str, tasks: list[str], depends_on: list[str] | None = None) -> str:
+    if depends_on is None:
+        depends_on = []
+    depends_text = "".join(f"  - {epic}\n" for epic in depends_on)
+    tasks_text = "".join(f"  - {task}\n" for task in tasks)
+    return (
+        f"id: {identifier}\n"
+        f"title: Epic {identifier}\n"
+        f"milestone: {milestone_id}\n"
+        "feature: specs/001-ai-content-studio\n"
+        "base_branch: master\n"
+        f"branch: epic/{identifier}\n"
+        "status: planned\n"
+        "risk: low\n"
+        "depends_on:\n"
+        f"{depends_text}"
+        "tasks:\n"
+        f"{tasks_text}"
+        "required_checks:\n"
+        "  - python -m pytest\n"
+        "pr_policy:\n"
+        "  one_pr_per_epic: true\n"
+        "  merge_requires_human: true\n"
+        "  auto_merge: false\n"
+        "commit_policy:\n"
+        "  one_commit_per_task: true\n"
+        "  commit_requires_human: true\n"
+        "  auto_commit: false\n"
+    )
+
+
 def test_current_task_metadata_is_clean():
     assert checks.task_metadata() == []
+
+
+def test_task_metadata_filter_t006_with_valid_dependencies(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T004", "E001", "M001", "backend/app/domain/base.py", "backend/tests/unit/test_t004.py")
+        + "\n"
+        + _full_task_block("T005", "E001", "M001", "backend/app/domain/project.py", "backend/tests/unit/test_t005.py")
+        + "\n"
+        + _full_task_block("T045", "E001", "M001", "backend/tests/unit/test_t045_domain_primitives.py", "backend/tests/unit/test_t045_domain_primitives.py")
+        + "\n"
+        + _full_task_block("T046", "E001", "M001", "backend/tests/unit/test_t046_project_config_models.py", "backend/tests/unit/test_t046_project_config_models.py")
+        + "\n"
+        + _full_task_block("T006", "E001", "M001", "backend/app/domain/workflow_run.py", "backend/tests/unit/test_t006.py", "T004, T005, T045, T046"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T004", "T005", "T045", "T046", "T006"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    assert checks.task_metadata(["T006"]) == []
+
+
+def test_task_metadata_filter_reports_unknown_dependency_for_selected_task(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T006", "E001", "M001", "backend/app/domain/workflow_run.py", "backend/tests/unit/test_t006.py", "T004"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T006"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata(["T006"])
+    assert any(finding["task"] == "T006" for finding in findings)
+    assert any("unknown dependency task" in finding["reason"] for finding in findings)
+
+
+def test_task_metadata_filter_keeps_selected_task_cycle(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T006", "E001", "M001", "backend/app/domain/workflow_run.py", "backend/tests/unit/test_t006.py", "T004")
+        + "\n"
+        + _full_task_block("T004", "E001", "M001", "backend/app/domain/base.py", "backend/tests/unit/test_t004.py", "T006"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T006", "T004"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata(["T006"])
+    assert any("task dependency cycle" in finding["reason"] for finding in findings)
+    assert any(finding["task"] in {"T004", "T006"} for finding in findings)
+
+
+def test_task_metadata_filter_hides_unrelated_task_errors(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T006", "E001", "M001", "backend/app/domain/workflow_run.py", "backend/tests/unit/test_t006.py")
+        + "\n"
+        + _full_task_block("T001", "E002", "M002", "backend/app/modules/brief.py", "backend/tests/unit/test_t001.py", "T999"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "M002.yml", _full_milestone("M002", ["E002"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T006"]))
+    _write_workstream(workstreams / "E002.yml", _full_epic("E002", "M002", ["T001"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata(["T006"])
+    assert all(finding["task"] != "T001" for finding in findings)
+
+
+def test_task_metadata_filter_accepts_multiple_tasks(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T045", "E001", "M001", "backend/tests/unit/test_t045_domain_primitives.py", "backend/tests/unit/test_t045_domain_primitives.py")
+        + "\n"
+        + _full_task_block("T046", "E001", "M001", "backend/tests/unit/test_t046_project_config_models.py", "backend/tests/unit/test_t046_project_config_models.py"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T045", "T046"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    assert checks.task_metadata(["T045", "T046"]) == []
+
+
+def test_task_metadata_reports_unknown_selected_task(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T006", "E001", "M001", "backend/app/domain/workflow_run.py", "backend/tests/unit/test_t006.py"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T006"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata(["T999"])
+    assert any(finding["task"] == "T999" for finding in findings)
+    assert any("unknown task selector" in finding["reason"] for finding in findings)
+
+
+def test_task_metadata_accepts_full_valid_repo(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T001", "E001", "M001", "backend/app/modules/brief.py", "backend/tests/unit/test_t001.py")
+        + "\n"
+        + _full_task_block("T002", "E002", "M002", "backend/app/modules/voiceover.py", "backend/tests/unit/test_t002.py"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "M002.yml", _full_milestone("M002", ["E002"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T001"]))
+    _write_workstream(workstreams / "E002.yml", _full_epic("E002", "M002", ["T002"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    assert checks.task_metadata() == []
+
+
+def test_task_metadata_reports_structured_consistency_findings(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        _full_task_block("T001", "E001", "M002", "backend/app/modules/brief.py", "backend/tests/unit/test_t001.py"),
+    )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T001"]))
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata()
+    assert any(finding.get("check") == "Milestone" for finding in findings)
+    assert any(finding.get("expected") == "M001" and finding.get("actual") == "M002" for finding in findings)
+
+
+def test_task_metadata_reports_milestone_drift_from_epic_manifest(tmp_path, monkeypatch):
+    tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
+    _write_tasks(
+        tasks,
+        "- [ ] T011 Implement BriefModule\n"
+        "Milestone: M001\n"
+        "Epic: E004\n"
+        "Risk: high\n"
+        "Implementation files: backend/app/modules/brief.py\n"
+        "Test files: backend/tests/unit/test_t011.py\n"
+        "Dependencies: None\n"
+        "Validation commands: python -m pytest; git diff --check\n"
+        "Acceptance criteria: behavior\n"
+        "Test requirements: Add direct tests.\n",
+    )
+    _write_workstream(
+        workstreams / "E004.yml",
+        "id: E004\n"
+        "title: Epic Four\n"
+        "milestone: M002\n"
+        "feature: specs/001-ai-content-studio\n"
+        "base_branch: master\n"
+        "branch: epic/E004\n"
+        "status: planned\n"
+        "risk: high\n"
+        "depends_on:\n"
+        "  - E002\n"
+        "tasks:\n"
+        "  - T011\n"
+        "required_checks:\n"
+        "  - python -m pytest\n"
+        "pr_policy: human\n"
+        "commit_policy: human\n",
+    )
+    monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
+    findings = checks.task_metadata()
+    assert any(finding["task"] == "T011" for finding in findings)
+    assert any("milestone M001 does not match epic E004 milestone M002" in finding["reason"] for finding in findings)
 
 
 def test_missing_tasks_file_is_reported(tmp_path, monkeypatch):
@@ -34,6 +288,8 @@ def test_missing_tasks_file_is_reported(tmp_path, monkeypatch):
 
 def test_forbidden_deferred_test_phrase_is_reported(tmp_path, monkeypatch):
     tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
     _write_tasks(
         tasks,
         "- [ ] T001 Implement model\n"
@@ -47,7 +303,10 @@ def test_forbidden_deferred_test_phrase_is_reported(tmp_path, monkeypatch):
         "Validation commands: pytest\n"
         "Acceptance criteria: behavior\n",
     )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T001"]))
     monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
     findings = checks.task_metadata()
     assert any(finding["task"] == "T001" for finding in findings)
     assert any(finding["phrase"] == "tests later" for finding in findings)
@@ -55,6 +314,8 @@ def test_forbidden_deferred_test_phrase_is_reported(tmp_path, monkeypatch):
 
 def test_phase_ten_heading_alone_is_ignored(tmp_path, monkeypatch):
     tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
     _write_tasks(
         tasks,
         "- [ ] T001 Implement model\n"
@@ -69,12 +330,17 @@ def test_phase_ten_heading_alone_is_ignored(tmp_path, monkeypatch):
         "\n"
         "## Phase 10: Tests\n",
     )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T001"]))
     monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
     assert checks.task_metadata() == []
 
 
 def test_task_metadata_accepts_lettered_task_ids(tmp_path, monkeypatch):
     tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
     _write_tasks(
         tasks,
         "- [ ] T001 Implement model\n"
@@ -121,7 +387,10 @@ def test_task_metadata_accepts_lettered_task_ids(tmp_path, monkeypatch):
         "Acceptance criteria: behavior\n"
         "Test requirements: Add direct tests.\n",
     )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T001", "T999", "T006A", "T006Z"]))
     monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
     assert checks.task_metadata() == []
 
 
@@ -155,6 +424,8 @@ def test_task_filter_and_bounded_output(tmp_path, monkeypatch):
 
 def test_task_filter_accepts_lettered_task_id(tmp_path, monkeypatch):
     tasks = tmp_path / "tasks.md"
+    workstreams = tmp_path / "workstreams"
+    workstreams.mkdir()
     _write_tasks(
         tasks,
         "- [ ] T006A Lettered task\n"
@@ -168,7 +439,10 @@ def test_task_filter_accepts_lettered_task_id(tmp_path, monkeypatch):
         "Acceptance criteria: behavior\n"
         "Test requirements: Add direct tests.\n",
     )
+    _write_workstream(workstreams / "M001.yml", _full_milestone("M001", ["E001"]))
+    _write_workstream(workstreams / "E001.yml", _full_epic("E001", "M001", ["T006A"]))
     monkeypatch.setattr(checks, "TASKS_FILE", tasks)
+    monkeypatch.setattr(checks, "WORKSTREAMS_DIR", workstreams)
     assert checks.task_metadata(["T006A"]) == []
 
 

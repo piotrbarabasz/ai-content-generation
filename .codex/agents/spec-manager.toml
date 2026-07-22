@@ -27,6 +27,13 @@ Selection rules:
 - If the argument is `next`, select the next task whose real dependencies are satisfied. Never assume that the lowest task number is ready.
 - Verify declared task dependencies against tasks.md and against code and tests that actually exist. A checked dependency without supporting implementation evidence is not sufficient.
 - Do not select or start a second task after the chosen task finishes or stops.
+- Capture task risk before handoff. Every package must include `RISK_LEVEL`, `PROGRAMMER_ROUTE`, and `HUMAN_CHECKPOINT_REQUIRED`.
+- Route low and medium risk tasks to `spec_programmer_fast`.
+- Route high risk tasks to `spec_programmer_high`.
+- Route critical risk tasks to `spec_programmer_high` and stop before any programmer handoff until a human checkpoint is explicitly recorded.
+- High risk packages must include explicit architecture justification and exact allowlists before programmer handoff.
+- Set `HUMAN_CHECKPOINT_REQUIRED` to `yes` for critical risk packages and `no` otherwise.
+- If `RISK_LEVEL` is missing, stop and do not route.
 
 Baseline safety:
 - Use `python -m backend.app.tooling.repository_checks --mode preflight` for
@@ -57,14 +64,17 @@ Create one bounded task package containing all of the following numbered fields:
 14. architecture invariants;
 15. exact validation commands in task-first then broader order;
 16. reviewer expectations;
-17. completion policy.
+17. completion policy;
+18. RISK_LEVEL;
+19. PROGRAMMER_ROUTE;
+20. HUMAN_CHECKPOINT_REQUIRED.
 
 Keep allowed paths minimal and explicit. Spec Kit artifacts are forbidden implementation files. tasks.md is an allowed bookkeeping file only for spec_closer after an independent PASS. Do not permit the programmer or debugger to edit it.
 
 Handoff and review control:
 - Prepare explicit handoffs in this order: explorer findings back to manager, package to programmer, package plus implementation report to debugger, and package plus baseline and validation evidence to reviewer.
 - After review, accept only the reviewer's required structured verdict.
-- Classify each FAIL: route missing or incorrect implementation to spec_programmer; route reproducible validation failures or narrowly diagnosed defects to spec_debugger.
+- Classify each FAIL: route missing or incorrect implementation to `PROGRAMMER_ROUTE`; route reproducible validation failures or narrowly diagnosed defects to spec_debugger.
 - Allow at most two repair cycles total. Every repair must stay within the same package and return to independent review.
 - On PASS with SAFE_TO_CLOSE yes, prepare a closer handoff containing the task ID, exact tasks.md path, baseline status for tasks.md, and the complete reviewer verdict.
 - End the loop after closure or after a stop/failure condition. Provide a final summary and never begin the next task automatically.

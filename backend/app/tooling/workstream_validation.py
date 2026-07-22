@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import re
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .task_consistency import format_finding, validate_consistency
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DIRECTORY = ROOT / ".specify" / "workstreams"
@@ -21,8 +24,11 @@ TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
 TASK_HEADER_PATTERN = re.compile(r"^- \[(?P<checkbox>[Xx ])\] (?P<task>T\d{3}[A-Z]?)(?=\s|$)")
 MILESTONE_PATTERN = re.compile(r"^M\d{3}$")
 EPIC_PATTERN = re.compile(r"^E\d{3}$")
+EXPECTED_FEATURE = "specs/001-ai-content-studio"
 PR_POLICY_FIELDS = ("one_pr_per_epic", "merge_requires_human", "auto_merge")
 COMMIT_POLICY_FIELDS = ("one_commit_per_task", "commit_requires_human", "auto_commit")
+REQUIRED_CHECK_FORBIDDEN_OPERATORS = ("&&", "||", ";", "|", "`", "\n", "\r")
+REQUIRED_CHECK_FORBIDDEN_GIT_SUBCOMMANDS = {"push", "merge", "deploy", "reset", "stash", "fetch", "pull"}
 
 
 def _load_yaml_manifest(path: Path) -> dict[str, Any]:
@@ -51,6 +57,86 @@ def _policy_error(path: Path, field_name: str, policy: Any, required_fields: tup
             errors.append(f"{path.name}: {field_name}.{field} must be boolean")
         elif value is not expected:
             errors.append(f"{path.name}: {field_name}.{field} must be {str(expected).lower()}")
+    return errors
+
+
+def _resolve_repo_path(value: str) -> Path | None:
+    try:
+        candidate = (ROOT / value).resolve()
+        root = ROOT.resolve()
+        if candidate == root or candidate.is_relative_to(root):
+            return candidate
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def _validate_feature(path: Path, feature: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(feature, str) or not feature.strip():
+        errors.append(f"{path.name}: feature must be a non-empty string")
+        return errors
+    if feature != EXPECTED_FEATURE:
+        errors.append(f"{path.name}: feature must be {EXPECTED_FEATURE!r}")
+        return errors
+    resolved = _resolve_repo_path(feature)
+    if resolved is None:
+        errors.append(f"{path.name}: feature path must stay inside the repository")
+        return errors
+    if not resolved.is_dir():
+        errors.append(f"{path.name}: feature directory does not exist: {feature}")
+        return errors
+    for required_name in ("spec.md", "plan.md", "tasks.md"):
+        if not (resolved / required_name).is_file():
+            errors.append(f"{path.name}: feature directory is missing {required_name}")
+    return errors
+
+
+def _tokenize_command(command: str) -> list[str] | None:
+    try:
+        return shlex.split(command, posix=False)
+    except ValueError:
+        return None
+
+
+def _validate_required_checks(path: Path, required_checks: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(required_checks, list):
+        errors.append(f"{path.name}: required_checks must be a list")
+        return errors
+    if not required_checks:
+        errors.append(f"{path.name}: required_checks must be a non-empty list")
+        return errors
+
+    seen_commands: set[str] = set()
+    for index, item in enumerate(required_checks):
+        if not isinstance(item, str):
+            errors.append(f"{path.name}: required_checks[{index}] must be a non-empty string")
+            continue
+        command = item.strip()
+        if not command:
+            errors.append(f"{path.name}: required_checks[{index}] must be a non-empty string")
+            continue
+        if command in seen_commands:
+            errors.append(f"{path.name}: required_checks contains duplicate command {command!r}")
+        else:
+            seen_commands.add(command)
+        if any(operator in command for operator in REQUIRED_CHECK_FORBIDDEN_OPERATORS):
+            errors.append(f"{path.name}: required_checks[{index}] contains a forbidden shell operator")
+            continue
+        tokens = _tokenize_command(command)
+        if not tokens:
+            errors.append(f"{path.name}: required_checks[{index}] is not a valid command string")
+            continue
+        if tokens[0] == "git":
+            subcommand_index = 1
+            if len(tokens) > 1 and tokens[1] == "--no-pager":
+                subcommand_index = 2
+            if len(tokens) <= subcommand_index:
+                errors.append(f"{path.name}: required_checks[{index}] must specify a git subcommand")
+                continue
+            if tokens[subcommand_index] in REQUIRED_CHECK_FORBIDDEN_GIT_SUBCOMMANDS:
+                errors.append(f"{path.name}: required_checks[{index}] uses a forbidden git command")
     return errors
 
 
@@ -169,6 +255,8 @@ def validate_manifests(directory: Path | str = DEFAULT_DIRECTORY) -> list[str]:
                 errors.append(f"{path.name}: invalid risk {manifest.get('risk')!r}")
             if manifest.get("branch") == manifest.get("base_branch"):
                 errors.append(f"{path.name}: branch must differ from base_branch")
+            errors.extend(_validate_feature(path, manifest.get("feature")))
+            errors.extend(_validate_required_checks(path, manifest.get("required_checks")))
             errors.extend(
                 _policy_error(
                     path,
@@ -254,6 +342,8 @@ def validate_task_epic_consistency(
     if not tasks_file.is_file():
         return [f"tasks file does not exist: {tasks_file}"]
     epics = _load_workstream_epics(directory)
+
+    errors.extend(format_finding(finding) for finding in validate_consistency(tasks_file, directory))
 
     task_blocks = _iter_task_blocks(tasks_file)
     tasks_by_id: dict[str, dict[str, Any]] = {}

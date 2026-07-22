@@ -53,7 +53,8 @@ commit_policy:
 - `feature` must resolve to `specs/001-ai-content-studio`.
 - Milestone epic IDs must reference existing epics, and those epics must point
   back to the milestone.
-- `required_checks` must be present and contain explicit checks.
+- `required_checks` must be present, be a list of explicit checks, and each
+  check must be a single read-only or test command with no shell operators.
 - Status and risk values are restricted to the enumerations above.
 - Merge, commit, push, and deployment remain human-controlled; no manifest
   field authorizes automation for those operations.

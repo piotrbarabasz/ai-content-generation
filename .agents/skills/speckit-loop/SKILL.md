@@ -130,12 +130,12 @@ Run this sequence serially:
 spec_manager
   -> spec_explorer
   -> spec_manager
-  -> spec_programmer
+  -> PROGRAMMER_ROUTE
   -> spec_debugger
   -> spec_reviewer
 ```
 
-Do not run two `workspace-write` roles concurrently.
+Never run two write-capable agents concurrently. `PROGRAMMER_ROUTE` must be exactly `spec_programmer_fast` or `spec_programmer_high`.
 
 ### Manager selection pass
 
@@ -176,13 +176,16 @@ ARCHITECTURE_INVARIANTS
 VALIDATION_COMMANDS
 REVIEWER_EXPECTATIONS
 COMPLETION_POLICY
+RISK_LEVEL
+PROGRAMMER_ROUTE
+HUMAN_CHECKPOINT_REQUIRED
 ```
 
 Make implementation and test allowlists exact and minimal. List the selected `tasks.md` only under `ALLOWED_BOOKKEEPING_FILES`, and reserve it exclusively for `spec_closer`. It must remain forbidden to programmer and debugger. Stop if an allowed implementation or test path conflicts with the baseline.
 
 ## 7. Implement the package
 
-Give `spec_programmer` only the final package plus the relevant `$speckit-implement` instruction.
+Give `PROGRAMMER_ROUTE` only the final package plus the relevant `$speckit-implement` instruction.
 
 Require the programmer to:
 
@@ -195,6 +198,8 @@ Require the programmer to:
 - avoid real provider and network calls;
 - refrain from commit, push, merge, force-push, release, and deployment;
 - stop after this task and return the `$speckit-implement` report.
+
+If `RISK_LEVEL` is `critical`, stop before any programmer handoff until the human checkpoint is explicitly recorded. High-risk packages must carry the full architecture justification and exact allowlists in the package.
 
 ## 8. Debug and validate
 
@@ -239,7 +244,7 @@ Accept `SAFE_TO_CLOSE: yes` only with `VERDICT: PASS`.
 
 On `FAIL`, return the verdict to `spec_manager` for classification:
 
-- route missing or incorrect implementation to `spec_programmer`;
+- route missing or incorrect implementation to `PROGRAMMER_ROUTE`;
 - route reproducible validation defects or minimal diagnosed fixes to `spec_debugger`.
 
 Keep repairs inside the original package, serialize write-capable roles, rerun the package validation needed for changed code, and invoke `spec_reviewer` again. Count each FAIL handling pass as a repair cycle. Allow no more than two repair cycles. When the second review failure is reached, stop without another repair, do not invoke closer, do not edit `tasks.md`, and report blockers plus the latest validation results.

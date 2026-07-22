@@ -31,10 +31,14 @@ modify code, tasks, manifests, runtime state, or Git history.
    current branch is wrong, is `master`/`main`, or the base branch is absent.
 5. Inspect, without changing anything:
 
-   Use `repository_checks --mode pre-review` for mechanical checks. Fetch any
-   full diff separately, file by file or only for the task allowlist. Every
-   external command MUST have a finite timeout. A timeout MUST produce a
-   structured failure and MUST NOT trigger automatic retries.
+   Use `repository_checks --mode pre-review` for mechanical checks. Summarize
+   the epic with `git diff --name-only <base_branch>...<epic_branch>`,
+   `git diff --stat <base_branch>...<epic_branch>`, and
+   `git log --oneline <base_branch>..<epic_branch>`. If patch content is
+   needed, inspect it only per file or for a small explicit list of files.
+   Do not request one full diff for the entire epic. Every external command
+   MUST have a finite timeout. A timeout MUST produce a structured failure and
+   MUST NOT trigger automatic retries.
 
    If the repository is dirty, distinguish pre-existing changes from epic
    changes and report relevant baseline conflicts. Never stash, reset, stage,
@@ -57,7 +61,8 @@ modify code, tasks, manifests, runtime state, or Git history.
     `REVIEW_RECEIPT_WRITTEN`. `SAFE_TO_CREATE_PR: yes` is permitted only with
     `VERDICT: PASS`. Do not create a PR automatically. When the review passes,
     the root orchestrator records `.specify/runtime/reviews/<EPIC_ID>.json`
-    using the current `HEAD` and base SHA before any PR or merge step.
+    by invoking `python -m backend.app.tooling.epic_review_receipt write
+    --epic <EPIC_ID> --review-json <path>` before any PR or merge step.
 
 ## Review rules
 

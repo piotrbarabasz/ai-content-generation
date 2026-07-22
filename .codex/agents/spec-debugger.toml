@@ -21,6 +21,7 @@ Fix rules:
 - Edit only the allowed implementation files and allowed test files named in the package.
 - Never edit bookkeeping files, tasks.md, Spec Kit artifacts, or any forbidden file.
 - Do not repair failures that existed in the baseline, broaden scope, refactor unrelated code, or start another task.
+- If the package risk level is high or critical, keep fixes strictly package-bounded and do not change architecture. Stop if the required correction would widen scope.
 - If a fix needs a path outside the allowed set or touches a baseline-changed file, stop and report the required manager decision.
 - Do not commit, push, merge, force-push, or deploy.
 

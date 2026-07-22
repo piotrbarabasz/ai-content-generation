@@ -40,7 +40,9 @@ or perform unrelated changes.
 5. Require epic status `active` or `review`, every listed task checked, and
    task evidence consistent with the epic. Never modify task checkboxes.
 6. If a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json`,
-   remove only the selected epic's receipt after the close preconditions pass.
+   remove only the selected epic's receipt after the close preconditions pass
+   by invoking `python -m backend.app.tooling.epic_review_receipt delete
+   --epic <EPIC_ID>`.
 
 ## Merge evidence
 
@@ -49,6 +51,12 @@ metadata when a configured GitHub integration is available and confirm the PR
 exists, is merged, matches the epic branch and base branch, and includes either
 `mergedAt` or merge commit metadata. This is the preferred proof for squash
 merge, merge commit, and rebase merge histories.
+
+Use `python -m backend.app.tooling.epic_close_evidence --epic <EPIC_ID>
+--json` to evaluate merge evidence deterministically. When GitHub metadata is
+unavailable, local ancestry can only support merge commit and fast-forward
+evidence; it cannot prove squash merge or a typical rebase merge. For squash
+or rebase, require GitHub metadata or another authoritative artifact.
 
 If GitHub metadata is unavailable, fall back to local ancestry only when the
 epic HEAD is demonstrably part of the base branch history:
@@ -59,10 +67,10 @@ git merge-base --is-ancestor <epic_head> <base_branch>
 git log --oneline --first-parent <base_branch>
 ```
 
-Local ancestry is sufficient for merge commit and rebase merge histories, but
-it cannot prove squash merge on its own. A branch merely existing, a PR being
-closed, or a local diff being empty is not merge evidence. If the evidence is
-unavailable or contradictory, stop without edits.
+Local ancestry is sufficient for merge commit and fast-forward histories, but
+it cannot prove squash merge or rebase merge on its own. A branch merely
+existing, a PR being closed, or a local diff being empty is not merge evidence.
+If the evidence is unavailable or contradictory, stop without edits.
 
 ## Bookkeeping procedure
 

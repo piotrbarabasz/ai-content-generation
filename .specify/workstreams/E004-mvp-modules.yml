@@ -32,7 +32,7 @@ tasks:
   - T036
 required_checks:
   - python -m pytest
-  - git diff --check
+  - git --no-pager diff --check
 pr_policy:
   one_pr_per_epic: true
   merge_requires_human: true

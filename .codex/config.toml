@@ -14,6 +14,14 @@ config_file = "agents/spec-explorer.toml"
 description = "Implementation agent that applies the smallest change for exactly one approved task package."
 config_file = "agents/spec-programmer.toml"
 
+[agents.spec_programmer_fast]
+description = "Low- and medium-risk implementation agent that applies the smallest change for exactly one approved task package."
+config_file = "agents/spec-programmer-fast.toml"
+
+[agents.spec_programmer_high]
+description = "High- and critical-risk implementation agent that applies the smallest change for exactly one approved task package."
+config_file = "agents/spec-programmer-high.toml"
+
 [agents.spec_debugger]
 description = "Validation and debugging agent that runs only approved commands and makes minimal in-scope fixes."
 config_file = "agents/spec-debugger.toml"

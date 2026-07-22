@@ -43,10 +43,15 @@ PASS from tests or checkboxes.
    git remote -v
    git branch --show-current
    git status --short
-   git log --oneline <base_branch>..<epic_branch>
-   git diff --name-only <base_branch>...<epic_branch>
-   git diff <base_branch>...<epic_branch>
+   git --no-pager log --oneline <base_branch>..<epic_branch>
+   git --no-pager diff --name-only <base_branch>...<epic_branch>
+   git --no-pager diff --stat <base_branch>...<epic_branch>
+   python -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>
    ```
+
+   Do not request one full patch for the entire epic. When patch content is
+   needed, inspect it only per file or for a small, explicit list of files.
+   Keep the summary commands bounded and read-only.
 
    Use read-only remote inspection to determine whether `<epic_branch>` exists
    remotely and whether a PR already exists. Do not fetch, pull, push, or alter

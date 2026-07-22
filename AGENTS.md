@@ -56,17 +56,44 @@ drift. It never creates a PR or performs commit, push, merge, deploy, fetch,
 pull, rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
 `SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
 LLM review remains required.
-After a passing review, the root orchestrator records an ignored receipt at
-`.specify/runtime/reviews/<EPIC_ID>.json` using the current `HEAD` SHA and the
-current base SHA. The receipt is invalidated by a new commit or a changed base
-branch, and `$speckit-epic-pr` must re-read both SHAs before trusting it.
+After a passing review, the root orchestrator records an ignored receipt by
+invoking `python -m backend.app.tooling.epic_review_receipt write --epic
+<EPIC_ID> --review-json <path>`. The CLI reads the current `HEAD` SHA, the
+current base SHA, the active epic, the epic manifest, the milestone manifest,
+and the required checks. The receipt is invalidated by a new commit or a
+changed base branch, and `$speckit-epic-pr` must re-validate it with
+`python -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>`
+before trusting it.
 
 To prepare an epic pull request, use `$speckit-epic-pr`. It requires an already
 reviewed, clean, pushed epic branch and may create only a draft PR. It must not
 push, merge, enable auto-merge, change branch protection, update epic status, or
 create a PR when any gate is missing; in that case it returns ready-to-copy PR
 title and body instead.
-- `$speckit-implement` is the bounded implementation worker used by `spec_programmer` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
+
+Task risk routing:
+- The manager package must include `RISK_LEVEL`, `PROGRAMMER_ROUTE`, and
+  `HUMAN_CHECKPOINT_REQUIRED`.
+- `low` and `medium` route to `spec_programmer_fast`.
+- `high` routes to `spec_programmer_high`.
+- `critical` routes to `spec_programmer_high` and requires a human checkpoint
+  before any programmer handoff. If the risk field is missing, routing must
+  stop.
+
+For epic close merge evidence, use `python -m backend.app.tooling.epic_close_evidence
+--epic <EPIC_ID> --json`. Local ancestry can support merge commit and
+fast-forward evidence only; rebase and squash still require GitHub metadata or
+another authoritative artifact.
+
+For PR-related shell safety, keep diff inspection bounded: use
+`git --no-pager diff --name-only <base_branch>...<epic_branch>`,
+`git --no-pager diff --stat <base_branch>...<epic_branch>`, and
+`git --no-pager log --oneline <base_branch>..<epic_branch>` for summaries.
+Fetch patch content only for specific files or a short explicit file list.
+Do not require one full epic patch output for the whole epic.
+Use `python -m backend.app.tooling.epic_review_receipt` for receipt write,
+validate, and delete operations instead of ad hoc Python snippets.
+- `$speckit-implement` is the bounded implementation worker used by `spec_programmer_fast` or `spec_programmer_high` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
 - Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T\d{3}[A-Z]?` invocation.
 - Review failures may use no more than two repair cycles. A second failed review ends the run without closure.
 - Only `spec_closer`, and only after `VERDICT: PASS` with `SAFE_TO_CLOSE: yes`, may change the selected checkbox in `tasks.md`.
@@ -81,11 +108,11 @@ Run the roles sequentially in this logical order:
 spec_manager
   -> spec_explorer
   -> spec_manager
-  -> spec_programmer
+  -> spec_programmer_fast or spec_programmer_high
   -> spec_debugger
   -> spec_reviewer
   -> spec_manager
-      -> on FAIL: spec_programmer or spec_debugger, then debugger/reviewer as needed,
+      -> on FAIL: PROGRAMMER_ROUTE or spec_debugger, then debugger/reviewer as needed,
                   with at most 2 repair cycles total
       -> on PASS: spec_closer
   -> spec_manager final summary
@@ -96,7 +123,7 @@ Rules for every run:
 - Select and process exactly one task.
 - Never automatically continue to the next task, even after a successful close.
 - Permit at most two repair cycles after review failures.
-- Never run two write-capable agents concurrently. `spec_programmer`, `spec_debugger`, and `spec_closer` must be invoked one at a time, with the previous writer fully stopped before the next begins.
+- Never run two write-capable agents concurrently. `spec_programmer_fast`, `spec_programmer_high`, `spec_debugger`, and `spec_closer` must be invoked one at a time, with the previous writer fully stopped before the next begins.
 - Keep `spec_closer` separate from implementation and review. No other role may mark a task complete.
 - Do not commit, push, merge, force-push, create a release, or deploy from this loop.
 
@@ -139,7 +166,10 @@ Before any write-capable role starts, the manager must issue a bounded task pack
 14. architecture invariants;
 15. exact validation commands, ordered from task-focused to broader checks;
 16. reviewer expectations;
-17. completion policy.
+17. completion policy;
+18. RISK_LEVEL;
+19. PROGRAMMER_ROUTE;
+20. HUMAN_CHECKPOINT_REQUIRED.
 
 Allowed file lists are exact allowlists, not examples. The programmer and debugger may write only allowed implementation and test files. Bookkeeping files are reserved for the closer. Any required file outside the allowlist, any baseline conflict, or any need to broaden scope returns control to the manager and stops writes.
 
@@ -153,9 +183,9 @@ Coordinates read-only analysis, selects one ready task, creates and updates the 
 
 Inspects repository paths and symbols, verifies actual dependencies, finds tests and validation commands, proposes the minimal allowlist, and reports baseline conflicts with concrete evidence. It does not edit or broaden scope.
 
-### `spec_programmer`
+### `spec_programmer_fast` and `spec_programmer_high`
 
-Uses `$speckit-implement` to implement only the approved package. The skill requires a complete manager-approved package, enforces exact implementation and test allowlists, makes the smallest defensive change, forbids task bookkeeping, and stops after one task.
+Use `$speckit-implement` to implement only the approved package. The skill requires a complete manager-approved package, enforces exact implementation and test allowlists, makes the smallest defensive change, forbids task bookkeeping, and stops after one task. `spec_programmer_fast` is for low- and medium-risk tasks. `spec_programmer_high` is for high- and critical-risk tasks.
 
 ### `spec_debugger`
 
@@ -171,7 +201,7 @@ Has one bookkeeping responsibility: after verifying a matching `PASS`, `SAFE_TO_
 
 ## Review failure routing
 
-- Route missing behavior, incorrect design, or incomplete implementation to `spec_programmer`.
+- Route missing behavior, incorrect design, or incomplete implementation to `PROGRAMMER_ROUTE`.
 - Route reproducible test failures, narrow defects exposed by validation, or validation-specific corrections to `spec_debugger`.
 - Keep every repair inside the original package. If the fix requires a new file or wider scope, stop and have the manager reassess rather than silently expanding the allowlist.
 - Re-run appropriate debugging validation and independent review after a repair.

@@ -163,7 +163,7 @@ Notes: Keep real vendor integrations out of this slice.
 ## Phase 6: MVP modules
 
 - [ ] T011 Implement BriefModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/brief.py`
@@ -178,7 +178,7 @@ Parallelizable: no
 Notes: Keep the module APIs narrow so each module can be tested independently.
 
 - [ ] T012 Implement VoiceoverModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/voiceover.py`
@@ -195,7 +195,7 @@ Notes: Keep module output formats stable so the export bundle can assemble refer
 ## Phase 7: Workflow presets
 
 - [ ] T013 Define MVP workflow presets
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/workflow/presets.py`, `backend/app/workflow/registry.py`
@@ -212,7 +212,7 @@ Notes: Keep preset definitions declarative so they can be reused by API and test
 ## Phase 8: API layer
 
 - [ ] T014 Create the API application and shared schemas
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/api/main.py`, `backend/app/api/schemas.py`, `backend/app/api/dependencies.py`
@@ -227,7 +227,7 @@ Parallelizable: no
 Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily. End-to-end API smoke coverage is handled in T019.
 
 - [ ] T015 Implement minimal API endpoints
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/api/routes/projects.py`, `backend/app/api/routes/workflow_configs.py`, `backend/app/api/routes/workflow_runs.py`, `backend/app/api/routes/artifacts.py`
@@ -244,7 +244,7 @@ Notes: Avoid making the CLI the only usable interface. Full API smoke coverage i
 ## Phase 9: Approval basics
 
 - [ ] T016 Add approval checkpoint domain model and state machine
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/domain/approval.py`
@@ -261,7 +261,7 @@ Notes: Keep approval simplified for MVP, but model it explicitly in the workflow
 ## Phase 10: Tests
 
 - [ ] T017 Add tests for module registry and execution order
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: high
 Implementation files: `none`
@@ -276,7 +276,7 @@ Parallelizable: yes
 Notes: Focus on the engine's contract rather than implementation details.
 
 - [ ] T018 Add tests for artifact storage and mock providers
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: high
 Implementation files: `none`
@@ -291,7 +291,7 @@ Parallelizable: yes
 Notes: Failed module handling is covered by T044.
 
 - [ ] T019 Add tests for preset registration and API smoke paths
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: high
 Implementation files: `none`
@@ -308,7 +308,7 @@ Notes: The API smoke test should verify status transitions rather than implement
 ## Phase 11: Migration documentation
 
 - [ ] T020 Document migration from source repos to the new architecture
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `docs/migration/shorts-repo-migration-plan.md`, `docs/migration/long-form-repo-migration-plan.md`
@@ -387,7 +387,7 @@ Notes: Do not commit real credentials or runtime artifacts.
 ## Phase 13: Remediation - short video modules and export
 
 - [ ] T025 Implement ScriptGenerationModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/script_generation.py`
@@ -402,7 +402,7 @@ Parallelizable: no
 Notes: Keep NarrativeSegment separate from RenderScene.
 
 - [ ] T026 Implement ScenePlanningModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/scene_planning.py`
@@ -417,7 +417,7 @@ Parallelizable: no
 Notes: Required for short_video preset.
 
 - [ ] T027 Implement CaptionsModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/captions.py`
@@ -432,7 +432,7 @@ Parallelizable: no
 Notes: Disabled captions must not require CaptionProvider validation.
 
 - [ ] T028 Implement VideoRenderingModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/video_rendering.py`
@@ -447,7 +447,7 @@ Parallelizable: no
 Notes: Do not implement real video rendering in the first slice.
 
 - [ ] T029 Define ExportBundle manifest schema
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/domain/export_bundle.py`, `backend/app/modules/export_manifest.py`
@@ -462,7 +462,7 @@ Parallelizable: no
 Notes: Required files are manifest.json, workflow_config.json and workflow_run.json.
 
 - [ ] T030 Implement ExportModule against the manifest contract
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/export.py`
@@ -479,7 +479,7 @@ Notes: Export must work without publishing automation.
 ## Phase 14: Remediation - long-form workflow
 
 - [ ] T031 Implement ResearchModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/research.py`
@@ -494,7 +494,7 @@ Parallelizable: no
 Notes: Do not implement real web fetching or external research integrations.
 
 - [ ] T032 Implement DossierModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/dossier.py`
@@ -509,7 +509,7 @@ Parallelizable: no
 Notes: Long-form workflows can still continue from topic with research disabled.
 
 - [ ] T033 Implement OutlineModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/outline.py`
@@ -524,7 +524,7 @@ Parallelizable: no
 Notes: Outline is required for the long-form MVP path.
 
 - [ ] T034 Implement PostProcessingModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/post_processing.py`
@@ -539,7 +539,7 @@ Parallelizable: no
 Notes: Keep this deterministic for MVP.
 
 - [ ] T035 Implement QAModule
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/qa.py`
@@ -554,7 +554,7 @@ Parallelizable: no
 Notes: QA is required for long_form_script_voiceover.
 
 - [ ] T036 Define LongFormWorkflowPreset
-Milestone: M001
+Milestone: M002
 Epic: E004
 Risk: high
 Implementation files: `backend/app/workflow/presets.py`
@@ -571,7 +571,7 @@ Notes: Long-form MVP does not need video rendering.
 ## Phase 15: Remediation - approval workflow and API
 
 - [ ] T037 Integrate approval checkpoints into workflow execution
-Milestone: M001
+Milestone: M002
 Epic: E005
 Risk: high
 Implementation files: `backend/app/workflow/engine.py`, `backend/app/workflow/execution.py`
@@ -586,7 +586,7 @@ Parallelizable: no
 Notes: Rejection preserves artifacts and records a decision.
 
 - [ ] T038 Add approval and resume API routes
-Milestone: M001
+Milestone: M002
 Epic: E005
 Risk: high
 Implementation files: `backend/app/api/routes/approvals.py`, `backend/app/api/routes/workflow_runs.py`, `backend/app/api/main.py`
@@ -601,7 +601,7 @@ Parallelizable: no
 Notes: Route naming may use the repository's established API prefix.
 
 - [ ] T047 Synchronize API schema with WorkflowConfig
-Milestone: M001
+Milestone: M002
 Epic: E005
 Risk: medium
 Implementation files: `backend/app/api/schemas.py`
@@ -618,7 +618,7 @@ Notes: This remediation task isolates API schema synchronization from the comple
 ## Phase 16: Remediation - usage tracking and expanded tests
 
 - [ ] T039 Add UsageTracker and NoopCostTracker
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `backend/app/workflow/usage.py`, `backend/app/workflow/execution.py`
@@ -633,7 +633,7 @@ Parallelizable: yes
 Notes: Do not implement billing dashboard or advanced analytics.
 
 - [ ] T040 Add provider and workflow config validation tests
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `none`
@@ -648,7 +648,7 @@ Parallelizable: yes
 Notes: Keep tests deterministic.
 
 - [ ] T041 Add approval workflow tests
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `none`
@@ -663,7 +663,7 @@ Parallelizable: yes
 Notes: Include artifact preservation assertions for rejection.
 
 - [ ] T042 Add export bundle content tests
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `none`
@@ -678,7 +678,7 @@ Parallelizable: yes
 Notes: Do not require real media files.
 
 - [ ] T043 Add long-form workflow execution tests
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `none`
@@ -693,7 +693,7 @@ Parallelizable: yes
 Notes: Use mock providers and local artifact storage only.
 
 - [ ] T044 Add retry, failed module and static secret hygiene tests
-Milestone: M001
+Milestone: M003
 Epic: E006
 Risk: medium
 Implementation files: `none`
