@@ -8,6 +8,7 @@ status: planned
 risk: high
 depends_on:
   - E001
+  - E002
 tasks:
   - T009
   - T010

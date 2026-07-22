@@ -39,13 +39,19 @@ or perform unrelated changes.
    or overwrite anything.
 5. Require epic status `active` or `review`, every listed task checked, and
    task evidence consistent with the epic. Never modify task checkboxes.
+6. If a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json`,
+   remove only the selected epic's receipt after the close preconditions pass.
 
 ## Merge evidence
 
 Do not trust a user statement that the PR was merged. Prefer authoritative PR
 metadata when a configured GitHub integration is available and confirm the PR
-state is `merged` with the expected head and base. Otherwise verify local Git
-history with read-only commands:
+exists, is merged, matches the epic branch and base branch, and includes either
+`mergedAt` or merge commit metadata. This is the preferred proof for squash
+merge, merge commit, and rebase merge histories.
+
+If GitHub metadata is unavailable, fall back to local ancestry only when the
+epic HEAD is demonstrably part of the base branch history:
 
 ```powershell
 git branch --show-current
@@ -53,9 +59,10 @@ git merge-base --is-ancestor <epic_head> <base_branch>
 git log --oneline --first-parent <base_branch>
 ```
 
-The selected epic HEAD must be part of the base branch history. A branch merely
-existing, a PR being closed, or a local diff being empty is not merge evidence.
-If the evidence is unavailable or contradictory, stop without edits.
+Local ancestry is sufficient for merge commit and rebase merge histories, but
+it cannot prove squash merge on its own. A branch merely existing, a PR being
+closed, or a local diff being empty is not merge evidence. If the evidence is
+unavailable or contradictory, stop without edits.
 
 ## Bookkeeping procedure
 
@@ -71,6 +78,7 @@ After all preconditions pass:
    epic ID. Do not remove the runtime directory or any other runtime file.
 5. Never delete the local or remote branch automatically. Never close or merge
    the PR. Never push, fetch, pull, rebase, or change branch protection.
+6. Never remove review receipts for any other epic.
 
 Use the existing `validate_close_preconditions` helper where practical. The
 close operation remains root-orchestrated and deterministic; no new agent is

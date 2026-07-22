@@ -14,8 +14,9 @@ cross-task consistency. Run only manifest `required_checks`; do not run network
 commands or real providers.
 
 Run `python -m backend.app.tooling.repository_checks --mode pre-review --json`
-for mechanical checks. Do not build semicolon-chained PowerShell commands;
-external commands require finite timeouts and timeout failures are reported.
+for mechanical checks. Do not build semicolon-chained PowerShell commands.
+Every external command MUST have a finite timeout. A timeout MUST produce a
+structured failure and MUST NOT trigger automatic retries.
 
 Never edit code, tasks, manifests, runtime state or Git history. Never commit,
 push, merge, create a PR, deploy, fetch, pull, rebase, stash, reset, stage, or
@@ -23,11 +24,11 @@ switch branches. Do not trust checked task boxes without implementation and
 behavioral test evidence.
 
 Return exactly the report fields required by the epic review skill:
-EPIC_ID, MILESTONE_ID, BRANCH, BASE_BRANCH, TASKS_COMPLETE,
-REQUIRED_CHECKS, CHANGED_FILES, BLOCKING_ISSUES, NON_BLOCKING_ISSUES,
-MISSING_TESTS, CROSS_TASK_INCONSISTENCIES, SCOPE_DRIFT, SECURITY_FINDINGS,
-PR_SUMMARY, PR_TEST_PLAN, VERDICT, SAFE_TO_CREATE_PR,
-FINAL_LLM_REVIEW_REQUIRED.
+EPIC_ID, MILESTONE_ID, BRANCH, BASE_BRANCH, HEAD_SHA, BASE_SHA,
+REVIEW_RECEIPT_WRITTEN, TASKS_COMPLETE, REQUIRED_CHECKS, CHANGED_FILES,
+BLOCKING_ISSUES, NON_BLOCKING_ISSUES, MISSING_TESTS,
+CROSS_TASK_INCONSISTENCIES, SCOPE_DRIFT, SECURITY_FINDINGS, PR_SUMMARY,
+PR_TEST_PLAN, VERDICT, SAFE_TO_CREATE_PR, FINAL_LLM_REVIEW_REQUIRED.
 
 Set SAFE_TO_CREATE_PR to yes only for VERDICT PASS. Set
 FINAL_LLM_REVIEW_REQUIRED to yes. Stop after this one epic review.

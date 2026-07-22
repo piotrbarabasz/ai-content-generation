@@ -1,5 +1,6 @@
 id: E005
 title: API and Approvals
+# Part of M002 MVP Workflows.
 milestone: M002
 feature: specs/001-ai-content-studio
 base_branch: master
@@ -11,6 +12,7 @@ depends_on:
 tasks:
   - T037
   - T038
+  - T047
 required_checks:
   - python -m pytest
   - git diff --check

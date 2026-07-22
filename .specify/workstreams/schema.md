@@ -32,7 +32,7 @@ branch: string
 status: planned | active | review | completed | blocked
 risk: low | medium | high | critical
 depends_on: [E###, ...]
-tasks: [T### | T###A, ...]
+tasks: [T\d{3}[A-Z]?, ...]
 required_checks:
   - string
 pr_policy:
@@ -45,7 +45,7 @@ commit_policy:
 
 ## Validation rules
 
-- IDs use `M###`, `E###`, and `T###` or `T###A` formats.
+- IDs use `M\d{3}`, `E\d{3}`, and `T\d{3}[A-Z]?`.
 - Each epic must reference an existing milestone.
 - A task may belong to at most one epic.
 - Every `depends_on` value must reference an existing epic.

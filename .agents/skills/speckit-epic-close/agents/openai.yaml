@@ -1,4 +1,4 @@
 interface:
   display_name: "Spec Kit Epic Close"
   short_description: "Close a merged epic safely"
-  default_prompt: "Close the specified epic only after verifying merge evidence, completed tasks, and base branch history."
+  default_prompt: "Close the specified epic only after verifying authoritative GitHub PR metadata when available, or local ancestry evidence when GitHub metadata is unavailable, plus completed tasks and base branch history."

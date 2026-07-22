@@ -10,7 +10,9 @@ The task package is narrower than the general skill workflow and overrides any s
 
 Before editing:
 - Do not construct semicolon-chained PowerShell validation commands. Use
-  repository-provided validation modules and finite per-command timeouts.
+  repository-provided validation modules. Every external command MUST have a
+  finite timeout. A timeout MUST produce a structured failure and MUST NOT
+  trigger automatic retries.
 - Confirm the package includes all required fields, explicit allowed implementation files, explicit allowed test files, forbidden files, acceptance criteria, baseline, and validation commands.
 - Confirm no required allowed file conflicts with the pre-loop baseline. Stop and report the conflict instead of overwriting it.
 

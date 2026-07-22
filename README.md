@@ -48,21 +48,31 @@ Or request one exact task with:
 
 ```text
 $speckit-loop T006
+$speckit-loop T006A
 ```
 
 The task is closed only after the reviewer returns `PASS` and confirms it is safe to close. The loop never starts another task automatically and does not commit, push or deploy changes. Review the complete diff and validation results before making any manual commit.
 
-Delivery hierarchy is milestone → epic → task → commit: an epic groups tasks on one branch and into one pull request, while each task remains an independent `$speckit-loop` run and a human-controlled commit.
+Delivery hierarchy is milestone -> epic -> task -> commit: an epic groups tasks on one branch and into one pull request, while each task remains an independent `$speckit-loop` run and a human-controlled commit.
 
 Before running `$speckit-loop`, place the active epic ID (for example `E001`)
 in the local ignored file `.specify/runtime/active-epic` and check out the branch
 declared by that epic manifest. The loop validates this context before baseline
-capture and never creates or switches branches.
+capture by running `validate_manifests()`, `validate_task_epic_consistency()`,
+and `validate_active_epic()`, then never creates or switches branches.
+If the guard fails, the loop stops immediately and does not start any agent.
+
+Task IDs are exact uppercase identifiers matching `T\d{3}[A-Z]?`, for example `T006` or `T006A`.
 
 After all tasks in an epic are complete, run `$speckit-epic-review` for a
 read-only review of the full epic diff, commits, tests, acceptance criteria,
 security and scope. It reports whether a human may create the PR; it never
 creates, merges or pushes one.
+
+When the review passes, the root orchestrator writes an ignored receipt at
+`.specify/runtime/reviews/<EPIC_ID>.json` using the current `HEAD` SHA and the
+current base SHA. A later commit or base-branch change invalidates that
+receipt, so `$speckit-epic-pr` must re-check both SHAs before trusting it.
 
 When the reviewed epic branch is already pushed, `$speckit-epic-pr` can create
 only a draft PR after all safety gates pass. It never pushes, merges, enables

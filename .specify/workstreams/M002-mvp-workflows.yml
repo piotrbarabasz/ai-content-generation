@@ -1,11 +1,12 @@
 id: M002
 title: MVP Workflows
 status: planned
-goal: Deliver the short-video and long-form workflow capabilities on the backend foundation.
+goal: Deliver the MVP workflow modules, presets, API endpoints, and approval flows on the backend foundation.
 epics:
   - E004
   - E005
 completion_criteria:
   - MVP modules and workflow presets are implemented with behavioral tests.
   - API and approval flows are implemented and covered by integration tests.
+  - Milestone and epic backlinks validate in both directions.
   - Epic reviews confirm that the workflow scope remains within the MVP boundary.

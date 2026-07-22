@@ -18,8 +18,12 @@ Selection rules:
   active epic from `.specify/runtime/active-epic`, require its manifest under
   `.specify/workstreams/`, require status `active`, and require the current
   branch to match the manifest branch. Never select a task before this guard.
+- Run the full guard pipeline before baseline capture:
+  `validate_manifests()`, `validate_task_epic_consistency()`, then
+  `validate_active_epic()`. If the guard fails, stop immediately and do not
+  start any agent.
 - For `next`, enumerate only unchecked tasks listed in the active epic manifest.
-  For an explicit `T###`, reject it unless it is listed in that manifest.
+  For an explicit task ID matching `T\d{3}[A-Z]?`, reject it unless it is listed in that manifest. Preserve the selector exactly as entered and never normalize case.
 - If the argument is `next`, select the next task whose real dependencies are satisfied. Never assume that the lowest task number is ready.
 - Verify declared task dependencies against tasks.md and against code and tests that actually exist. A checked dependency without supporting implementation evidence is not sufficient.
 - Do not select or start a second task after the chosen task finishes or stops.
@@ -27,7 +31,9 @@ Selection rules:
 Baseline safety:
 - Use `python -m backend.app.tooling.repository_checks --mode preflight` for
   mechanical repository checks. Do not construct semicolon-chained PowerShell
-  commands; run external commands separately with finite timeouts.
+  commands. Use repository-provided validation modules. Every external command
+  MUST have a finite timeout. A timeout MUST produce a structured failure and
+  MUST NOT trigger automatic retries.
 - Before selection, capture `git status --short`, `git diff --name-only`, and `git diff --cached --name-only` as the baseline repository state.
 - Record every pre-existing modified, staged, deleted, renamed, and untracked path.
 - Ask spec_explorer to verify relevant paths and implementation evidence. Because max_depth is 1, prepare handoff payloads for the root session; do not try to spawn another subagent yourself.

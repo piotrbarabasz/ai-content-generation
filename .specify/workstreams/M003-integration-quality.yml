@@ -1,10 +1,11 @@
 id: M003
 title: Integration and Quality
 status: planned
-goal: Validate complete workflows and cross-cutting quality, security, and regression behavior.
+goal: Validate complete workflows and cross-cutting quality, security, and regression behavior for the MVP.
 epics:
   - E006
 completion_criteria:
   - Cross-task integration and full workflow scenarios pass deterministically.
   - Export, approval, provider, retry, and secret-hygiene regressions are covered.
+  - Milestone and epic backlinks validate in both directions.
   - The final epic review confirms scope, security, and test evidence.

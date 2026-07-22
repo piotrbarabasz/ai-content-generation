@@ -1,5 +1,6 @@
 id: E004
 title: MVP Modules and Presets
+# Part of M002 MVP Workflows.
 milestone: M002
 feature: specs/001-ai-content-studio
 base_branch: master

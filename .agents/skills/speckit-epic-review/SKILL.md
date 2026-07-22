@@ -32,12 +32,15 @@ modify code, tasks, manifests, runtime state, or Git history.
 5. Inspect, without changing anything:
 
    Use `repository_checks --mode pre-review` for mechanical checks. Fetch any
-   full diff separately, file by file or only for the task allowlist.
+   full diff separately, file by file or only for the task allowlist. Every
+   external command MUST have a finite timeout. A timeout MUST produce a
+   structured failure and MUST NOT trigger automatic retries.
 
    If the repository is dirty, distinguish pre-existing changes from epic
    changes and report relevant baseline conflicts. Never stash, reset, stage,
    checkout, commit, merge, fetch, pull, push, or rebase.
-6. Parse every task listed by the epic. Verify its checkbox, dependencies,
+6. Parse every task listed by the epic. Task IDs use `T\d{3}[A-Z]?` and must
+   be preserved exactly. Verify its checkbox, dependencies,
    implementation/test files, acceptance criteria, and actual code/test
    evidence. Do not treat a checked checkbox as proof of implementation.
 7. Review the milestone completion criteria, epic criteria, constitution
@@ -50,8 +53,11 @@ modify code, tasks, manifests, runtime state, or Git history.
 9. Inspect tests for behavioral assertions rather than import-only coverage.
    Check for secrets, credentials, generated outputs, runtime artifacts, and
    other sensitive material in the epic diff.
-10. Produce the required report. `SAFE_TO_CREATE_PR: yes` is permitted only
-    with `VERDICT: PASS`. Do not create a PR automatically.
+10. Produce the required report. Include `HEAD_SHA`, `BASE_SHA`, and
+    `REVIEW_RECEIPT_WRITTEN`. `SAFE_TO_CREATE_PR: yes` is permitted only with
+    `VERDICT: PASS`. Do not create a PR automatically. When the review passes,
+    the root orchestrator records `.specify/runtime/reviews/<EPIC_ID>.json`
+    using the current `HEAD` and base SHA before any PR or merge step.
 
 ## Review rules
 
@@ -73,6 +79,9 @@ EPIC_ID:
 MILESTONE_ID:
 BRANCH:
 BASE_BRANCH:
+HEAD_SHA:
+BASE_SHA:
+REVIEW_RECEIPT_WRITTEN:
 TASKS_COMPLETE:
 REQUIRED_CHECKS:
 CHANGED_FILES:

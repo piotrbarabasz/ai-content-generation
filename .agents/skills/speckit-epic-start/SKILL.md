@@ -96,6 +96,7 @@ repository root.
     ```
 
     Do not write branch state, timestamps, task state, or other runtime data.
+    Do not delete or alter review receipts for other epics.
 
 ## Completion report
 

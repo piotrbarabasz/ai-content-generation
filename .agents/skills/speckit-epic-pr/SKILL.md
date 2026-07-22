@@ -22,6 +22,9 @@ call unless all of these are true:
   `git diff --cached --name-only` are empty;
 - every epic task is checked and has implementation/test evidence;
 - the review contains `VERDICT: PASS` and `SAFE_TO_CREATE_PR: yes`;
+- a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json` and
+  matches the active epic ID, milestone ID, branch, base branch, current HEAD
+  SHA, current base SHA, verdict, safe flag, and required checks;
 - the local head has at least one commit relative to `base_branch`;
 - the diff contains no secrets, credentials, ignored runtime state, generated
   outputs, or other runtime artifacts.
@@ -48,7 +51,9 @@ PASS from tests or checkboxes.
    Use read-only remote inspection to determine whether `<epic_branch>` exists
    remotely and whether a PR already exists. Do not fetch, pull, push, or alter
    remote configuration.
-3. If the branch is not on the remote, stop and print the exact command a human
+3. Re-read `HEAD` and `<base_branch>` with separate `git rev-parse` commands
+   and compare them with the review receipt before trusting the receipt.
+4. If the branch is not on the remote, stop and print the exact command a human
    may run, for example:
 
    ```text
@@ -56,13 +61,13 @@ PASS from tests or checkboxes.
    ```
 
    Do not execute it and set `SAFE_TO_CREATE_PR: no`.
-4. If the branch exists remotely, check whether a PR already exists. If it does,
+5. If the branch exists remotely, check whether a PR already exists. If it does,
    report its number and URL and do not create another PR.
-5. If no PR exists and the GitHub/PR integration is safely available, create
+6. If no PR exists and the GitHub/PR integration is safely available, create
    only a draft PR with the prepared title and body. Do not mark it ready,
    merge it, enable auto-merge, change branch protection, push, or update the
    epic manifest.
-6. If the environment cannot safely create a PR, return the complete title and
+7. If the environment cannot safely create a PR, return the complete title and
    body for manual use. Never claim a PR number or URL that was not returned by
    the integration.
 

@@ -1,6 +1,6 @@
 ---
 name: "speckit-loop"
-description: "Run one dependency-ready Spec Kit implementation task through the repository's manager-gated multi-agent workflow. Use when Codex should select the next ready task or execute one explicit T### task with baseline isolation, bounded files, validation, independent review, and closer-only bookkeeping."
+description: 'Run one dependency-ready Spec Kit implementation task through the repository''s manager-gated multi-agent workflow. Use when Codex should select the next ready task or execute one explicit T\d{3}[A-Z]? task with baseline isolation, bounded files, validation, independent review, and closer-only bookkeeping.'
 metadata:
   author: "ai-content-generation"
   source: "project multi-agent workflow"
@@ -20,7 +20,7 @@ Use the root Codex thread as the sole orchestrator. Process exactly one task and
 Trim `$ARGUMENTS` and accept only:
 
 - no argument or `next`: select one dependency-ready unchecked task;
-- an exact uppercase identifier matching `T###`: select that task only.
+- an exact uppercase identifier matching `T\d{3}[A-Z]?`: select that task only.
 
 For any other input, stop without edits and show:
 
@@ -28,6 +28,7 @@ For any other input, stop without edits and show:
 Usage:
   $speckit-loop next
   $speckit-loop T006
+  $speckit-loop T006A
 ```
 
 Never reinterpret free text as a task selector. Never continue to another task after the selected task completes, blocks, or fails.
@@ -77,10 +78,14 @@ python -m backend.app.tooling.workstream_validation --guard <selector>
 python -m backend.app.tooling.repository_checks --mode preflight
 ```
 
-The guard reads `.specify/runtime/active-epic`, the matching manifest under
-`.specify/workstreams/`, and the current branch. It must stop when the active
-epic or manifest is missing, the epic is not `active`, the branch is `master`
-or `main`, the branch does not match the manifest, a dependency is not
+The guard runs the full read-only pipeline before any branch-dependent
+selection or baseline capture: `validate_manifests()`,
+`validate_task_epic_consistency()`, and `validate_active_epic()`. It reads
+`.specify/runtime/active-epic`, the matching manifest under
+`.specify/workstreams/`, the task queue, and the current branch. It must stop
+when manifests are invalid, task-to-epic consistency fails, the active epic or
+manifest is missing, the epic is not `active`, the branch is `master` or
+`main`, the branch does not match the manifest, a dependency is not
 `completed`, or the selected task is outside the active epic. Errors must show
 the active epic, expected branch, current branch, selector, exact reason, and
 a safe next step.
@@ -88,13 +93,14 @@ a safe next step.
 The guard is read-only: it never creates or switches branches, commits,
 pushes, changes manifests, or writes runtime state. A successful guard is
 required before baseline capture. `next` may consider only unchecked tasks in
-the active epic; an explicit `T###` must belong to that epic. The one-task
+  the active epic; an explicit task ID matching `T\d{3}[A-Z]?` must belong to that epic. The one-task
 per-run and closer-only completion rules remain unchanged.
+If the guard fails, stop immediately and do not invoke any agent.
 
 Use repository-provided validation modules for mechanical checks. Agents MUST
-NOT build semicolon-chained PowerShell validation commands. Run each external
-command separately with a finite timeout; a timeout is a structured failure and
-must not trigger an indefinite wait or automatic retry.
+NOT build semicolon-chained PowerShell validation commands. Every external
+command MUST have a finite timeout. A timeout MUST produce a structured
+failure and MUST NOT trigger automatic retries.
 
 ## 5. Capture the pre-loop baseline
 
@@ -142,7 +148,7 @@ For `next`, require the manager to:
 3. verify those dependencies against actual code and tests;
 4. nominate exactly one ready task without relying on the lowest ID alone.
 
-For an explicit `T###`, require the manager to verify that the task exists, remains unchecked, and has satisfied declared and actual dependencies. Stop if any check fails.
+For an explicit task ID matching `T\d{3}[A-Z]?`, require the manager to verify that the task exists, remains unchecked, and has satisfied declared and actual dependencies. Preserve the selector exactly as entered. Stop if any check fails.
 
 ### Explorer pass
 
@@ -217,7 +223,7 @@ Require exactly:
 
 ```text
 VERDICT: PASS | FAIL
-TASK_ID: T###
+TASK_ID: T\d{3}[A-Z]?
 BLOCKING_ISSUES:
 NON_BLOCKING_ISSUES:
 MISSING_TESTS:
@@ -268,4 +274,4 @@ SAFE_TO_COMMIT:
 NEXT_TASK_STARTED: no
 ```
 
-Set `SAFE_TO_COMMIT` from evidence only; it is advisory and never authorizes an automatic commit. Never commit, push, merge, force-push, release, or deploy. A new task always requires a new explicit `$speckit-loop next` or `$speckit-loop T###` invocation.
+Set `SAFE_TO_COMMIT` from evidence only; it is advisory and never authorizes an automatic commit. Never commit, push, merge, force-push, release, or deploy. A new task always requires a new explicit `$speckit-loop next` or `$speckit-loop T\d{3}[A-Z]?` invocation.

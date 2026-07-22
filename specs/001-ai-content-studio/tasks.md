@@ -207,7 +207,7 @@ Dependencies: T005, T006, T008, T011, T012
 Acceptance criteria: Each preset declares content type, genre defaults, duration defaults, required modules, optional modules, default provider config, and expected artifacts.
 Test requirements: Add direct tests for preset declarations, defaults, module lists, provider configuration, and expected artifacts in this task. Cross-preset registration and API smoke coverage remains in T019.
 Parallelizable: no
-Notes: Keep preset definitions declarative so they can be reused by API and tests.
+Notes: Keep preset definitions declarative so they can be reused by API and tests. Cross-preset registration and API smoke coverage is handled in T019.
 
 ## Phase 8: API layer
 
@@ -224,7 +224,7 @@ Dependencies: T003, T005, T006, T009, T010
 Acceptance criteria: The API layer has importable shared schemas and an application object that can be started without extra glue code.
 Test requirements: Add direct schema validation and application-construction tests in this task. End-to-end API smoke coverage remains in T019.
 Parallelizable: no
-Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily.
+Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily. End-to-end API smoke coverage is handled in T019.
 
 - [ ] T015 Implement minimal API endpoints
 Milestone: M001
@@ -239,7 +239,7 @@ Dependencies: T014, T013
 Acceptance criteria: The API can create and retrieve project data, start a workflow run, inspect run status, list artifacts, and request an export bundle.
 Test requirements: Add direct route behavior tests for request validation, project/configuration/run handlers, and artifact/export responses in this task. Full API smoke coverage remains in T019.
 Parallelizable: no
-Notes: Avoid making the CLI the only usable interface.
+Notes: Avoid making the CLI the only usable interface. Full API smoke coverage is handled in T019.
 
 ## Phase 9: Approval basics
 
@@ -256,7 +256,7 @@ Dependencies: T006, T008, T015
 Acceptance criteria: Approval checkpoints support not_required, pending, approved, rejected, changes_requested and skipped states; rejection preserves artifacts and records an approval decision.
 Test requirements: Add direct approval model and state-transition tests in this task. Cross-workflow pause/resume and API approval coverage remains in T041.
 Parallelizable: no
-Notes: Keep approval simplified for MVP, but model it explicitly in the workflow state.
+Notes: Keep approval simplified for MVP, but model it explicitly in the workflow state. Cross-workflow pause/resume and API approval coverage is handled in T041.
 
 ## Phase 10: Tests
 
@@ -328,12 +328,12 @@ Notes: Call out what is reused, what is refactored, and what stays out of scope 
 Milestone: M001
 Epic: E003
 Risk: high
-Implementation files: `backend/app/domain/workflow_config.py`, `backend/app/domain/enums.py`, `backend/app/api/schemas.py`
+Implementation files: `backend/app/domain/workflow_config.py`, `backend/app/domain/enums.py`
 Test files: `backend/tests/unit/test_t021.py`
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Freeze the WorkflowConfig schema and reject invalid enum values, enabled/disabled module conflicts and invalid preset/content-type combinations.
-Dependencies: T005, T014
+Dependencies: T005
 Acceptance criteria: Valid short_video and long_form_script_voiceover configs pass; invalid enum values fail; any module in both enabledModules and disabledModules fails; provider validation runs after config validation.
 Test requirements: Add tests for valid short_video config, valid long_form_script_voiceover config, invalid enum, module conflict and validation ordering.
 Parallelizable: no
@@ -599,6 +599,21 @@ Acceptance criteria: API supports GET /workflow-runs/{runId}/approvals, POST app
 Test requirements: Add API tests for approve, reject, request changes and blocked resume.
 Parallelizable: no
 Notes: Route naming may use the repository's established API prefix.
+
+- [ ] T047 Synchronize API schema with WorkflowConfig
+Milestone: M001
+Epic: E005
+Risk: medium
+Implementation files: `backend/app/api/schemas.py`
+Test files: `backend/tests/unit/test_t047_api_schema_sync.py`
+Validation commands: `python -m pytest`; `git diff --check`
+Final PR review required: yes
+Goal: Keep the API schema aligned with the canonical WorkflowConfig after the domain-only remediation.
+Dependencies: T014
+Acceptance criteria: API schema reflects the canonical WorkflowConfig fields and enum constraints without reintroducing cross-epic dependency cycles.
+Test requirements: Add direct API schema synchronization tests.
+Parallelizable: yes
+Notes: This remediation task isolates API schema synchronization from the completed domain task T021.
 
 ## Phase 16: Remediation - usage tracking and expanded tests
 

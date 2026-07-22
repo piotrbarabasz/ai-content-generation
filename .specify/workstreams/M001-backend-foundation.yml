@@ -1,7 +1,7 @@
 id: M001
 title: Backend Foundation
 status: active
-goal: Establish the backend domain and workflow foundations for AI Content Studio.
+goal: Establish the execution-domain, workflow-engine, and artifact/provider foundations for AI Content Studio.
 epics:
   - E001
   - E002
@@ -10,4 +10,5 @@ completion_criteria:
   - Execution domain models are implemented and tested.
   - The provider-agnostic workflow engine is implemented and tested.
   - Artifact persistence and deterministic mock providers are available.
+  - Milestone and epic backlinks validate in both directions.
   - Completed tasks pass the single-task review gate.

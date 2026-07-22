@@ -12,9 +12,9 @@ These instructions govern repository work performed through the project-scoped C
   local `.specify/runtime/active-epic` file selects the current epic and is
   ignored runtime state, not a tracked source of truth.
 - Agents MUST NOT build semicolon-chained PowerShell validation commands.
-  Agents MUST invoke repository-provided validation modules and run external
-  commands separately with finite timeouts. A timeout is a structured failure,
-  not a reason for indefinite waiting or automatic retry.
+  Agents MUST invoke repository-provided validation modules. Every external
+  command MUST have a finite timeout. A timeout MUST produce a structured
+  failure and MUST NOT trigger automatic retries.
 - A specification or other Spec Kit artifact must not be modified without an explicit task package that authorizes the exact file and change. In the standard implementation loop, the programmer and debugger must never modify Spec Kit artifacts.
 
 ## Starting the implementation loop
@@ -24,15 +24,20 @@ Start one manager-gated run with one of these explicit invocations:
 ```text
 $speckit-loop next
 $speckit-loop T006
+$speckit-loop T006A
 ```
 
 - `$speckit-loop next` selects one unchecked task only after declared dependencies and actual repository evidence show that it is ready.
-- `$speckit-loop T###` validates and processes only that exact unchecked task.
+- `$speckit-loop T\d{3}[A-Z]?` validates and processes only that exact unchecked task.
 - Before baseline capture, the loop must run the read-only active-epic branch
   guard: `python -m backend.app.tooling.workstream_validation --guard <selector>`.
+  The guard runs the full read-only pipeline in this order:
+  `validate_manifests()`, `validate_task_epic_consistency()`,
+  `validate_active_epic()`.
 - It must also run `python -m backend.app.tooling.repository_checks --mode preflight`.
 - The guard never creates or switches branches and never commits, pushes,
   changes manifests, or writes runtime state.
+  If the guard fails, stop immediately and do not start any agent.
 
 To prepare an epic locally, use `$speckit-epic-start E###`. This workflow may
 create or switch only the declared epic branch after confirming that the
@@ -51,6 +56,10 @@ drift. It never creates a PR or performs commit, push, merge, deploy, fetch,
 pull, rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
 `SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
 LLM review remains required.
+After a passing review, the root orchestrator records an ignored receipt at
+`.specify/runtime/reviews/<EPIC_ID>.json` using the current `HEAD` SHA and the
+current base SHA. The receipt is invalidated by a new commit or a changed base
+branch, and `$speckit-epic-pr` must re-read both SHAs before trusting it.
 
 To prepare an epic pull request, use `$speckit-epic-pr`. It requires an already
 reviewed, clean, pushed epic branch and may create only a draft PR. It must not
@@ -58,7 +67,7 @@ push, merge, enable auto-merge, change branch protection, update epic status, or
 create a PR when any gate is missing; in that case it returns ready-to-copy PR
 title and body instead.
 - `$speckit-implement` is the bounded implementation worker used by `spec_programmer` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
-- Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T###` invocation.
+- Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T\d{3}[A-Z]?` invocation.
 - Review failures may use no more than two repair cycles. A second failed review ends the run without closure.
 - Only `spec_closer`, and only after `VERDICT: PASS` with `SAFE_TO_CLOSE: yes`, may change the selected checkbox in `tasks.md`.
 
@@ -158,7 +167,7 @@ Performs an independent, read-only, baseline-aware review against the package an
 
 ### `spec_closer`
 
-Has one bookkeeping responsibility: after verifying a matching `PASS`, `SAFE_TO_CLOSE: yes`, task ID, unchecked row, and conflict-free `tasks.md` baseline, it changes only `- [ ] T### ...` to `- [X] T### ...`. It must show the exact changed row and verify that it changed nothing else.
+Has one bookkeeping responsibility: after verifying a matching `PASS`, `SAFE_TO_CLOSE: yes`, task ID, unchecked row, and conflict-free `tasks.md` baseline, it changes only `- [ ] T\d{3}[A-Z]? ...` to `- [X] T\d{3}[A-Z]? ...`. It must show the exact changed row and verify that it changed nothing else.
 
 ## Review failure routing
 
