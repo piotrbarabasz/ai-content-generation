@@ -18,8 +18,6 @@ call unless all of these are true:
 
 - an active epic exists and its manifest is valid;
 - the current branch matches the epic `branch` and is not `master` or `main`;
-- `git status --short`, `git diff --name-only`, and
-  `git diff --cached --name-only` are empty;
 - every epic task is checked and has implementation/test evidence;
 - the review contains `VERDICT: PASS` and `SAFE_TO_CREATE_PR: yes`;
 - a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json` and
@@ -42,16 +40,12 @@ PASS from tests or checkboxes.
    ```powershell
    git remote -v
    git branch --show-current
-   git status --short
-   git --no-pager log --oneline <base_branch>..<epic_branch>
-   git --no-pager diff --name-only <base_branch>...<epic_branch>
-   git --no-pager diff --stat <base_branch>...<epic_branch>
    python -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>
    ```
 
    Do not request one full patch for the entire epic. When patch content is
    needed, inspect it only per file or for a small, explicit list of files.
-   Keep the summary commands bounded and read-only.
+   Keep the inspection bounded and read-only.
 
    Use read-only remote inspection to determine whether `<epic_branch>` exists
    remotely and whether a PR already exists. Do not fetch, pull, push, or alter

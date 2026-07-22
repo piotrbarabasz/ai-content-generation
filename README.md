@@ -31,6 +31,28 @@ py -3 -m pytest backend/tests
 
 The tests are written with `unittest` and are also pytest-discoverable once pytest is installed.
 
+## Developer Setup
+
+Install the local Git hooks and run the tooling smoke test with the helper scripts:
+
+```powershell
+scripts\setup-dev.ps1
+```
+
+```sh
+./scripts/setup-dev.sh
+```
+
+If you only want to install the hooks, run:
+
+```powershell
+scripts\install-git-hooks.ps1
+```
+
+```sh
+./scripts/install-git-hooks.sh
+```
+
 ## Configuration
 
 Runtime configuration should come from environment variables or local config files that are excluded from version control. Use `.env.example` as a placeholder-only reference.
@@ -39,7 +61,13 @@ Do not commit credentials, API keys, generated artifacts or agent runtime state.
 
 ## Agent-assisted Spec Kit implementation
 
-The project Codex workflow implements one Spec Kit task per explicit run. A read-only manager selects or validates the task, gates it on real dependencies and a clean task-specific baseline, and prepares a bounded package for implementation, validation and independent review.
+The project Codex workflow implements one Spec Kit task per explicit run. The
+root orchestrator first captures `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`,
+then runs the bounded implementation task, and finally captures
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json` for
+review evidence. The manager selects or validates the task from the preflight
+report, gates it on real dependencies and the task baseline, and prepares a
+bounded package for implementation and independent review.
 
 Start the next dependency-ready task with:
 
@@ -59,18 +87,18 @@ The task is closed only after the reviewer returns `PASS` and confirms it is saf
 Delivery hierarchy is milestone -> epic -> task -> commit: an epic groups tasks on one branch and into one pull request, while each task remains an independent `$speckit-loop` run and a human-controlled commit.
 
 Before running `$speckit-loop`, place the active epic ID (for example `E001`)
-in the local ignored file `.specify/runtime/active-epic` and check out the branch
-declared by that epic manifest. The loop validates this context before baseline
-capture by running `validate_manifests()`, `validate_task_epic_consistency()`,
-and `validate_active_epic()`, then never creates or switches branches.
-If the guard fails, the loop stops immediately and does not start any agent.
+in the local ignored file `.specify/runtime/active-epic` and check out the
+branch declared by that epic manifest. The loop consumes the preflight report
+and does not run repository validation modules or raw Git inventory commands
+directly. If preflight fails, the loop stops immediately and does not start
+any agent.
 
 Task IDs are exact uppercase identifiers matching `T\d{3}[A-Z]?`, for example `T006` or `T006A`.
 
 After all tasks in an epic are complete, run `$speckit-epic-review` for a
-read-only review of the full epic diff, commits, tests, acceptance criteria,
-security and scope. It reports whether a human may create the PR; it never
-creates, merges or pushes one.
+read-only review of the completed epic using the finalizer reports, tests,
+acceptance criteria, security and scope. It reports whether a human may create
+the PR; it never creates, merges or pushes one.
 
 When the review passes, the root orchestrator writes an ignored receipt at
 `.specify/runtime/reviews/<EPIC_ID>.json` using the current `HEAD` SHA and the

@@ -19,27 +19,9 @@ or perform unrelated changes.
    ```
 2. Read `.specify/runtime/active-epic`, the selected epic manifest, and its
    milestone manifest. Require the runtime selector to match the selected epic.
-3. Run:
-
-   ```powershell
-   python -m backend.app.tooling.workstream_validation
-   ```
-
-   Stop before writes if manifest validation fails.
-4. Capture working-tree evidence with:
-
-   ```powershell
-   git status --short
-   git diff --name-only
-   git diff --cached --name-only
-   git ls-files --others --exclude-standard
-   ```
-
-   Stop if there are unrelated changes. Do not reset, stash, stage, normalize,
-   or overwrite anything.
-5. Require epic status `active` or `review`, every listed task checked, and
+3. Require epic status `active` or `review`, every listed task checked, and
    task evidence consistent with the epic. Never modify task checkboxes.
-6. If a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json`,
+4. If a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json`,
    remove only the selected epic's receipt after the close preconditions pass
    by invoking `python -m backend.app.tooling.epic_review_receipt delete
    --epic <EPIC_ID>`.

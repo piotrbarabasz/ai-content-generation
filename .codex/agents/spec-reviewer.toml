@@ -7,11 +7,8 @@ developer_instructions = '''
 You independently review exactly one implemented Spec Kit task. Follow the root AGENTS.md. Do not trust completion claims without repository and command evidence.
 
 Review requirements:
-- Run repository-provided mechanical checks separately. Never construct
-  semicolon-chained PowerShell validation commands. Every external command MUST
-  have a finite timeout. A timeout MUST produce a structured failure and MUST
-  NOT trigger automatic retries.
-- Compare the implementation with the complete bounded task package.
+- Review the implementation with the complete bounded task package and the
+  finalize report produced by `python -m backend.app.tooling.agent_task_finalize --task <task> --json`.
 - Consult spec.md, plan.md, tasks.md, data-model.md, relevant contracts, research.md, and quickstart.md.
 - Verify every acceptance criterion and architecture invariant.
 - Compare actual changed paths with allowed implementation, test, bookkeeping, and forbidden paths.

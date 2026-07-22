@@ -26,14 +26,5 @@ jobs:
       - name: Install project
         run: python -m pip install -e .
 
-      - name: Run unit tooling tests
-        run: python -m pytest backend/tests/unit/tooling
-
-      - name: Validate workstream guard
-        run: python -m backend.app.tooling.workstream_validation
-
-      - name: Validate repository task metadata
-        run: python -m backend.app.tooling.repository_checks --mode task-metadata --json
-
-      - name: Check diff formatting
-        run: git --no-pager diff --check
+      - name: Run agent system hooks
+        run: python -m backend.app.tooling.git_hook_runner ci

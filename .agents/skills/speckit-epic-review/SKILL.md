@@ -14,14 +14,8 @@ modify code, tasks, manifests, runtime state, or Git history.
 1. Read `.specify/runtime/active-epic`. Stop with a blocking finding if it is
    missing or empty.
 2. Read the active epic manifest from `.specify/workstreams/` and its milestone
-   manifest. Run:
-
-   ```powershell
-   python -m backend.app.tooling.workstream_validation
-   python -m backend.app.tooling.repository_checks --mode pre-review --json
-   ```
-
-   Include validation failures in `BLOCKING_ISSUES` and continue collecting
+   manifest. Consume the task finalize reports produced during the loop and
+   include report failures in `BLOCKING_ISSUES` while continuing to collect
    other read-only evidence when safe.
 3. Read the active feature artifacts under the epic's `feature` directory:
    `spec.md`, `plan.md`, `tasks.md`, available data model/contracts/research/
@@ -29,16 +23,11 @@ modify code, tasks, manifests, runtime state, or Git history.
 4. Read the current branch and compare it with the epic `branch`. Read the
    local base branch without changing branches. Stop or mark FAIL when the
    current branch is wrong, is `master`/`main`, or the base branch is absent.
-5. Inspect, without changing anything:
-
-   Use `repository_checks --mode pre-review` for mechanical checks. Summarize
-   the epic with `git diff --name-only <base_branch>...<epic_branch>`,
-   `git diff --stat <base_branch>...<epic_branch>`, and
-   `git log --oneline <base_branch>..<epic_branch>`. If patch content is
-   needed, inspect it only per file or for a small explicit list of files.
-   Do not request one full diff for the entire epic. Every external command
-   MUST have a finite timeout. A timeout MUST produce a structured failure and
-   MUST NOT trigger automatic retries.
+5. Inspect, without changing anything. Use the review receipt, the task
+   finalize reports, and bounded per-file inspection when patch content is
+   needed. Do not request one full diff for the entire epic. Every external
+   command MUST have a finite timeout. A timeout MUST produce a structured
+   failure and MUST NOT trigger automatic retries.
 
    If the repository is dirty, distinguish pre-existing changes from epic
    changes and report relevant baseline conflicts. Never stash, reset, stage,

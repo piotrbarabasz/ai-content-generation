@@ -1,0 +1,467 @@
+"""Deterministic task finalization checks for agent task completion."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+from . import repository_checks
+from .task_consistency import _field_value as _task_field_value
+from .task_consistency import _iter_task_blocks as _task_iter_blocks
+
+ROOT = Path(__file__).resolve().parents[3]
+TASKS_FILE = ROOT / "specs" / "001-ai-content-studio" / "tasks.md"
+TASK_RUNS_DIR = ROOT / ".specify" / "runtime" / "task-runs"
+TIMEOUT_SECONDS = 20
+TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    name: str
+    status: str
+    details: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class FinalizeResult:
+    status: str
+    exit_code: int
+    task_id: str
+    epic_id: str
+    branch: str
+    head_sha: str | None
+    baseline_path: str | None
+    allowlist: tuple[str, ...]
+    validation_commands: tuple[str, ...]
+    checks: tuple[CheckResult, ...]
+    reasons: tuple[str, ...]
+
+
+class TaskUsageError(ValueError):
+    """Raised when the task selector is invalid."""
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.update({"GIT_PAGER": "cat", "PAGER": "cat", "TERM": "dumb"})
+    return env
+
+
+def _run_git(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
+        cwd=ROOT,
+        shell=False,
+        timeout=TIMEOUT_SECONDS,
+        capture_output=True,
+        text=True,
+        env=_git_env(),
+        check=False,
+    )
+
+
+def _git_stdout(command: Sequence[str]) -> str:
+    result = _run_git(command)
+    if result.returncode != 0:
+        output = (result.stdout or "").strip() or (result.stderr or "").strip()
+        raise RuntimeError(f"git command failed: {' '.join(command)}: {output or 'unknown error'}")
+    return result.stdout.strip()
+
+
+def _task_argument(value: str) -> str:
+    value = value.strip()
+    if not TASK_ID_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError("task must match T### or T###A")
+    return value
+
+
+def _is_none_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    return (
+        normalized == "none"
+        or normalized.startswith("none ")
+        or normalized.startswith("none(")
+        or normalized.startswith("none.")
+        or normalized.startswith("none,")
+        or normalized.startswith("none:")
+        or normalized.startswith("none;")
+        or normalized.startswith("none-")
+        or normalized == "n/a"
+        or normalized == "na"
+        or normalized == "[]"
+    )
+
+
+def _split_comma_list(value: str) -> list[str]:
+    if _is_none_value(value):
+        return []
+    items: list[str] = []
+    for raw_item in value.split(","):
+        item = raw_item.strip().strip("`")
+        if item:
+            items.append(item)
+    return items
+
+
+def _split_validation_commands(value: str) -> list[str]:
+    if _is_none_value(value):
+        return []
+    commands: list[str] = []
+    for raw_item in value.split(";"):
+        command = raw_item.strip()
+        if command:
+            commands.append(command)
+    return commands
+
+
+def _load_task_block(task_id: str) -> tuple[int, list[tuple[int, str]]]:
+    if not TASKS_FILE.is_file():
+        raise FileNotFoundError(f"tasks file does not exist: {TASKS_FILE}")
+    for found_task_id, start_line, lines in _task_iter_blocks(TASKS_FILE):
+        if found_task_id == task_id:
+            return start_line, lines
+    raise FileNotFoundError(f"task does not exist in tasks.md: {task_id}")
+
+
+def _task_field(lines: list[tuple[int, str]], field_name: str) -> tuple[int, str] | None:
+    return _task_field_value(lines, field_name)
+
+
+def _load_task_context(task_id: str) -> dict[str, Any]:
+    start_line, lines = _load_task_block(task_id)
+    epic = _task_field(lines, "Epic:")
+    milestone = _task_field(lines, "Milestone:")
+    implementation = _task_field(lines, "Implementation files:")
+    test_files = _task_field(lines, "Test files:")
+    validation_commands = _task_field(lines, "Validation commands:")
+    if epic is None:
+        raise ValueError(f"{TASKS_FILE.name}:{start_line}: task {task_id} does not declare an epic")
+    if milestone is None:
+        raise ValueError(f"{TASKS_FILE.name}:{start_line}: task {task_id} does not declare a milestone")
+    if implementation is None:
+        raise ValueError(f"{TASKS_FILE.name}:{start_line}: task {task_id} does not declare implementation files")
+    if test_files is None:
+        raise ValueError(f"{TASKS_FILE.name}:{start_line}: task {task_id} does not declare test files")
+    if validation_commands is None:
+        raise ValueError(f"{TASKS_FILE.name}:{start_line}: task {task_id} does not declare validation commands")
+
+    implementation_files = tuple(_split_comma_list(implementation[1]))
+    test_file_list = tuple(_split_comma_list(test_files[1]))
+    commands = tuple(_split_validation_commands(validation_commands[1]))
+    return {
+        "task_id": task_id,
+        "task_line": start_line,
+        "epic_id": epic[1].strip(),
+        "epic_line": epic[0],
+        "milestone_id": milestone[1].strip(),
+        "milestone_line": milestone[0],
+        "implementation_files": implementation_files,
+        "test_files": test_file_list,
+        "allowlist": tuple(list(implementation_files) + list(test_file_list)),
+        "validation_commands": commands,
+    }
+
+
+def _baseline_path(task_id: str) -> Path:
+    return TASK_RUNS_DIR / task_id / "baseline.json"
+
+
+def _load_json_mapping(path: Path) -> dict[str, Any]:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"baseline does not exist: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path.name}: invalid JSON: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path.name}: baseline must be a JSON object")
+    return loaded
+
+
+def _current_snapshot() -> dict[str, Any]:
+    return {
+        "head_sha": _git_stdout(["git", "rev-parse", "HEAD"]),
+        "branch": _git_stdout(["git", "branch", "--show-current"]),
+        "tracked": _git_stdout(["git", "diff", "--name-only"]).splitlines(),
+        "staged": _git_stdout(["git", "diff", "--cached", "--name-only"]).splitlines(),
+        "untracked": _git_stdout(["git", "ls-files", "--others", "--exclude-standard"]).splitlines(),
+    }
+
+
+def _path_allowed(path: str, allowlist: Sequence[str]) -> bool:
+    normalized_path = path.replace("\\", "/").strip()
+    if not normalized_path:
+        return False
+    for item in allowlist:
+        normalized_item = item.replace("\\", "/").strip().rstrip("/")
+        if not normalized_item:
+            continue
+        if normalized_path == normalized_item:
+            return True
+        if normalized_path.startswith(f"{normalized_item}/"):
+            return True
+    return False
+
+
+def _scoped_paths(snapshot: dict[str, Any]) -> set[str]:
+    return set(str(path) for path in snapshot.get("tracked", [])) | set(
+        str(path) for path in snapshot.get("staged", [])
+    ) | set(str(path) for path in snapshot.get("untracked", []))
+
+
+def _make_check(name: str, status: str, **details: Any) -> CheckResult:
+    return CheckResult(name=name, status=status, details=details)
+
+
+def _load_baseline(task_id: str) -> tuple[dict[str, Any], Path]:
+    path = _baseline_path(task_id)
+    baseline = _load_json_mapping(path)
+    return baseline, path
+
+
+def _validation_command_results(commands: Sequence[str]) -> tuple[list[dict[str, Any]], str]:
+    results: list[dict[str, Any]] = []
+    overall = "PASS"
+    for command in commands:
+        run = repository_checks.run_process(shlex.split(command, posix=False))
+        run["command_text"] = command
+        results.append(run)
+        if run["status"] == "TIMEOUT":
+            overall = "TIMEOUT"
+        elif run["status"] != "PASS" and overall != "TIMEOUT":
+            overall = "FAIL"
+    return results, overall
+
+
+def run_finalize(task_id: str) -> FinalizeResult:
+    task_context = _load_task_context(task_id)
+    baseline, baseline_path = _load_baseline(task_id)
+    current = _current_snapshot()
+
+    reasons: list[str] = []
+    checks: list[CheckResult] = []
+
+    baseline_task = str(baseline.get("task") or "")
+    baseline_epic = str(baseline.get("epic") or "")
+    baseline_branch = str(baseline.get("branch") or "")
+    baseline_head_sha = str(baseline.get("head_sha") or "")
+    baseline_paths = {
+        *(str(path) for path in baseline.get("tracked", [])),
+        *(str(path) for path in baseline.get("staged", [])),
+        *(str(path) for path in baseline.get("untracked", [])),
+    }
+    current_paths = _scoped_paths(current)
+    allowlist = task_context["allowlist"]
+    task_validation_commands = task_context["validation_commands"]
+    baseline_rel_path = baseline_path.relative_to(ROOT).as_posix()
+
+    if baseline_task != task_id:
+        reasons.append(f"baseline task is {baseline_task!r}, expected {task_id!r}")
+    if baseline_epic != task_context["epic_id"]:
+        reasons.append(f"baseline epic is {baseline_epic!r}, expected {task_context['epic_id']!r}")
+    if not baseline_branch:
+        reasons.append("baseline branch is missing")
+
+    checks.append(
+        _make_check(
+            "baseline",
+            "PASS" if not reasons else "FAIL",
+            path=str(baseline_path),
+            task=baseline_task,
+            epic=baseline_epic,
+            branch=baseline_branch,
+            head_sha=baseline_head_sha,
+        )
+    )
+    if reasons:
+        return FinalizeResult(
+            status="FAIL",
+            exit_code=1,
+            task_id=task_id,
+            epic_id=task_context["epic_id"],
+            branch=baseline_branch or "",
+            head_sha=baseline_head_sha or None,
+            baseline_path=baseline_path.as_posix(),
+            allowlist=allowlist,
+            validation_commands=task_validation_commands,
+            checks=tuple(checks),
+            reasons=tuple(reasons),
+        )
+
+    if not baseline_head_sha:
+        reasons.append("baseline head SHA is missing")
+    elif current["head_sha"] != baseline_head_sha:
+        reasons.append(f"current HEAD {current['head_sha']!r} does not match baseline {baseline_head_sha!r}")
+    checks.append(
+        _make_check(
+            "head",
+            "PASS" if not reasons else "FAIL",
+            current=current["head_sha"],
+            baseline=baseline_head_sha,
+        )
+    )
+
+    branch_reasons: list[str] = []
+    if not baseline_branch:
+        branch_reasons.append("baseline branch is missing")
+    elif current["branch"] != baseline_branch:
+        branch_reasons.append(f"current branch {current['branch']!r} does not match baseline {baseline_branch!r}")
+    checks.append(
+        _make_check(
+            "branch",
+            "PASS" if not branch_reasons else "FAIL",
+            current=current["branch"],
+            baseline=baseline_branch,
+        )
+    )
+    reasons.extend(branch_reasons)
+
+    allowlist_reasons: list[str] = []
+    if not task_context["epic_id"]:
+        allowlist_reasons.append("task does not declare an epic")
+    elif not TASK_ID_PATTERN.fullmatch(task_id):
+        allowlist_reasons.append(f"invalid task id {task_id!r}")
+    checks.append(
+        _make_check(
+            "allowlist",
+            "PASS" if not allowlist_reasons else "FAIL",
+            epic=task_context["epic_id"],
+            milestone=task_context["milestone_id"],
+            implementation_files=list(task_context["implementation_files"]),
+            test_files=list(task_context["test_files"]),
+            allowlist=list(allowlist),
+            validation_commands=list(task_validation_commands),
+        )
+    )
+    reasons.extend(allowlist_reasons)
+
+    baseline_only = baseline_paths - current_paths
+    current_only = current_paths - baseline_paths
+    unexpected_added = sorted(path for path in current_only if not _path_allowed(path, allowlist) and path != baseline_rel_path)
+    unexpected_removed = sorted(
+        path
+        for path in baseline_only
+        if path != baseline_rel_path and not _path_allowed(path, allowlist)
+    )
+    missing_baseline = baseline_rel_path not in current_paths
+    scope_reasons: list[str] = []
+    if missing_baseline:
+        scope_reasons.append(f"baseline path is missing: {baseline_rel_path}")
+    if unexpected_added:
+        scope_reasons.append(f"unexpected added paths: {', '.join(unexpected_added)}")
+    if unexpected_removed:
+        scope_reasons.append(f"unexpected removed paths: {', '.join(unexpected_removed)}")
+    checks.append(
+        _make_check(
+            "scope_drift",
+            "PASS" if not scope_reasons else "FAIL",
+            baseline_paths=sorted(baseline_paths),
+            current_paths=sorted(current_paths),
+            added_paths=sorted(current_only),
+            removed_paths=sorted(baseline_only),
+            unexpected_added=unexpected_added,
+            unexpected_removed=unexpected_removed,
+            allowlist=list(allowlist),
+            baseline_path=baseline_rel_path,
+        )
+    )
+    reasons.extend(scope_reasons)
+
+    command_results, command_status = _validation_command_results(task_validation_commands)
+    checks.append(
+        _make_check(
+            "validation_commands",
+            command_status,
+            commands=command_results,
+        )
+    )
+
+    if command_status == "TIMEOUT":
+        exit_code = 3
+        status = "TIMEOUT"
+    elif reasons or command_status != "PASS":
+        exit_code = 1
+        status = "FAIL"
+    else:
+        exit_code = 0
+        status = "PASS"
+
+    return FinalizeResult(
+        status=status,
+        exit_code=exit_code,
+        task_id=task_id,
+        epic_id=task_context["epic_id"],
+        branch=current["branch"],
+        head_sha=current["head_sha"],
+        baseline_path=baseline_path.as_posix(),
+        allowlist=allowlist,
+        validation_commands=task_validation_commands,
+        checks=tuple(checks),
+        reasons=tuple(reasons),
+    )
+
+
+def _payload(result: FinalizeResult) -> dict[str, Any]:
+    return {
+        "status": result.status,
+        "exit_code": result.exit_code,
+        "task": result.task_id,
+        "epic": result.epic_id,
+        "branch": result.branch,
+        "head_sha": result.head_sha,
+        "baseline_path": result.baseline_path,
+        "allowlist": list(result.allowlist),
+        "validation_commands": list(result.validation_commands),
+        "checks": [
+            {"name": check.name, "status": check.status, "details": check.details}
+            for check in result.checks
+        ],
+        "reasons": list(result.reasons),
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="backend.app.tooling.agent_task_finalize")
+    parser.add_argument("--task", required=True, type=_task_argument)
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    try:
+        args = parser.parse_args(list(argv) if argv is not None else None)
+    except SystemExit as exc:
+        return int(exc.code)
+
+    try:
+        result = run_finalize(args.task)
+    except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
+        result = FinalizeResult(
+            status="FAIL",
+            exit_code=1,
+            task_id=args.task,
+            epic_id="",
+            branch="",
+            head_sha=None,
+            baseline_path=_baseline_path(args.task).as_posix(),
+            allowlist=(),
+            validation_commands=(),
+            checks=(CheckResult(name="baseline", status="FAIL", details={"error": str(exc)}),),
+            reasons=(str(exc),),
+        )
+    print(json.dumps(_payload(result), ensure_ascii=False, indent=2))
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -22,6 +22,8 @@ Implementation rules:
 - Edit only allowed implementation files and allowed test files. Bookkeeping files are not writable by this role.
 - Make the smallest defensive change that satisfies the package and preserve existing repository conventions.
 - Preserve all architecture invariants and deterministic behavior.
+- Do not run repository validation or raw Git inventory commands; implementation
+  is driven by the approved package and the preflight report.
 - Do not implement adjacent tasks, perform broad refactors, fix pre-existing issues, or expand scope for cleanup.
 - Do not edit spec.md, plan.md, tasks.md, data-model.md, contracts, research.md, quickstart.md, the constitution, or other Spec Kit artifacts.
 - Do not commit, push, merge, force-push, or deploy.

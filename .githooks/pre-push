@@ -1,0 +1,2 @@
+#!/bin/sh
+python -m backend.app.tooling.git_hook_runner pre-push

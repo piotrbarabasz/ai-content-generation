@@ -13,10 +13,10 @@ commits, architecture invariants, tests, security hygiene, scope drift and
 cross-task consistency. Run only manifest `required_checks`; do not run network
 commands or real providers.
 
-Run `python -m backend.app.tooling.repository_checks --mode pre-review --json`
-for mechanical checks. Do not build semicolon-chained PowerShell commands.
-Every external command MUST have a finite timeout. A timeout MUST produce a
-structured failure and MUST NOT trigger automatic retries.
+Consume the finalized task reports and the review receipt rather than running
+task-level validation modules directly. Every external command MUST have a
+finite timeout. A timeout MUST produce a structured failure and MUST NOT
+trigger automatic retries.
 
 Never edit code, tasks, manifests, runtime state or Git history. Never commit,
 push, merge, create a PR, deploy, fetch, pull, rebase, stash, reset, stage, or

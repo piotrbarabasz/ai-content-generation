@@ -11,10 +11,9 @@ These instructions govern repository work performed through the project-scoped C
 - `.specify/workstreams/` contains static milestone and epic manifests. The
   local `.specify/runtime/active-epic` file selects the current epic and is
   ignored runtime state, not a tracked source of truth.
-- Agents MUST NOT build semicolon-chained PowerShell validation commands.
-  Agents MUST invoke repository-provided validation modules. Every external
-  command MUST have a finite timeout. A timeout MUST produce a structured
-  failure and MUST NOT trigger automatic retries.
+- The task loop uses `agent_task_preflight --json` before implementation and
+  `agent_task_finalize --json` after implementation. Agents do not run
+  repository validation modules directly.
 - A specification or other Spec Kit artifact must not be modified without an explicit task package that authorizes the exact file and change. In the standard implementation loop, the programmer and debugger must never modify Spec Kit artifacts.
 
 ## Starting the implementation loop
@@ -29,47 +28,43 @@ $speckit-loop T006A
 
 - `$speckit-loop next` selects one unchecked task only after declared dependencies and actual repository evidence show that it is ready.
 - `$speckit-loop T\d{3}[A-Z]?` validates and processes only that exact unchecked task.
-- Before baseline capture, the loop must run the read-only active-epic branch
-  guard: `python -m backend.app.tooling.workstream_validation --guard <selector>`.
-  The guard runs the full read-only pipeline in this order:
-  `validate_manifests()`, `validate_task_epic_consistency()`,
-  `validate_active_epic()`.
-- It must also run `python -m backend.app.tooling.repository_checks --mode preflight`.
-- The guard never creates or switches branches and never commits, pushes,
-  changes manifests, or writes runtime state.
-  If the guard fails, stop immediately and do not start any agent.
+- Before implementation, the root orchestrator runs
+  `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
+  That report provides the active epic, branch, baseline snapshot, readiness
+  checks, and the task selected for implementation.
+- The preflight report is read-only and never creates or switches branches,
+  commits, pushes, changes manifests, or writes runtime state. If preflight
+  fails, stop immediately and do not start any agent.
 
 To prepare an epic locally, use `$speckit-epic-start E###`. This workflow may
 create or switch only the declared epic branch after confirming that the
-repository is clean, the local base branch exists, the epic is `active`, and
-all epic dependencies are `completed`. It must not fetch, pull, rebase, merge,
-push, commit, create a PR, reset a branch, or modify workstream manifests.
-It may write only the ignored `.specify/runtime/active-epic` selector. If the
-working tree is dirty or the epic is not active, it must stop and report the
-exact paths or required human manifest change.
+repository context is correct and all epic dependencies are completed. It must
+not fetch, pull, rebase, merge, push, commit, create a PR, reset a branch, or
+modify workstream manifests. It may write only the ignored
+`.specify/runtime/active-epic` selector. If the epic is not active, it must
+stop and report the required human manifest change.
 
 To review the complete active epic before a pull request, use
-`$speckit-epic-review`. The review is strictly read-only, runs only manifest
-`required_checks`, and must inspect task evidence, the full branch diff,
-commits, acceptance criteria, architecture invariants, security and scope
-drift. It never creates a PR or performs commit, push, merge, deploy, fetch,
-pull, rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
+`$speckit-epic-review`. The review is strictly read-only, relies on the task
+finalize reports produced during the loop, and must inspect task evidence,
+acceptance criteria, architecture invariants, security and scope drift. It
+never creates a PR or performs commit, push, merge, deploy, fetch, pull,
+rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
 `SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
-LLM review remains required.
-After a passing review, the root orchestrator records an ignored receipt by
-invoking `python -m backend.app.tooling.epic_review_receipt write --epic
-<EPIC_ID> --review-json <path>`. The CLI reads the current `HEAD` SHA, the
-current base SHA, the active epic, the epic manifest, the milestone manifest,
-and the required checks. The receipt is invalidated by a new commit or a
-changed base branch, and `$speckit-epic-pr` must re-validate it with
-`python -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>`
-before trusting it.
+LLM review remains required. After a passing review, the root orchestrator
+records an ignored receipt by invoking `python -m backend.app.tooling.
+epic_review_receipt write --epic <EPIC_ID> --review-json <path>`. The CLI
+reads the current `HEAD` SHA, the current base SHA, the active epic, the epic
+manifest, the milestone manifest, and the required checks. The receipt is
+invalidated by a new commit or a changed base branch, and
+`$speckit-epic-pr` must re-validate it with `python -m backend.app.tooling.
+epic_review_receipt validate --epic <EPIC_ID>` before trusting it.
 
 To prepare an epic pull request, use `$speckit-epic-pr`. It requires an already
 reviewed, clean, pushed epic branch and may create only a draft PR. It must not
-push, merge, enable auto-merge, change branch protection, update epic status, or
-create a PR when any gate is missing; in that case it returns ready-to-copy PR
-title and body instead.
+push, merge, enable auto-merge, change branch protection, update epic status,
+or create a PR when any gate is missing; in that case it returns ready-to-copy
+PR title and body instead.
 
 Task risk routing:
 - The manager package must include `RISK_LEVEL`, `PROGRAMMER_ROUTE`, and
@@ -85,14 +80,11 @@ For epic close merge evidence, use `python -m backend.app.tooling.epic_close_evi
 fast-forward evidence only; rebase and squash still require GitHub metadata or
 another authoritative artifact.
 
-For PR-related shell safety, keep diff inspection bounded: use
-`git --no-pager diff --name-only <base_branch>...<epic_branch>`,
-`git --no-pager diff --stat <base_branch>...<epic_branch>`, and
-`git --no-pager log --oneline <base_branch>..<epic_branch>` for summaries.
-Fetch patch content only for specific files or a short explicit file list.
-Do not require one full epic patch output for the whole epic.
-Use `python -m backend.app.tooling.epic_review_receipt` for receipt write,
-validate, and delete operations instead of ad hoc Python snippets.
+For PR-related review, rely on the epic review receipt and task finalize
+reports. Inspect patch content only for specific files or a short explicit file
+list when required. Do not require one full epic patch output for the whole
+epic. Use `python -m backend.app.tooling.epic_review_receipt` for receipt
+write, validate, and delete operations instead of ad hoc Python snippets.
 - `$speckit-implement` is the bounded implementation worker used by `spec_programmer_fast` or `spec_programmer_high` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
 - Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T\d{3}[A-Z]?` invocation.
 - Review failures may use no more than two repair cycles. A second failed review ends the run without closure.
@@ -129,26 +121,27 @@ Rules for every run:
 
 ## Baseline repository state
 
-Before selecting a task, `spec_manager` must capture and retain the output of:
+Before selecting a task, `spec_manager` must consume the baseline inventory
+captured by `agent_task_preflight --json`.
 
-```text
-git status --short
-git diff --name-only
-git diff --cached --name-only
-```
-
-The baseline includes modified, staged, deleted, renamed, and untracked paths. It must be included in the task package and every review handoff.
-
-- Stop before implementation if any file needed by the task was already changed at baseline.
-- Never overwrite, normalize, stage, revert, or incorporate a pre-existing change.
-- A dirty repository alone is not grounds for rejection. Explorer and reviewer must compare task changes with the recorded baseline and identify only relevant conflicts or new drift.
+- The preflight report includes modified, staged, deleted, renamed, and
+  untracked paths.
+- It must be included in the task package and every review handoff.
+- Stop before implementation if any file needed by the task was already changed
+  at baseline.
+- Never overwrite, normalize, stage, revert, or incorporate a pre-existing
+  change.
+- A dirty repository alone is not grounds for rejection. Explorer and reviewer
+  must compare task changes with the recorded baseline and identify only
+  relevant conflicts or new drift.
 - If `tasks.md` was changed at baseline, `spec_closer` must not edit it.
 
 ## Task readiness and package boundary
 
 For `next`, the manager must choose a task only after its declared and actual dependencies are satisfied. A lower task number and a checked dependency are not enough; explorer must find supporting code and test evidence.
 
-Before any write-capable role starts, the manager must issue a bounded task package containing:
+Before any write-capable role starts, the manager must issue a bounded task
+package containing:
 
 1. task ID;
 2. exact task text;

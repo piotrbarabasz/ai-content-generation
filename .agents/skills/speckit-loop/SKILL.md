@@ -69,56 +69,32 @@ If any mandatory checklist has unchecked items:
 
 Continue only when every mandatory checklist is complete.
 
-## 4. Validate the active epic and branch guard
+## 4. Consume preflight, then implement
 
-Before capturing the baseline or invoking any agent, run:
+Before any agent is invoked, the root orchestrator runs
+`python -m backend.app.tooling.agent_task_preflight --json` for the selected
+task selector. That report supplies the active epic, branch, baseline
+inventory, readiness checks, and task selection. The manager and explorer
+consume that report; they do not run repository validation or raw Git
+inventory commands directly.
 
-```powershell
-python -m backend.app.tooling.workstream_validation --guard <selector>
-python -m backend.app.tooling.repository_checks --mode preflight
-```
+The preflight report is read-only and never creates or switches branches,
+commits, pushes, changes manifests, or writes runtime state. If preflight
+fails, stop immediately and do not invoke any agent.
 
-The guard runs the full read-only pipeline before any branch-dependent
-selection or baseline capture: `validate_manifests()`,
-`validate_task_epic_consistency()`, and `validate_active_epic()`. It reads
-`.specify/runtime/active-epic`, the matching manifest under
-`.specify/workstreams/`, the task queue, and the current branch. It must stop
-when manifests are invalid, task-to-epic consistency fails, the active epic or
-manifest is missing, the epic is not `active`, the branch is `master` or
-`main`, the branch does not match the manifest, a dependency is not
-`completed`, or the selected task is outside the active epic. Errors must show
-the active epic, expected branch, current branch, selector, exact reason, and
-a safe next step.
+`next` may consider only unchecked tasks in the active epic; an explicit task
+ID matching `T\d{3}[A-Z]?` must belong to that epic. The one-task-per-run and
+closer-only completion rules remain unchanged.
 
-The guard is read-only: it never creates or switches branches, commits,
-pushes, changes manifests, or writes runtime state. A successful guard is
-required before baseline capture. `next` may consider only unchecked tasks in
-  the active epic; an explicit task ID matching `T\d{3}[A-Z]?` must belong to that epic. The one-task
-per-run and closer-only completion rules remain unchanged.
-If the guard fails, stop immediately and do not invoke any agent.
+## 5. Consume the preflight baseline
 
-Use repository-provided validation modules for mechanical checks. Agents MUST
-NOT build semicolon-chained PowerShell validation commands. Every external
-command MUST have a finite timeout. A timeout MUST produce a structured
-failure and MUST NOT trigger automatic retries.
-
-## 5. Capture the pre-loop baseline
-
-Before invoking the first agent, run and retain the exact output of:
-
-```text
-git status --short
-git diff --name-only
-git diff --cached --name-only
-```
-
-Also expand untracked directories with `git ls-files --others --exclude-standard`. Store the baseline in the root thread and classify paths as:
-
-- tracked unstaged modifications, deletions, or renames;
-- staged changes;
-- untracked files.
-
-Preserve raw command output and the expanded path inventory. Earlier unrelated changes do not fail the loop by themselves. Include them in every manager and reviewer handoff. If implementation or validation needs a path that was dirty at baseline, stop before implementation. No agent may overwrite, absorb, normalize, revert, or claim ownership of that path.
+The preflight report already contains the baseline inventory, including
+tracked, staged, deleted, renamed, and untracked paths. Store that report in
+the root thread and include it in every manager and reviewer handoff. Earlier
+unrelated changes do not fail the loop by themselves. If implementation or
+validation needs a path that was dirty at baseline, stop before
+implementation. No agent may overwrite, absorb, normalize, revert, or claim
+ownership of that path.
 
 ## 6. Select and explore one task
 
@@ -132,6 +108,7 @@ spec_manager
   -> spec_manager
   -> PROGRAMMER_ROUTE
   -> spec_debugger
+  -> agent_task_finalize --json
   -> spec_reviewer
 ```
 
@@ -139,7 +116,8 @@ Never run two write-capable agents concurrently. `PROGRAMMER_ROUTE` must be exac
 
 ### Manager selection pass
 
-Give `spec_manager` the selector, feature context, complete task queue, and baseline.
+Give `spec_manager` the selector, feature context, complete task queue, and
+the preflight report.
 
 For `next`, require the manager to:
 
@@ -152,7 +130,10 @@ For an explicit task ID matching `T\d{3}[A-Z]?`, require the manager to verify t
 
 ### Explorer pass
 
-Give `spec_explorer` the nominated task, feature context, and baseline. Require concrete path and symbol evidence for readiness, existing implementation, tests, validation commands, minimal file allowlists, and baseline conflicts. The explorer must not edit.
+Give `spec_explorer` the nominated task, feature context, and preflight report.
+Require concrete path and symbol evidence for readiness, existing
+implementation, tests, minimal file allowlists, and baseline conflicts. The
+explorer must not edit or validate.
 
 ### Final manager pass
 
@@ -201,7 +182,7 @@ Require the programmer to:
 
 If `RISK_LEVEL` is `critical`, stop before any programmer handoff until the human checkpoint is explicitly recorded. High-risk packages must carry the full architecture justification and exact allowlists in the package.
 
-## 8. Debug and validate
+## 7. Debug and validate
 
 Give `spec_debugger` the package and programmer report. Run only package-approved commands, task-focused first and broader checks second. Commands may include, when supported by the repository and selected by the manager:
 
@@ -209,12 +190,19 @@ Give `spec_debugger` the package and programmer report. Run only package-approve
 python -m pytest <task-focused-tests>
 python -m pytest
 python -m compileall backend/app backend/tests
-git diff --check
 ```
 
-Do not require `ruff` unless repository configuration proves it is available. Do not make real provider calls or network requests. Require the debugger to report every command, exit status, and result. Permit only minimal fixes in the implementation and test allowlists; stop on baseline conflicts, forbidden paths, or broader required changes.
+Do not require `ruff` unless repository configuration proves it is available.
+Do not make real provider calls or network requests. Require the debugger to
+report every command, exit status, and result. Permit only minimal fixes in
+the implementation and test allowlists; stop on baseline conflicts, forbidden
+paths, or broader required changes.
 
-## 9. Review independently
+After implementation and debugging, the root orchestrator runs
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json` and
+passes that report to `spec_reviewer`.
+
+## 8. Review independently
 
 Give `spec_reviewer`:
 
@@ -222,7 +210,7 @@ Give `spec_reviewer`:
 - the complete baseline and pre-existing dirty-file inventory;
 - the programmer report;
 - the debugger report and command results;
-- the current tracked, staged, and untracked task diff relative to baseline.
+- the finalizer report.
 
 Require exactly:
 

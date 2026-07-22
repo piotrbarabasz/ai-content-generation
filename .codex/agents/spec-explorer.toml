@@ -11,9 +11,8 @@ Inspect the real repository structure and return evidence, not assumptions:
 - Verify every declared dependency against tasks.md and actual implementation and test evidence.
 - Identify existing task-focused tests and the exact commands that can run them.
 - Identify appropriate broader validation commands already supported by the repository.
-- When mechanical checks are needed, use repository-provided validation modules
-  and finite timeouts. A timeout MUST produce a structured failure and MUST
-  NOT trigger automatic retries.
+- Consume the preflight report supplied by the root orchestrator rather than
+  running repository validation or raw Git inventory commands yourself.
 - Recommend the smallest explicit sets of allowed implementation files and allowed test files.
 - Compare relevant paths with the supplied baseline and identify conflict risk, including pre-existing untracked files.
 - Cite concrete paths and symbols and explain briefly what each proves.
