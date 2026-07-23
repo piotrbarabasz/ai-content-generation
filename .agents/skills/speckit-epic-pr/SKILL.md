@@ -47,6 +47,17 @@ PASS from tests or checkboxes.
    needed, inspect it only per file or for a small, explicit list of files.
    Keep the inspection bounded and read-only.
 
+   Use these bounded local inspection commands before requesting any patch
+   content:
+
+   ```powershell
+   git --no-pager diff --name-only <base_branch>...<epic_branch>
+   git --no-pager diff --stat <base_branch>...<epic_branch>
+   git --no-pager log --oneline <base_branch>..<epic_branch>
+
+   Use the resulting file list and summary to select only the specific files
+   that require per-file inspection. Never request one full epic-wide patch.
+
    Use read-only remote inspection to determine whether `<epic_branch>` exists
    remotely and whether a PR already exists. Do not fetch, pull, push, or alter
    remote configuration.
