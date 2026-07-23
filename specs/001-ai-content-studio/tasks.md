@@ -79,7 +79,7 @@ Test requirements: Original completion evidence covered the implementation and r
 Parallelizable: no
 Notes: Keep workflow config generic enough to support enabled and disabled modules plus provider selection. Original completion evidence was the implemented project/configuration model files, repository validation, and the passing task review; dedicated direct tests are added separately in T046.
 
-- [ ] T006 Implement run, artifact, and output domain models
+- [X] T006 Implement run, artifact, and output domain models
 Milestone: M001
 Epic: E001
 Risk: medium
@@ -709,7 +709,7 @@ Notes: Static secret checks should be narrow to avoid false positives.
 
 ## Phase 17: Remediation - direct domain tests
 
-- [ ] T045 Add direct tests for shared domain primitives
+- [X] T045 Add direct tests for shared domain primitives
 Milestone: M001
 Epic: E001
 Risk: medium
@@ -724,7 +724,7 @@ Test requirements: These are the direct behavioral test cases for this task.
 Parallelizable: yes
 Notes: This remediation task supplies the direct evidence that was not part of the original T004 completion package.
 
-- [ ] T046 Add direct tests for project and configuration domain models
+- [X] T046 Add direct tests for project and configuration domain models
 Milestone: M001
 Epic: E001
 Risk: medium
