@@ -22,18 +22,18 @@ The first implementation slice establishes the backend foundation, domain models
 
 ## Local Setup
 
-Use Python 3.11 or newer.
+Use Python 3.11 or newer and prefer the active `python` from your virtual environment.
 
 ```powershell
-py -3 -m pip install -r backend/requirements.txt
-py -3 -m pytest backend/tests
+python -m pip install -e .
+python -m pytest backend/tests
 ```
 
 The tests are written with `unittest` and are also pytest-discoverable once pytest is installed.
 
 ## Developer Setup
 
-Install the local Git hooks and run the tooling smoke test with the helper scripts:
+Install the local Git hooks once after clone. This is a one-time setup. The hooks run on commit and push, use the active Python interpreter, and are intended to be managed from a local `.venv`.
 
 ```powershell
 scripts\setup-dev.ps1
@@ -52,6 +52,24 @@ scripts\install-git-hooks.ps1
 ```sh
 ./scripts/install-git-hooks.sh
 ```
+
+Verify the local hook path after installation:
+
+```powershell
+git config --local --get core.hooksPath
+```
+
+```sh
+git config --local --get core.hooksPath
+```
+
+The expected value is:
+
+```text
+.githooks
+```
+
+If your environment already has a suitable Python 3.11+ interpreter active, the setup scripts reuse that interpreter for install, hook setup, and the tooling smoke test.
 
 ## Configuration
 
@@ -109,6 +127,10 @@ When the reviewed epic branch is already pushed, `$speckit-epic-pr` can create
 only a draft PR after all safety gates pass. It never pushes, merges, enables
 auto-merge or changes epic status; otherwise it prepares title and body for
 manual use.
+
+The GitHub Actions validation workflow runs the local hook runner in CI mode
+with an explicit base SHA and head SHA so the diff checks stay range-aware on
+both pull requests and pushes to `master`.
 
 ## Design References
 

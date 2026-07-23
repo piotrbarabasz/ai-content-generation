@@ -23,6 +23,7 @@ TASKS_FILE = ROOT / "specs" / "001-ai-content-studio" / "tasks.md"
 TASK_RUNS_DIR = ROOT / ".specify" / "runtime" / "task-runs"
 TIMEOUT_SECONDS = 20
 TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
+BASELINE_SCHEMA_VERSION = 1
 
 DEPENDENCY_REASONS = (
     "unknown dependency task",
@@ -200,6 +201,7 @@ def _write_baseline(task_id: str, epic_id: str, branch: str, head_sha: str, snap
     path = _baseline_path(task_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "schema_version": BASELINE_SCHEMA_VERSION,
         "task": task_id,
         "epic": epic_id,
         "branch": branch,

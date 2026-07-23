@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from app.tooling import agent_task_preflight as preflight
@@ -114,7 +115,7 @@ def _patch_successful_runtime(monkeypatch):
             ("git", "rev-parse", "HEAD"): "a" * 40,
             ("git", "diff", "--name-only"): "backend/app/tooling/agent_task_preflight.py",
             ("git", "diff", "--cached", "--name-only"): "backend/tests/unit/tooling/test_agent_task_preflight.py",
-            ("git", "ls-files", "--others", "--exclude-standard"): ".specify/runtime/task-runs/T045/baseline.json",
+            ("git", "ls-files", "--others", "--exclude-standard"): "",
         }
         return mapping[tuple(command)]
 
@@ -161,13 +162,14 @@ def test_next_selector_runs_full_preflight_and_writes_baseline_json(tmp_path, mo
     assert baseline_path.is_file()
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     assert baseline == {
+        "schema_version": 1,
         "task": "T045",
         "epic": "E001",
         "branch": "epic/E001-execution-domain",
         "head_sha": "a" * 40,
         "tracked": ["backend/app/tooling/agent_task_preflight.py"],
         "staged": ["backend/tests/unit/tooling/test_agent_task_preflight.py"],
-        "untracked": [".specify/runtime/task-runs/T045/baseline.json"],
+        "untracked": [],
     }
     assert [check.name for check in result.checks] == [
         "python_version",
@@ -272,3 +274,39 @@ def test_python_version_failure_returns_validation_failure(tmp_path, monkeypatch
     assert result.exit_code == 1
     assert result.status == "FAIL"
     assert result.task_id == ""
+
+
+def _git(tmp_path: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+
+def test_preflight_snapshot_excludes_ignored_runtime_baseline_in_real_git_repo(tmp_path, monkeypatch):
+    _setup_repo(tmp_path)
+    _patch_context(monkeypatch, tmp_path)
+
+    _write(tmp_path / ".gitignore", ".specify/runtime/\n")
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "add", ".gitignore")
+    _git(tmp_path, "add", ".specify/workstreams/M001.yml")
+    _git(tmp_path, "add", ".specify/workstreams/E001.yml")
+    _git(tmp_path, "add", "specs/001-ai-content-studio/tasks.md")
+    _git(tmp_path, "commit", "-m", "initial state")
+    _git(tmp_path, "checkout", "-b", "epic/E001-execution-domain")
+
+    monkeypatch.setattr(preflight.workstream_validation, "validate_guard", lambda selector: [])
+    monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
+    monkeypatch.setattr(
+        preflight.repository_checks,
+        "checks",
+        lambda mode, tasks=None: {"status": "PASS", "checks": []},
+    )
+
+    result = preflight.run_preflight("T045", version_info=(3, 11, 0))
+
+    assert result.exit_code == 0
+    baseline_path = tmp_path / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert baseline["schema_version"] == 1
+    assert baseline["untracked"] == []

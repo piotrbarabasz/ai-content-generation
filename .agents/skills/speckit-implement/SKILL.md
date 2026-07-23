@@ -37,6 +37,9 @@ ARCHITECTURE_INVARIANTS
 VALIDATION_COMMANDS
 REVIEWER_EXPECTATIONS
 COMPLETION_POLICY
+RISK_LEVEL
+PROGRAMMER_ROUTE
+HUMAN_CHECKPOINT_REQUIRED
 ```
 
 Stop without edits when a field is missing or ambiguous, more than one task is included, `TASK_ID` does not match `T\d{3}[A-Z]?`, or the package is not manager-approved.
@@ -67,15 +70,22 @@ Report the blocking condition and stop if any check fails. Never overwrite, reve
 - Do not make real provider connections or network calls in tests.
 - Do not commit, push, merge, force-push, release, or deploy.
 - Do not select, implement, or begin another task.
+- Do not run repository mechanical validation modules or raw Git inventory commands.
+- Run only task-focused tests explicitly listed in `VALIDATION_COMMANDS`.
 
 ## Validation
 
-Use repository-provided validation modules for mechanical checks. Do not build
-semicolon-chained PowerShell validation commands. Every external command MUST
-have a finite timeout. A timeout MUST produce a structured failure and MUST
-NOT trigger automatic retries.
+Use repository-provided validation modules only when the package explicitly
+lists them as task-focused checks. Do not build semicolon-chained PowerShell
+validation commands. Every external command MUST have a finite timeout. A
+timeout MUST produce a structured failure and MUST NOT trigger automatic
+retries.
 
-Run only applicable commands from `VALIDATION_COMMANDS`, beginning with task-focused checks. Do not invent an unconfigured linter or broaden validation beyond the package. Record each exact command, exit status, and result. A failing command may be diagnosed, but any fix must remain inside the same allowlists and acceptance criteria.
+Run only applicable task-focused commands from `VALIDATION_COMMANDS`. Do not
+invent an unconfigured linter or broaden validation beyond the package. Record
+each exact command, exit status, and result. A failing command may be
+diagnosed, but any fix must remain inside the same allowlists and acceptance
+criteria.
 
 Stop when a fix needs wider scope, a forbidden path, or a baseline-dirty path. Leave systematic post-implementation validation to `spec_debugger` when the handoff requires it.
 

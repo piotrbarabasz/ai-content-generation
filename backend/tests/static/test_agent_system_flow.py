@@ -36,6 +36,7 @@ FORBIDDEN_COMMANDS = [
     "git diff --name-only",
     "git diff --cached --name-only",
     "git --no-pager diff --check",
+    "git ls-files --others",
 ]
 
 
@@ -47,9 +48,10 @@ class AgentSystemFlowTests(unittest.TestCase):
                 self.assertNotIn(forbidden, text, f"{forbidden} should not appear in {path}")
 
         self.assertIn("agent_task_preflight --json", AGENTS_PATH.read_text(encoding="utf-8"))
-        self.assertIn("agent_task_finalize --json", AGENTS_PATH.read_text(encoding="utf-8"))
-        self.assertIn("agent_task_preflight --json", (ROOT / ".agents" / "skills" / "speckit-loop" / "SKILL.md").read_text(encoding="utf-8"))
-        self.assertIn("agent_task_finalize --json", (ROOT / ".agents" / "skills" / "speckit-loop" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("agent_task_finalize --task <task> --json", AGENTS_PATH.read_text(encoding="utf-8"))
+        loop_skill = (ROOT / ".agents" / "skills" / "speckit-loop" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("agent_task_preflight --selector <selector> --json", loop_skill)
+        self.assertIn("agent_task_finalize --task <task> --json", loop_skill)
         self.assertIn("agent_task_finalize --task <task> --json", (ROOT / ".codex" / "agents" / "spec-reviewer.toml").read_text(encoding="utf-8"))
         self.assertIn("agent_task_preflight --selector <selector> --json", (ROOT / ".codex" / "agents" / "spec-manager.toml").read_text(encoding="utf-8"))
         self.assertIn("preflight report", (ROOT / ".codex" / "agents" / "spec-explorer.toml").read_text(encoding="utf-8"))
@@ -66,7 +68,22 @@ class AgentSystemFlowTests(unittest.TestCase):
         jobs = workflow["jobs"]
         self.assertIn("validate-agent-system", jobs)
         steps = jobs["validate-agent-system"]["steps"]
-        self.assertTrue(any(step.get("run") == "python -m backend.app.tooling.git_hook_runner ci" for step in steps))
+        checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v4")
+        self.assertEqual(checkout["with"]["fetch-depth"], 0)
+        self.assertTrue(
+            any(
+                step.get("run")
+                == 'python -m backend.app.tooling.git_hook_runner ci --base-sha "${{ github.event.pull_request.base.sha }}" --head-sha "${{ github.sha }}"'
+                for step in steps
+            )
+        )
+        self.assertTrue(
+            any(
+                step.get("run")
+                == 'python -m backend.app.tooling.git_hook_runner ci --base-sha "${{ github.event.before }}" --head-sha "${{ github.sha }}"'
+                for step in steps
+            )
+        )
         self.assertFalse(any("workstream_validation" in str(step) for step in steps))
         self.assertFalse(any("repository_checks" in str(step) for step in steps))
         self.assertFalse(any("git --no-pager diff --check" in str(step) for step in steps))

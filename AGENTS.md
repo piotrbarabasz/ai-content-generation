@@ -11,9 +11,13 @@ These instructions govern repository work performed through the project-scoped C
 - `.specify/workstreams/` contains static milestone and epic manifests. The
   local `.specify/runtime/active-epic` file selects the current epic and is
   ignored runtime state, not a tracked source of truth.
-- The task loop uses `agent_task_preflight --json` before implementation and
-  `agent_task_finalize --json` after implementation. Agents do not run
-  repository validation modules directly.
+- The task loop uses `agent_task_preflight --selector <selector> --json`
+  before implementation and `agent_task_finalize --task <task> --json`
+  after implementation. Agents do not run repository validation modules
+  directly.
+- Manager, explorer, programmer, and reviewer must not run repository
+  mechanical validation modules or raw Git inventory commands directly. They
+  consume preflight and finalize reports instead.
 - A specification or other Spec Kit artifact must not be modified without an explicit task package that authorizes the exact file and change. In the standard implementation loop, the programmer and debugger must never modify Spec Kit artifacts.
 
 ## Starting the implementation loop
@@ -32,9 +36,10 @@ $speckit-loop T006A
   `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
   That report provides the active epic, branch, baseline snapshot, readiness
   checks, and the task selected for implementation.
-- The preflight report is read-only and never creates or switches branches,
-  commits, pushes, changes manifests, or writes runtime state. If preflight
-  fails, stop immediately and do not start any agent.
+- Preflight does not modify tracked repository files, Git history, branches,
+  tasks, or manifests. Its only permitted write is the ignored runtime
+  baseline file under `.specify/runtime/task-runs/`. If preflight fails, stop
+  immediately and do not start any agent.
 
 To prepare an epic locally, use `$speckit-epic-start E###`. This workflow may
 create or switch only the declared epic branch after confirming that the
@@ -49,7 +54,10 @@ To review the complete active epic before a pull request, use
 finalize reports produced during the loop, and must inspect task evidence,
 acceptance criteria, architecture invariants, security and scope drift. It
 never creates a PR or performs commit, push, merge, deploy, fetch, pull,
-rebase, stash, reset, stage, checkout, or manifest/runtime-state writes.
+rebase, stash, reset, stage, checkout, or manifest/runtime-state writes. If
+implementation changes after a finalize report was captured, rerun
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+before handing evidence to the reviewer. Never reuse a stale finalize report.
 `SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
 LLM review remains required. After a passing review, the root orchestrator
 records an ignored receipt by invoking `python -m backend.app.tooling.
@@ -117,6 +125,10 @@ Rules for every run:
 - Permit at most two repair cycles after review failures.
 - Never run two write-capable agents concurrently. `spec_programmer_fast`, `spec_programmer_high`, `spec_debugger`, and `spec_closer` must be invoked one at a time, with the previous writer fully stopped before the next begins.
 - Keep `spec_closer` separate from implementation and review. No other role may mark a task complete.
+- After every programmer or debugger repair, rerun
+  `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+  before sending evidence back to the reviewer. Do not hand the reviewer a
+  stale finalize report.
 - Do not commit, push, merge, force-push, create a release, or deploy from this loop.
 
 ## Baseline repository state

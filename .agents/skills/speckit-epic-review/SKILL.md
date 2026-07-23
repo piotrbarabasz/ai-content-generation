@@ -16,7 +16,9 @@ modify code, tasks, manifests, runtime state, or Git history.
 2. Read the active epic manifest from `.specify/workstreams/` and its milestone
    manifest. Consume the task finalize reports produced during the loop and
    include report failures in `BLOCKING_ISSUES` while continuing to collect
-   other read-only evidence when safe.
+   other read-only evidence when safe. If implementation or validation changed
+   after a finalize report was captured, require a fresh finalize run before
+   trusting it.
 3. Read the active feature artifacts under the epic's `feature` directory:
    `spec.md`, `plan.md`, `tasks.md`, available data model/contracts/research/
    quickstart documents, and `.specify/memory/constitution.md`.

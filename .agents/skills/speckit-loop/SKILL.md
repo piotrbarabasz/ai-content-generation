@@ -72,15 +72,16 @@ Continue only when every mandatory checklist is complete.
 ## 4. Consume preflight, then implement
 
 Before any agent is invoked, the root orchestrator runs
-`python -m backend.app.tooling.agent_task_preflight --json` for the selected
-task selector. That report supplies the active epic, branch, baseline
-inventory, readiness checks, and task selection. The manager and explorer
-consume that report; they do not run repository validation or raw Git
-inventory commands directly.
+`python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`
+for the selected task selector. That report supplies the active epic,
+branch, baseline inventory, readiness checks, and task selection. The manager
+and explorer consume that report; they do not run repository validation or raw
+Git inventory commands directly.
 
-The preflight report is read-only and never creates or switches branches,
-commits, pushes, changes manifests, or writes runtime state. If preflight
-fails, stop immediately and do not invoke any agent.
+Preflight does not modify tracked repository files, Git history, branches,
+tasks, or manifests. Its only permitted write is the ignored runtime baseline
+file under `.specify/runtime/task-runs/`. If preflight fails, stop immediately
+and do not invoke any agent.
 
 `next` may consider only unchecked tasks in the active epic; an explicit task
 ID matching `T\d{3}[A-Z]?` must belong to that epic. The one-task-per-run and
@@ -113,6 +114,10 @@ spec_manager
 ```
 
 Never run two write-capable agents concurrently. `PROGRAMMER_ROUTE` must be exactly `spec_programmer_fast` or `spec_programmer_high`.
+After every programmer or debugger repair, the root orchestrator reruns
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+before sending evidence back to the reviewer. Never hand the reviewer a stale
+finalize report.
 
 ### Manager selection pass
 

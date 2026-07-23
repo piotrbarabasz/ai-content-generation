@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -26,5 +28,10 @@ jobs:
       - name: Install project
         run: python -m pip install -e .
 
-      - name: Run agent system hooks
-        run: python -m backend.app.tooling.git_hook_runner ci
+      - name: Run agent system hooks for pull request
+        if: github.event_name == 'pull_request'
+        run: python -m backend.app.tooling.git_hook_runner ci --base-sha "${{ github.event.pull_request.base.sha }}" --head-sha "${{ github.sha }}"
+
+      - name: Run agent system hooks for push
+        if: github.event_name == 'push'
+        run: python -m backend.app.tooling.git_hook_runner ci --base-sha "${{ github.event.before }}" --head-sha "${{ github.sha }}"
