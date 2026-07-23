@@ -724,7 +724,7 @@ Test requirements: These are the direct behavioral test cases for this task.
 Parallelizable: yes
 Notes: This remediation task supplies the direct evidence that was not part of the original T004 completion package.
 
-- [ ] T046 Add direct tests for project and configuration domain models
+- [X] T046 Add direct tests for project and configuration domain models
 Milestone: M001
 Epic: E001
 Risk: medium
