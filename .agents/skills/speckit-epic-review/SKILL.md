@@ -9,21 +9,6 @@ Run `$speckit-epic-review` from the repository root. Review exactly the epic
 selected by `.specify/runtime/active-epic`. This skill is read-only and must not
 modify code, tasks, manifests, runtime state, or Git history.
 
-Before any Python command, resolve the pinned interpreter with:
-
-```powershell
-$pythonBin = git config --local --get agent.python
-if (-not $pythonBin) {
-    throw "agent.python is not configured. Run scripts/setup-dev.ps1 to pin the repository interpreter."
-}
-if (-not (Test-Path -LiteralPath $pythonBin -PathType Leaf)) {
-    throw "agent.python points to a missing interpreter: $pythonBin"
-}
-& $pythonBin -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-```
-
-Use `$pythonBin` for every Python invocation in this workflow. Never fall back to bare `python`.
-
 ## Workflow
 
 1. Read `.specify/runtime/active-epic`. Stop with a blocking finding if it is
@@ -60,7 +45,7 @@ Use `$pythonBin` for every Python invocation in this workflow. Never fall back t
 8. Run only the exact commands in `required_checks`. Execute them locally and
    deterministically. Do not run network commands, real providers, or any
    command not listed by the manifest. This is the only loop stage that may
-   execute a manifest-required full `& $pythonBin -m pytest` if the manifest asks
+   execute a manifest-required full `python -m pytest` if the manifest asks
    for it. Record command, exit code, and result.
 9. Inspect tests for behavioral assertions rather than import-only coverage.
    Check for secrets, credentials, generated outputs, runtime artifacts, and
@@ -69,7 +54,7 @@ Use `$pythonBin` for every Python invocation in this workflow. Never fall back t
     `REVIEW_RECEIPT_WRITTEN`. `SAFE_TO_CREATE_PR: yes` is permitted only with
     `VERDICT: PASS`. Do not create a PR automatically. When the review passes,
     the root orchestrator records `.specify/runtime/reviews/<EPIC_ID>.json`
-    by invoking `& $pythonBin -m backend.app.tooling.epic_review_receipt write
+    by invoking `python -m backend.app.tooling.epic_review_receipt write
     --epic <EPIC_ID> --review-json <path>` before any PR or merge step.
 
 ## Review rules

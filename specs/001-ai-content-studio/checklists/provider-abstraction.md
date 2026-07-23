@@ -6,18 +6,18 @@
 
 ## Abstraction Boundaries
 
-- [X] CHK001 Are provider interfaces defined for LLM, TTS, transcription, captions, asset, rendering, storage and publishing? [Completeness, Plan, contracts/provider-contracts.md]
-- [X] CHK002 Does the workflow engine depend on provider abstractions rather than concrete vendors or implementations? [Consistency, Spec Â§FR-020, FR-021]
-- [X] CHK003 Are module contracts written in terms of provider interfaces rather than concrete provider behavior? [Consistency, Plan]
-- [X] CHK004 Does the plan specify a mock provider path for the first implementation slice? [Completeness, Plan]
+- [ ] CHK001 Are provider interfaces defined for LLM, TTS, transcription, captions, asset, rendering, storage and publishing? [Completeness, Plan, contracts/provider-contracts.md]
+- [ ] CHK002 Does the workflow engine depend on provider abstractions rather than concrete vendors or implementations? [Consistency, Spec §FR-020, FR-021]
+- [ ] CHK003 Are module contracts written in terms of provider interfaces rather than concrete provider behavior? [Consistency, Plan]
+- [ ] CHK004 Does the plan specify a mock provider path for the first implementation slice? [Completeness, Plan]
 
 ## Provider Config and Swapping
 
-- [X] CHK005 Are providerConfig requirements defined without embedding provider-specific logic into the workflow engine? [Clarity, Spec Â§FR-020]
-- [X] CHK006 Are provider settings validated before workflow execution without coupling to a concrete backend? [Coverage, Spec Â§FR-022]
-- [X] CHK007 Are the requirements clear that external providers may be replaced behind the same contract? [Clarity, Spec Â§FR-020, FR-021]
+- [ ] CHK005 Are providerConfig requirements defined without embedding provider-specific logic into the workflow engine? [Clarity, Spec §FR-020]
+- [ ] CHK006 Are provider settings validated before workflow execution without coupling to a concrete backend? [Coverage, Spec §FR-022]
+- [ ] CHK007 Are the requirements clear that external providers may be replaced behind the same contract? [Clarity, Spec §FR-020, FR-021]
 
 ## Scope and Isolation
 
-- [X] CHK008 Does the MVP avoid requiring real provider credentials for core workflows? [Scope, Spec Â§SC-006]
-- [X] CHK009 Are any provider-specific integrations explicitly excluded from the MVP and isolated behind future work? [Scope, Plan]
+- [ ] CHK008 Does the MVP avoid requiring real provider credentials for core workflows? [Scope, Spec §SC-006]
+- [ ] CHK009 Are any provider-specific integrations explicitly excluded from the MVP and isolated behind future work? [Scope, Plan]

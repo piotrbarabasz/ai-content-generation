@@ -15,21 +15,6 @@ $ARGUMENTS
 
 Use the root Codex thread as the sole orchestrator. Process exactly one task and stop.
 
-Before any Python command, resolve the pinned interpreter with:
-
-```powershell
-$pythonBin = git config --local --get agent.python
-if (-not $pythonBin) {
-    throw "agent.python is not configured. Run scripts/setup-dev.ps1 to pin the repository interpreter."
-}
-if (-not (Test-Path -LiteralPath $pythonBin -PathType Leaf)) {
-    throw "agent.python points to a missing interpreter: $pythonBin"
-}
-& $pythonBin -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-```
-
-Use `$pythonBin` for every Python invocation in this workflow. Never fall back to bare `python`.
-
 ## 1. Validate the selector
 
 Trim `$ARGUMENTS` and accept only:
@@ -51,7 +36,7 @@ Never reinterpret free text as a task selector. Never continue to another task a
 ## 2. Resolve the feature context
 
 From the repository root, consume the JSON feature context returned by
-`& $pythonBin -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
+`python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
 Use the report's `feature_dir`, `spec_path`, `plan_path`, `tasks_path`, and
 `available_docs` fields; require absolute resolved paths and stop if
 `spec.md`, `plan.md`, or `tasks.md` is missing.
@@ -85,7 +70,7 @@ Continue only when every mandatory checklist is complete.
 ## 4. Consume preflight, then implement
 
 Before any agent is invoked, the root orchestrator runs
-`& $pythonBin -m backend.app.tooling.agent_task_preflight --selector <selector> --json`
+`python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`
 for the selected task selector. That report supplies the active epic,
 branch, baseline inventory, readiness checks, and task selection. The manager
 and explorer consume that report; they do not run repository validation or raw
@@ -133,7 +118,7 @@ exactly `spec_programmer_fast` or `spec_programmer_high`.
 real `FAIL` or `TIMEOUT` from the finalize report or a reviewer `FAIL` that
 requires a minimal package-bounded fix. After every programmer or debugger
 repair, the root orchestrator reruns
-`& $pythonBin -m backend.app.tooling.agent_task_finalize --task <task> --json`
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
 before sending evidence back to the reviewer. Never hand the reviewer a stale
 finalize report.
 
@@ -215,7 +200,7 @@ repository validation modules in the debugger. Commands may include, when
 supported by the repository and selected by the manager:
 
 ```powershell
-& $pythonBin -m pytest <task-focused-tests>
+python -m pytest <task-focused-tests>
 ```
 
 Do not make real provider calls or network requests. Require the debugger to
@@ -224,7 +209,7 @@ the implementation and test allowlists; stop on baseline conflicts, forbidden
 paths, or broader required changes.
 
 After implementation and debugging, the root orchestrator runs
-`& $pythonBin -m backend.app.tooling.agent_task_finalize --task <task> --json` and
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json` and
 passes that report to `spec_reviewer`.
 
 ## 8. Review independently

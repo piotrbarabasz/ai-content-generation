@@ -10,21 +10,6 @@ active epic and never performs merge, push, deployment, or automatic epic status
 updates. It may create only a draft PR, and only when the required evidence is
 already available.
 
-Before any Python command, resolve the pinned interpreter with:
-
-```powershell
-$pythonBin = git config --local --get agent.python
-if (-not $pythonBin) {
-    throw "agent.python is not configured. Run scripts/setup-dev.ps1 to pin the repository interpreter."
-}
-if (-not (Test-Path -LiteralPath $pythonBin -PathType Leaf)) {
-    throw "agent.python points to a missing interpreter: $pythonBin"
-}
-& $pythonBin -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-```
-
-Use `$pythonBin` for every Python invocation in this workflow. Never fall back to bare `python`.
-
 ## Mandatory gates
 
 Read `.specify/runtime/active-epic`, the active epic manifest, its milestone
@@ -55,7 +40,7 @@ PASS from tests or checkboxes.
    ```powershell
    git remote -v
    git branch --show-current
-   & $pythonBin -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>
+   python -m backend.app.tooling.epic_review_receipt validate --epic <EPIC_ID>
    ```
 
    Do not request one full patch for the entire epic. When patch content is
