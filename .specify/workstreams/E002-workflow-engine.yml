@@ -4,7 +4,7 @@ milestone: M001
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E002-workflow-engine
-status: planned
+status: active
 risk: high
 depends_on:
   - E001
