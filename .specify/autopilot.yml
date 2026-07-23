@@ -1,0 +1,10 @@
+auto_commit: true
+auto_push: true
+create_draft_pr: true
+auto_merge: false
+deploy: false
+max_repair_cycles: 2
+max_tasks_per_run: 20
+command_timeout_seconds: 180
+codex_timeout_seconds: 3600
+closure_mode: pull_request
