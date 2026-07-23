@@ -85,7 +85,7 @@ Epic: E001
 Risk: medium
 Implementation files: `backend/app/domain/workflow_run.py`, `backend/app/domain/generation_job.py`, `backend/app/domain/artifact.py`, `backend/app/domain/script.py`, `backend/app/domain/narrative_segment.py`, `backend/app/domain/render_scene.py`, `backend/app/domain/voiceover.py`, `backend/app/domain/caption_track.py`, `backend/app/domain/video_render.py`, `backend/app/domain/export_bundle.py`
 Test files: `backend/tests/unit/test_t006.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t006.py`
 Final PR review required: yes
 Goal: Create the execution and output models used by the workflow engine and export path.
 Dependencies: T004, T005, T045, T046
@@ -102,7 +102,7 @@ Epic: E002
 Risk: high
 Implementation files: `backend/app/workflow/module.py`, `backend/app/workflow/registry.py`, `backend/app/workflow/execution.py`
 Test files: `backend/tests/unit/test_t007.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t007.py`
 Final PR review required: yes
 Goal: Add the module interface, registry, execution context, module result, and execution plan types used by the engine.
 Dependencies: T004, T005, T006
@@ -117,7 +117,7 @@ Epic: E002
 Risk: high
 Implementation files: `backend/app/workflow/engine.py`
 Test files: `backend/tests/unit/test_t008.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t008.py`
 Final PR review required: yes
 Goal: Build the engine that executes modules in order, skips disabled modules, validates dependencies, and surfaces basic failure behavior.
 Dependencies: T007
@@ -134,7 +134,7 @@ Epic: E003
 Risk: high
 Implementation files: `backend/app/storage/artifact_store.py`, `backend/app/storage/local_store.py`, `backend/app/storage/manifest.py`, `backend/app/domain/workflow_run.py`, `backend/app/domain/generation_job.py`
 Test files: `backend/tests/unit/test_t009.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t009.py`
 Final PR review required: yes
 Goal: Create the artifact persistence interface, a local store implementation, and the artifact manifest format.
 Dependencies: T006
@@ -151,7 +151,7 @@ Epic: E003
 Risk: high
 Implementation files: `backend/app/providers/interfaces.py`, `backend/app/providers/mock_llm.py`, `backend/app/providers/mock_tts.py`, `backend/app/providers/mock_captions.py`, `backend/app/providers/mock_transcription.py`, `backend/app/providers/mock_assets.py`, `backend/app/providers/mock_video_renderer.py`, `backend/app/providers/mock_storage.py`
 Test files: `backend/tests/unit/test_t010.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t010.py`
 Final PR review required: yes
 Goal: Create provider interfaces for LLM, TTS, captions, transcription, assets, video rendering, and storage, then implement deterministic mocks.
 Dependencies: T004, T009
@@ -168,7 +168,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/brief.py`
 Test files: `backend/tests/unit/test_t011.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t011.py`
 Final PR review required: yes
 Goal: Add the first intake module with deterministic behavior.
 Dependencies: T007, T008, T010
@@ -183,7 +183,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/voiceover.py`
 Test files: `backend/tests/unit/test_t012.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t012.py`
 Final PR review required: yes
 Goal: Add optional voiceover generation using deterministic mock TTS output.
 Dependencies: T007, T008, T009, T010, T011
@@ -200,7 +200,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/workflow/presets.py`, `backend/app/workflow/registry.py`
 Test files: `backend/tests/unit/test_t013.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t013.py`
 Final PR review required: yes
 Goal: Create the Short Video preset and Long-form Script + Voiceover preset with explicit module lists and default configuration.
 Dependencies: T005, T006, T008, T011, T012
@@ -217,7 +217,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/api/main.py`, `backend/app/api/schemas.py`, `backend/app/api/dependencies.py`
 Test files: `backend/tests/unit/test_t014.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t014.py`
 Final PR review required: yes
 Goal: Add the FastAPI application entrypoint and request/response schemas for projects, workflow configs, workflow runs, artifacts, and export bundles.
 Dependencies: T003, T005, T006, T009, T010
@@ -232,7 +232,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/api/routes/projects.py`, `backend/app/api/routes/workflow_configs.py`, `backend/app/api/routes/workflow_runs.py`, `backend/app/api/routes/artifacts.py`
 Test files: `backend/tests/unit/test_t015.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t015.py`
 Final PR review required: yes
 Goal: Expose create project, get project, create workflow config, start workflow run, get workflow run status, list artifacts, and export bundle endpoints.
 Dependencies: T014, T013
@@ -249,7 +249,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/domain/approval.py`
 Test files: `backend/tests/unit/test_t016.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t016.py`
 Final PR review required: yes
 Goal: Implement approval checkpoints, approval decisions and allowed state transitions.
 Dependencies: T006, T008, T015
@@ -266,7 +266,7 @@ Epic: E006
 Risk: high
 Implementation files: `none`
 Test files: `backend/tests/unit/test_module_registry.py`, `backend/tests/unit/test_workflow_engine.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_module_registry.py backend/tests/unit/test_workflow_engine.py`
 Final PR review required: yes
 Goal: Verify module registration, execution order, enabled and disabled module behavior, and missing dependency handling.
 Dependencies: T007, T008
@@ -281,7 +281,7 @@ Epic: E006
 Risk: high
 Implementation files: `none`
 Test files: `backend/tests/unit/test_artifact_store.py`, `backend/tests/unit/test_mock_providers.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_artifact_store.py backend/tests/unit/test_mock_providers.py`
 Final PR review required: yes
 Goal: Verify local artifact persistence, artifact manifests and mock providers.
 Dependencies: T009, T010, T012
@@ -296,7 +296,7 @@ Epic: E006
 Risk: high
 Implementation files: `none`
 Test files: `backend/tests/unit/test_presets.py`, `backend/tests/integration/test_api_smoke.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_presets.py backend/tests/integration/test_api_smoke.py`
 Final PR review required: yes
 Goal: Verify the Short Video preset, Long-form preset registration, and a minimal API happy path.
 Dependencies: T013, T014, T015, T016
@@ -313,7 +313,7 @@ Epic: E004
 Risk: high
 Implementation files: `docs/migration/shorts-repo-migration-plan.md`, `docs/migration/long-form-repo-migration-plan.md`
 Test files: `none`
-Validation commands: `git diff --check`
+Validation commands: none
 Final PR review required: yes
 Goal: Create migration plans that map the shorts and long-form repositories into the unified AI Content Studio architecture.
 Dependencies: T011, T012, T013
@@ -345,7 +345,7 @@ Epic: E003
 Risk: high
 Implementation files: `backend/app/providers/registry.py`, `backend/app/providers/interfaces.py`, `backend/app/providers/mocks.py`
 Test files: `backend/tests/unit/test_t022.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t022.py`
 Final PR review required: yes
 Goal: Register provider implementations by provider type and provider name, then register deterministic mock providers for MVP.
 Dependencies: T010, T021
@@ -360,7 +360,7 @@ Epic: E003
 Risk: high
 Implementation files: `backend/app/providers/validation.py`, `backend/app/workflow/engine.py`, `backend/app/domain/workflow_config.py`
 Test files: `backend/tests/unit/test_t023.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t023.py`
 Final PR review required: yes
 Goal: Validate provider availability for enabled modules before a WorkflowRun starts.
 Dependencies: T008, T022
@@ -392,7 +392,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/script_generation.py`
 Test files: `backend/tests/unit/test_t025.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t025.py`
 Final PR review required: yes
 Goal: Generate deterministic script and NarrativeSegment artifacts from brief, outline or research context.
 Dependencies: T011, T022
@@ -407,7 +407,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/scene_planning.py`
 Test files: `backend/tests/unit/test_t026.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t026.py`
 Final PR review required: yes
 Goal: Generate RenderScene artifacts for short video workflows.
 Dependencies: T011, T025
@@ -422,7 +422,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/captions.py`
 Test files: `backend/tests/unit/test_t027.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t027.py`
 Final PR review required: yes
 Goal: Generate optional captions using deterministic caption provider output.
 Dependencies: T010, T012, T026
@@ -437,7 +437,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/video_rendering.py`
 Test files: `backend/tests/unit/test_t028.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t028.py`
 Final PR review required: yes
 Goal: Generate deterministic video render metadata and artifact references for video workflows.
 Dependencies: T010, T026, T027
@@ -452,7 +452,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/domain/export_bundle.py`, `backend/app/modules/export_manifest.py`
 Test files: `backend/tests/unit/test_t029.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t029.py`
 Final PR review required: yes
 Goal: Define the manifest contract for required files, conditional artifacts and summary sections.
 Dependencies: T006, T009, T021
@@ -467,7 +467,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/export.py`
 Test files: `backend/tests/unit/test_t030.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t030.py`
 Final PR review required: yes
 Goal: Package required workflow files and conditional artifact files or references into an export bundle.
 Dependencies: T009, T029
@@ -484,7 +484,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/research.py`
 Test files: `backend/tests/unit/test_t031.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t031.py`
 Final PR review required: yes
 Goal: Produce deterministic research artifacts from topic or source inputs when research is enabled.
 Dependencies: T009, T022, T023
@@ -499,7 +499,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/dossier.py`
 Test files: `backend/tests/unit/test_t032.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t032.py`
 Final PR review required: yes
 Goal: Produce a structured dossier artifact from research output when enabled.
 Dependencies: T031
@@ -514,7 +514,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/outline.py`
 Test files: `backend/tests/unit/test_t033.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t033.py`
 Final PR review required: yes
 Goal: Produce a long-form outline artifact from topic, brief, research or dossier context.
 Dependencies: T011, T031, T032
@@ -529,7 +529,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/post_processing.py`
 Test files: `backend/tests/unit/test_t034.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t034.py`
 Final PR review required: yes
 Goal: Normalize generated script text for downstream QA, optional voiceover and export.
 Dependencies: T025, T033
@@ -544,7 +544,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/modules/qa.py`
 Test files: `backend/tests/unit/test_t035.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t035.py`
 Final PR review required: yes
 Goal: Produce a deterministic QA report for long-form script output.
 Dependencies: T034
@@ -559,7 +559,7 @@ Epic: E004
 Risk: high
 Implementation files: `backend/app/workflow/presets.py`
 Test files: `backend/tests/unit/test_t036.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t036.py`
 Final PR review required: yes
 Goal: Define the canonical long_form_script_voiceover preset with videoRendering disabled by default.
 Dependencies: T013, T031, T032, T033, T034, T035
@@ -576,7 +576,7 @@ Epic: E005
 Risk: high
 Implementation files: `backend/app/workflow/engine.py`, `backend/app/workflow/execution.py`
 Test files: `backend/tests/unit/test_t037.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t037.py`
 Final PR review required: yes
 Goal: Pause and resume workflows at script, scene plan and final export checkpoints.
 Dependencies: T016, T026, T030, T035
@@ -591,7 +591,7 @@ Epic: E005
 Risk: high
 Implementation files: `backend/app/api/routes/approvals.py`, `backend/app/api/routes/workflow_runs.py`, `backend/app/api/main.py`
 Test files: `backend/tests/unit/test_t038.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t038.py`
 Final PR review required: yes
 Goal: Expose approval inspection and decision endpoints.
 Dependencies: T015, T016, T037
@@ -606,7 +606,7 @@ Epic: E005
 Risk: medium
 Implementation files: `backend/app/api/schemas.py`
 Test files: `backend/tests/unit/test_t047_api_schema_sync.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t047_api_schema_sync.py`
 Final PR review required: yes
 Goal: Keep the API schema aligned with the canonical WorkflowConfig after the domain-only remediation.
 Dependencies: T014
@@ -623,7 +623,7 @@ Epic: E006
 Risk: medium
 Implementation files: `backend/app/workflow/usage.py`, `backend/app/workflow/execution.py`
 Test files: `backend/tests/unit/test_t039.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t039.py`
 Final PR review required: yes
 Goal: Add minimal cost/usage infrastructure without billing or analytics.
 Dependencies: T007, T008
@@ -638,7 +638,7 @@ Epic: E006
 Risk: medium
 Implementation files: `none`
 Test files: `backend/tests/unit/test_provider_registry.py`, `backend/tests/unit/test_provider_validation.py`, `backend/tests/unit/test_workflow_config_validation.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_provider_registry.py backend/tests/unit/test_provider_validation.py backend/tests/unit/test_workflow_config_validation.py`
 Final PR review required: yes
 Goal: Cover ProviderRegistry, provider validation and canonical WorkflowConfig validation.
 Dependencies: T021, T022, T023
@@ -653,7 +653,7 @@ Epic: E006
 Risk: medium
 Implementation files: `none`
 Test files: `backend/tests/unit/test_approval_workflow.py`, `backend/tests/integration/test_approval_api.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_approval_workflow.py backend/tests/integration/test_approval_api.py`
 Final PR review required: yes
 Goal: Cover script approval, approval decisions and resume behavior.
 Dependencies: T016, T037, T038
@@ -668,7 +668,7 @@ Epic: E006
 Risk: medium
 Implementation files: `none`
 Test files: `backend/tests/unit/test_export_manifest.py`, `backend/tests/integration/test_export_bundle.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_export_manifest.py backend/tests/integration/test_export_bundle.py`
 Final PR review required: yes
 Goal: Verify required export files and conditional artifact references.
 Dependencies: T029, T030
@@ -683,7 +683,7 @@ Epic: E006
 Risk: medium
 Implementation files: `none`
 Test files: `backend/tests/integration/test_long_form_workflow.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/integration/test_long_form_workflow.py`
 Final PR review required: yes
 Goal: Verify the long-form preset with enabled and disabled optional modules.
 Dependencies: T031, T032, T033, T034, T035, T036
@@ -698,7 +698,7 @@ Epic: E006
 Risk: medium
 Implementation files: `none`
 Test files: `backend/tests/unit/test_retry_behavior.py`, `backend/tests/unit/test_failed_module_handling.py`, `backend/tests/static/test_secret_hygiene.py`
-Validation commands: `python -m pytest`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_retry_behavior.py backend/tests/unit/test_failed_module_handling.py backend/tests/static/test_secret_hygiene.py`
 Final PR review required: yes
 Goal: Cover retry behavior, failed module behavior and committed config hygiene.
 Dependencies: T008, T024, T039
@@ -715,7 +715,7 @@ Epic: E001
 Risk: medium
 Implementation files: none
 Test files: `backend/tests/unit/test_t045_domain_primitives.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t045_domain_primitives.py`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t045_domain_primitives.py`
 Final PR review required: yes
 Goal: Add direct behavioral coverage for shared domain primitives without changing their implementation.
 Dependencies: T004
@@ -730,7 +730,7 @@ Epic: E001
 Risk: medium
 Implementation files: none
 Test files: `backend/tests/unit/test_t046_project_config_models.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t046_project_config_models.py`; `git diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t046_project_config_models.py`
 Final PR review required: yes
 Goal: Add direct behavioral coverage for project and configuration domain models without changing their implementation.
 Dependencies: T005, T045

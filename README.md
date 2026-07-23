@@ -33,7 +33,10 @@ The tests are written with `unittest` and are also pytest-discoverable once pyte
 
 ## Developer Setup
 
-Install the local Git hooks once after clone. This is a one-time setup. The hooks run on commit and push, use the active Python interpreter, and are intended to be managed from a local `.venv`.
+Install the local Git hooks once after clone. This is a one-time setup. The
+installer pins the active Python interpreter into local Git config as
+`agent.python`, and the hooks run on commit and push by reading that pinned
+interpreter first. A local `.venv` is recommended.
 
 ```powershell
 scripts\setup-dev.ps1
@@ -69,7 +72,23 @@ The expected value is:
 .githooks
 ```
 
-If your environment already has a suitable Python 3.11+ interpreter active, the setup scripts reuse that interpreter for install, hook setup, and the tooling smoke test.
+Verify the pinned interpreter too:
+
+```powershell
+git config --local --get agent.python
+```
+
+If your environment already has a suitable Python 3.11+ interpreter active, the
+setup scripts reuse that interpreter for install, hook setup, and the tooling
+smoke test.
+
+The hook installation can be verified with:
+
+```powershell
+git config --local --get core.hooksPath
+```
+
+The expected value is `.githooks`.
 
 ## Configuration
 
@@ -80,12 +99,25 @@ Do not commit credentials, API keys, generated artifacts or agent runtime state.
 ## Agent-assisted Spec Kit implementation
 
 The project Codex workflow implements one Spec Kit task per explicit run. The
-root orchestrator first captures `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`,
-then runs the bounded implementation task, and finally captures
-`python -m backend.app.tooling.agent_task_finalize --task <task> --json` for
-review evidence. The manager selects or validates the task from the preflight
-report, gates it on real dependencies and the task baseline, and prepares a
-bounded package for implementation and independent review.
+happy path is:
+
+`agent_task_preflight` -> manager -> explorer -> manager -> programmer ->
+`agent_task_finalize` -> reviewer -> closer
+
+The debugger is not part of the happy path. It is only used when the fresh
+finalize report or reviewer report shows a real FAIL that can be fixed inside
+the task allowlist. After any repair, the root orchestrator reruns
+`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+before handing evidence back to the reviewer.
+
+The root orchestrator captures `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`
+for task selection and baseline evidence, then runs the bounded implementation
+task, and finally captures `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+for review evidence. The manager selects or validates the task from the
+preflight report, gates it on real dependencies and the task baseline, and
+prepares a bounded package for implementation and independent review. It does
+not run the old prerequisite script or any extra repository validation module
+in the loop.
 
 Start the next dependency-ready task with:
 

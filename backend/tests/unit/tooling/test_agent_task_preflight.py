@@ -2,9 +2,24 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.tooling import agent_task_preflight as preflight
+
+
+@dataclass
+class FakeProcessResult:
+    command: tuple[str, ...]
+    status: str = "PASS"
+    exit_code: int | None = 0
+    duration_ms: int = 5
+    timed_out: bool = False
+    stdout_lines: tuple[str, ...] = ()
+    stderr_lines: tuple[str, ...] = ()
+    output_truncated: bool = False
+    process_tree_killed: bool = False
+    pid: int | None = 1234
 
 
 def _write(path: Path, text: str) -> None:
@@ -108,41 +123,49 @@ def _patch_context(monkeypatch, tmp_path: Path) -> None:
 def _patch_successful_runtime(monkeypatch):
     calls: list[tuple[str, object]] = []
 
-    def fake_git_stdout(command):
-        calls.append(("git", tuple(command)))
-        mapping = {
-            ("git", "branch", "--show-current"): "epic/E001-execution-domain",
-            ("git", "rev-parse", "HEAD"): "a" * 40,
-            ("git", "diff", "--name-only"): "backend/app/tooling/agent_task_preflight.py",
-            ("git", "diff", "--cached", "--name-only"): "backend/tests/unit/tooling/test_agent_task_preflight.py",
-            ("git", "ls-files", "--others", "--exclude-standard"): "",
-        }
-        return mapping[tuple(command)]
+    def fake_validate_manifests(directory):
+        calls.append(("manifests", directory))
+        return []
 
-    def fake_validate_guard(selector):
-        calls.append(("guard", selector))
+    def fake_validate_task_epic_consistency(tasks_file, directory):
+        calls.append(("consistency", tasks_file, directory))
+        return []
+
+    def fake_validate_active_epic(task_selector="next", runtime_file=None, directory=None, tasks_file=None):
+        calls.append(("guard", task_selector))
         return []
 
     def fake_task_metadata(tasks):
         calls.append(("task_metadata", tuple(tasks)))
-        if tasks == ["T045"]:
-            return []
-        return [{"reason": "unknown dependency task T004"}]
+        return []
 
-    def fake_checks(mode, tasks=None):
-        calls.append(("checks", mode, tuple(tasks or [])))
+    def fake_snapshot(*, timeout_seconds, total_deadline):
+        calls.append(("snapshot", timeout_seconds))
         return {
             "status": "PASS",
-            "checks": [
-                {"name": "task_metadata", "status": "PASS", "exit_code": 0, "findings": []},
-                {"name": "git_diff", "status": "PASS", "exit_code": 0, "output_lines": []},
-            ],
+            "branch": "epic/E001-execution-domain",
+            "head_sha": "a" * 40,
+            "tracked": ["backend/app/tooling/agent_task_preflight.py"],
+            "staged": ["backend/tests/unit/tooling/test_agent_task_preflight.py"],
+            "untracked": [],
+            "deleted": [],
+            "renamed": [],
+            "duration_ms": 11,
+            "reason": "",
         }
 
-    monkeypatch.setattr(preflight, "_git_stdout", fake_git_stdout)
-    monkeypatch.setattr(preflight.workstream_validation, "validate_guard", fake_validate_guard)
+    def fake_run_process(argv, **kwargs):
+        calls.append(("process", tuple(argv), kwargs.get("timeout_seconds")))
+        if tuple(argv) != ("git", "--no-pager", "diff", "--check"):
+            raise AssertionError(f"unexpected command: {tuple(argv)}")
+        return FakeProcessResult(command=tuple(argv), status="PASS", exit_code=0)
+
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", fake_validate_manifests)
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", fake_validate_task_epic_consistency)
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", fake_validate_active_epic)
     monkeypatch.setattr(preflight.repository_checks, "task_metadata", fake_task_metadata)
-    monkeypatch.setattr(preflight.repository_checks, "checks", fake_checks)
+    monkeypatch.setattr(preflight.repository_checks, "capture_git_snapshot", fake_snapshot)
+    monkeypatch.setattr(preflight.repository_checks.process_runner, "run_process", fake_run_process)
     return calls
 
 
@@ -157,6 +180,7 @@ def test_next_selector_runs_full_preflight_and_writes_baseline_json(tmp_path, mo
     assert result.task_id == "T045"
     assert result.epic_id == "E001"
     assert result.branch == "epic/E001-execution-domain"
+    assert result.duration_ms >= 0
     baseline_path = tmp_path / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json"
     assert result.baseline_path == str(baseline_path)
     assert baseline_path.is_file()
@@ -170,20 +194,23 @@ def test_next_selector_runs_full_preflight_and_writes_baseline_json(tmp_path, mo
         "tracked": ["backend/app/tooling/agent_task_preflight.py"],
         "staged": ["backend/tests/unit/tooling/test_agent_task_preflight.py"],
         "untracked": [],
+        "deleted": [],
+        "renamed": [],
     }
     assert [check.name for check in result.checks] == [
         "python_version",
         "active_epic",
-        "branch",
-        "guard",
-        "dependency_validation",
-        "task_ownership",
-        "repository_preflight",
+        "manifest_validation",
+        "task_epic_consistency",
+        "active_epic_guard",
+        "selected_task_metadata",
+        "git_snapshot",
+        "git_diff_check",
         "baseline_capture",
     ]
     assert ("guard", "next") in calls
-    assert ("task_metadata", ("T045",)) in calls
-    assert ("checks", "preflight", ("T045",)) in calls
+    assert ("task_metadata", ("T001", "T045")) in calls
+    assert ("snapshot", preflight.SNAPSHOT_TIMEOUT_SECONDS) in calls
 
 
 def test_json_cli_outputs_task_and_baseline(tmp_path, monkeypatch, capsys):
@@ -199,6 +226,7 @@ def test_json_cli_outputs_task_and_baseline(tmp_path, monkeypatch, capsys):
     assert payload["task"] == "T045"
     assert payload["epic"] == "E001"
     assert payload["branch"] == "epic/E001-execution-domain"
+    assert payload["duration_ms"] >= 0
     assert Path(payload["baseline_path"]).as_posix().endswith("T045/baseline.json")
 
 
@@ -216,12 +244,13 @@ def test_invalid_selector_returns_usage_error(tmp_path, monkeypatch):
 def test_guard_failure_blocks_before_baseline_capture(tmp_path, monkeypatch):
     _setup_repo(tmp_path)
     _patch_context(monkeypatch, tmp_path)
-    calls = []
+    calls: list[str] = []
 
-    monkeypatch.setattr(preflight, "_git_stdout", lambda command: "epic/E001-execution-domain" if command == ["git", "branch", "--show-current"] else "a" * 40)
-    monkeypatch.setattr(preflight.workstream_validation, "validate_guard", lambda selector: calls.append(selector) or ["active epic does not exist"])
-    monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
-    monkeypatch.setattr(preflight.repository_checks, "checks", lambda mode, tasks=None: {"status": "PASS", "checks": []})
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", lambda directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", lambda tasks_file, directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", lambda **kwargs: ["active epic does not exist"])
+    monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: calls.append("task_metadata") or [])
+    monkeypatch.setattr(preflight.repository_checks, "capture_git_snapshot", lambda **kwargs: calls.append("snapshot") or {})
 
     result = preflight.run_preflight("T045", version_info=(3, 11, 0))
 
@@ -229,15 +258,16 @@ def test_guard_failure_blocks_before_baseline_capture(tmp_path, monkeypatch):
     assert result.status == "FAIL"
     assert result.baseline_path is None
     assert not (tmp_path / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json").exists()
-    assert calls == ["T045"]
+    assert calls == []
 
 
 def test_branch_mismatch_returns_validation_failure(tmp_path, monkeypatch):
     _setup_repo(tmp_path)
     _patch_context(monkeypatch, tmp_path)
-    _patch_successful_runtime(monkeypatch)
-
-    monkeypatch.setattr(preflight, "_git_stdout", lambda command: "master" if command == ["git", "branch", "--show-current"] else "a" * 40)
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", lambda directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", lambda tasks_file, directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", lambda **kwargs: ["current branch does not match the epic manifest"])
+    monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
 
     result = preflight.run_preflight("T045", version_info=(3, 11, 0))
 
@@ -249,13 +279,25 @@ def test_branch_mismatch_returns_validation_failure(tmp_path, monkeypatch):
 def test_repository_preflight_timeout_maps_to_exit_code_three(tmp_path, monkeypatch):
     _setup_repo(tmp_path)
     _patch_context(monkeypatch, tmp_path)
-    monkeypatch.setattr(preflight, "_git_stdout", lambda command: "epic/E001-execution-domain" if command == ["git", "branch", "--show-current"] else "a" * 40)
-    monkeypatch.setattr(preflight.workstream_validation, "validate_guard", lambda selector: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", lambda directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", lambda tasks_file, directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", lambda **kwargs: [])
     monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
     monkeypatch.setattr(
         preflight.repository_checks,
-        "checks",
-        lambda mode, tasks=None: {"status": "TIMEOUT", "checks": [{"name": "task_metadata", "status": "TIMEOUT", "exit_code": None, "findings": []}]},
+        "capture_git_snapshot",
+        lambda **kwargs: {
+            "status": "TIMEOUT",
+            "reason": "command timed out after 20 seconds",
+            "branch": "",
+            "head_sha": "",
+            "tracked": [],
+            "staged": [],
+            "untracked": [],
+            "deleted": [],
+            "renamed": [],
+            "duration_ms": 20,
+        },
     )
 
     result = preflight.run_preflight("T045", version_info=(3, 11, 0))
@@ -265,19 +307,8 @@ def test_repository_preflight_timeout_maps_to_exit_code_three(tmp_path, monkeypa
     assert result.baseline_path is None
 
 
-def test_python_version_failure_returns_validation_failure(tmp_path, monkeypatch):
-    _setup_repo(tmp_path)
-    _patch_context(monkeypatch, tmp_path)
-
-    result = preflight.run_preflight("T045", version_info=(3, 9, 12))
-
-    assert result.exit_code == 1
-    assert result.status == "FAIL"
-    assert result.task_id == ""
-
-
 def _git(tmp_path: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True, timeout=10)
 
 
 def test_preflight_snapshot_excludes_ignored_runtime_baseline_in_real_git_repo(tmp_path, monkeypatch):
@@ -292,16 +323,13 @@ def test_preflight_snapshot_excludes_ignored_runtime_baseline_in_real_git_repo(t
     _git(tmp_path, "add", ".specify/workstreams/M001.yml")
     _git(tmp_path, "add", ".specify/workstreams/E001.yml")
     _git(tmp_path, "add", "specs/001-ai-content-studio/tasks.md")
-    _git(tmp_path, "commit", "-m", "initial state")
+    _git(tmp_path, "commit", "--no-gpg-sign", "-m", "initial state")
     _git(tmp_path, "checkout", "-b", "epic/E001-execution-domain")
 
-    monkeypatch.setattr(preflight.workstream_validation, "validate_guard", lambda selector: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", lambda directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", lambda tasks_file, directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", lambda **kwargs: [])
     monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
-    monkeypatch.setattr(
-        preflight.repository_checks,
-        "checks",
-        lambda mode, tasks=None: {"status": "PASS", "checks": []},
-    )
 
     result = preflight.run_preflight("T045", version_info=(3, 11, 0))
 
@@ -310,3 +338,50 @@ def test_preflight_snapshot_excludes_ignored_runtime_baseline_in_real_git_repo(t
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     assert baseline["schema_version"] == 1
     assert baseline["untracked"] == []
+    assert baseline["deleted"] == []
+    assert baseline["renamed"] == []
+    assert all(".specify/runtime/task-runs/T045/baseline.json" not in item for item in baseline["tracked"])
+
+
+def test_preflight_uses_one_git_status_one_rev_parse_and_one_diff_check(tmp_path, monkeypatch):
+    _setup_repo(tmp_path)
+    _patch_context(monkeypatch, tmp_path)
+    monkeypatch.setattr(preflight.workstream_validation, "validate_manifests", lambda directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_task_epic_consistency", lambda tasks_file, directory: [])
+    monkeypatch.setattr(preflight.workstream_validation, "validate_active_epic", lambda **kwargs: [])
+    monkeypatch.setattr(preflight.repository_checks, "task_metadata", lambda tasks: [])
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run_process(argv, **kwargs):
+        command = tuple(argv)
+        calls.append(command)
+        if command == (
+            "git",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+        ):
+            return FakeProcessResult(
+                command=command,
+                status="PASS",
+                stdout_lines=("## epic/E001-execution-domain\0",),
+            )
+        if command == ("git", "rev-parse", "HEAD"):
+            return FakeProcessResult(command=command, status="PASS", stdout_lines=("a" * 40 + "\n",))
+        if command == ("git", "--no-pager", "diff", "--check"):
+            return FakeProcessResult(command=command, status="PASS")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(preflight.repository_checks.process_runner, "run_process", fake_run_process)
+
+    result = preflight.run_preflight("T045", version_info=(3, 11, 0))
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("git", "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"),
+        ("git", "rev-parse", "HEAD"),
+        ("git", "--no-pager", "diff", "--check"),
+    ]

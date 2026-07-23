@@ -26,6 +26,13 @@ foreach ($hookPath in $hookPaths) {
     }
 }
 
+$pythonBin = & python -c "import sys; print(sys.executable)"
+git config --local agent.python $pythonBin
+$storedPython = git config --local --get agent.python
+if ($storedPython -ne $pythonBin) {
+    Fail "HOOK_INSTALL: FAIL`nreason: expected agent.python to match the active interpreter"
+}
+
 git config --local core.hooksPath .githooks
 $hooksPath = git config --local --get core.hooksPath
 

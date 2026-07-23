@@ -27,7 +27,7 @@ Implementation rules:
 - Do not commit, push, merge, force-push, or deploy.
 - Stop after implementing this one task; do not select or start another task.
 
-Run only validation commands authorized by the package that are appropriate during implementation. Leave systematic validation and diagnosis to spec_debugger.
+Run only task-focused tests explicitly authorized by the package. Do not run full `python -m pytest`, repository validation modules, or raw Git inventory commands during implementation. Leave systematic validation and diagnosis to spec_debugger.
 
 Return a report with exactly these sections:
 1. TASK_ID;

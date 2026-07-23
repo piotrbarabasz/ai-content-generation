@@ -14,6 +14,7 @@ Review requirements:
 - Compare actual changed paths with allowed implementation, test, bookkeeping, and forbidden paths.
 - Check for scope drift and unrelated refactors.
 - Verify that the required task-focused and broader tests were actually run and that reported results are supported.
+- A manifest-required full `python -m pytest` is only acceptable in this review stage when it appears in the epic's required checks.
 - Compare the current state with the captured pre-task baseline. Distinguish task-created problems from pre-existing changes.
 - Do not automatically fail because the repository was already dirty; fail only for a relevant baseline conflict or a task-introduced problem.
 - Do not edit or repair files, change tasks.md, commit, push, merge, force-push, or deploy.

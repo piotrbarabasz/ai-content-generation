@@ -35,13 +35,11 @@ Never reinterpret free text as a task selector. Never continue to another task a
 
 ## 2. Resolve the feature context
 
-From the repository root, run the configured PowerShell prerequisite script:
-
-```powershell
-.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks
-```
-
-Use another repository-provided variant only if this configured script is unavailable. Parse `FEATURE_DIR` and `AVAILABLE_DOCS`; require absolute resolved paths and stop if `spec.md`, `plan.md`, or `tasks.md` is missing.
+From the repository root, consume the JSON feature context returned by
+`python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
+Use the report's `FEATURE_DIR`, `AVAILABLE_DOCS`, and optional artifact paths;
+require absolute resolved paths and stop if `spec.md`, `plan.md`, or `tasks.md`
+is missing.
 
 Load:
 
@@ -101,20 +99,25 @@ ownership of that path.
 
 Invoke only direct configured subagents; `max_depth = 1` means subagents must not spawn other subagents.
 
-Run this sequence serially:
+Run this sequence serially on the happy path:
 
 ```text
 spec_manager
   -> spec_explorer
   -> spec_manager
   -> PROGRAMMER_ROUTE
-  -> spec_debugger
   -> agent_task_finalize --json
   -> spec_reviewer
+  -> spec_manager
+      -> on PASS: spec_closer
 ```
 
-Never run two write-capable agents concurrently. `PROGRAMMER_ROUTE` must be exactly `spec_programmer_fast` or `spec_programmer_high`.
-After every programmer or debugger repair, the root orchestrator reruns
+Never run two write-capable agents concurrently. `PROGRAMMER_ROUTE` must be
+exactly `spec_programmer_fast` or `spec_programmer_high`.
+`spec_debugger` is never part of the happy path. It is reserved only for a
+real `FAIL` or `TIMEOUT` from the finalize report or a reviewer `FAIL` that
+requires a minimal package-bounded fix. After every programmer or debugger
+repair, the root orchestrator reruns
 `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
 before sending evidence back to the reviewer. Never hand the reviewer a stale
 finalize report.
@@ -189,15 +192,17 @@ If `RISK_LEVEL` is `critical`, stop before any programmer handoff until the huma
 
 ## 7. Debug and validate
 
-Give `spec_debugger` the package and programmer report. Run only package-approved commands, task-focused first and broader checks second. Commands may include, when supported by the repository and selected by the manager:
+Give `spec_debugger` the package and programmer report only when the finalize
+report or reviewer report shows a real failure that can be repaired inside the
+package. Run only the failing task-focused command or commands listed in the
+finalize report. Never rerun passing checks and never run full `pytest` or
+repository validation modules in the debugger. Commands may include, when
+supported by the repository and selected by the manager:
 
 ```powershell
 python -m pytest <task-focused-tests>
-python -m pytest
-python -m compileall backend/app backend/tests
 ```
 
-Do not require `ruff` unless repository configuration proves it is available.
 Do not make real provider calls or network requests. Require the debugger to
 report every command, exit status, and result. Permit only minimal fixes in
 the implementation and test allowlists; stop on baseline conflicts, forbidden

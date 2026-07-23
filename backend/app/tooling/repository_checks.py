@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import process_runner
 from .task_consistency import format_finding, validate_consistency
 from .workstream_validation import _load_yaml_manifest as _load_workstream_manifest
 
@@ -117,6 +118,132 @@ def run_process(command: list[str]) -> dict[str, Any]:
         "output_lines": output,
         "truncated": truncated,
     }
+
+
+def _status_output(result: process_runner.ProcessResult) -> str:
+    if result.stdout_lines:
+        return "".join(result.stdout_lines)
+    return ""
+
+
+def _split_status_records(raw_status: str) -> list[str]:
+    records = raw_status.split("\0")
+    if records and records[-1] == "":
+        records.pop()
+    return records
+
+
+def _append_snapshot_path(bucket: list[str], path: str) -> None:
+    normalized = path.replace("\\", "/").strip()
+    if normalized and normalized not in bucket:
+        bucket.append(normalized)
+
+
+def _parse_git_status_snapshot(raw_status: str) -> dict[str, Any]:
+    branch = ""
+    tracked: list[str] = []
+    staged: list[str] = []
+    untracked: list[str] = []
+    deleted: list[str] = []
+    renamed: list[dict[str, str]] = []
+
+    records = _split_status_records(raw_status)
+    index = 0
+    if records and records[0].startswith("## "):
+        branch = records[0][3:].strip()
+        if "..." in branch:
+            branch = branch.split("...", 1)[0].strip()
+        if branch.startswith("HEAD"):
+            branch = branch.split(" ", 1)[0].strip()
+        index = 1
+
+    while index < len(records):
+        record = records[index]
+        if not record:
+            index += 1
+            continue
+        if record.startswith("?? "):
+            _append_snapshot_path(untracked, record[3:])
+            index += 1
+            continue
+        status = record[:2]
+        path = record[3:]
+        index_status = status[0] if len(status) > 0 else " "
+        worktree_status = status[1] if len(status) > 1 else " "
+        if index_status in {"R", "C"} or worktree_status in {"R", "C"}:
+            new_path = ""
+            if index + 1 < len(records):
+                new_path = records[index + 1]
+            renamed.append({"old": path.replace("\\", "/").strip(), "new": new_path.replace("\\", "/").strip()})
+            _append_snapshot_path(staged, path)
+            _append_snapshot_path(tracked, new_path)
+            index += 2
+            continue
+        if index_status == "D" or worktree_status == "D":
+            _append_snapshot_path(deleted, path)
+        if index_status not in {" ", "?", "D"}:
+            _append_snapshot_path(staged, path)
+        if worktree_status not in {" ", "?", "D"}:
+            _append_snapshot_path(tracked, path)
+        if index_status == "D" and path not in deleted:
+            _append_snapshot_path(deleted, path)
+        index += 1
+
+    return {
+        "branch": branch,
+        "tracked": tracked,
+        "staged": staged,
+        "untracked": untracked,
+        "deleted": deleted,
+        "renamed": renamed,
+    }
+
+
+def capture_git_snapshot(
+    *,
+    timeout_seconds: int = TIMEOUT_SECONDS,
+    total_deadline: float | None = None,
+) -> dict[str, Any]:
+    status_result = process_runner.run_process(
+        ["git", "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
+        cwd=ROOT,
+        timeout_seconds=timeout_seconds,
+        total_deadline=total_deadline,
+        heartbeat_seconds=0,
+    )
+    head_result = process_runner.run_process(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        timeout_seconds=timeout_seconds,
+        total_deadline=total_deadline,
+        heartbeat_seconds=0,
+    )
+    duration_ms = int(status_result.duration_ms + head_result.duration_ms)
+    status = status_result.status
+    if status == "PASS" and head_result.status != "PASS":
+        status = head_result.status
+    payload: dict[str, Any] = {
+        "status": status,
+        "duration_ms": duration_ms,
+        "branch": "",
+        "head_sha": "",
+        "tracked": [],
+        "staged": [],
+        "untracked": [],
+        "deleted": [],
+        "renamed": [],
+        "reason": "",
+    }
+    if status_result.status == "PASS":
+        payload.update(_parse_git_status_snapshot(_status_output(status_result)))
+    else:
+        payload["reason"] = "\n".join(status_result.stderr_lines or status_result.stdout_lines or ())
+    if head_result.status == "PASS":
+        payload["head_sha"] = "".join(head_result.stdout_lines).strip()
+    else:
+        payload["status"] = head_result.status
+        payload["reason"] = "\n".join(head_result.stderr_lines or head_result.stdout_lines or ())
+    return payload
 
 
 def _iter_task_blocks(path: Path) -> list[tuple[str, int, list[tuple[int, str]]]]:
@@ -499,13 +626,33 @@ def task_metadata(tasks: list[str] | None = None) -> list[dict[str, Any]]:
 
 
 def git_checks() -> list[dict[str, Any]]:
-    return [
-        run_process(["git", "--no-pager", "diff", "--check"]),
-        run_process(["git", "status", "--porcelain=v1", "--untracked-files=all"]),
-        run_process(["git", "diff", "--name-only"]),
-        run_process(["git", "diff", "--cached", "--name-only"]),
-        run_process(["git", "ls-files", "--others", "--exclude-standard"]),
-    ]
+    snapshot = capture_git_snapshot()
+    snapshot_status = str(snapshot.get("status") or "FAIL")
+    snapshot_check = {
+        "name": "git_snapshot",
+        "status": snapshot_status,
+        "exit_code": 0 if snapshot_status == "PASS" else 3 if snapshot_status == "TIMEOUT" else 1,
+        "snapshot": snapshot,
+    }
+    diff_result = process_runner.run_process(
+        ["git", "--no-pager", "diff", "--check"],
+        cwd=ROOT,
+        timeout_seconds=TIMEOUT_SECONDS,
+        heartbeat_seconds=0,
+    )
+    diff_check = {
+        "name": _command_name(list(diff_result.command)),
+        "status": diff_result.status,
+        "exit_code": diff_result.exit_code,
+        "command": list(diff_result.command),
+        "output_lines": list(diff_result.stdout_lines) + (["[stderr]"] + list(diff_result.stderr_lines) if diff_result.stderr_lines else []),
+        "truncated": diff_result.output_truncated,
+        "duration_ms": diff_result.duration_ms,
+        "timed_out": diff_result.timed_out,
+        "process_tree_killed": diff_result.process_tree_killed,
+        "pid": diff_result.pid,
+    }
+    return [snapshot_check, diff_check]
 
 
 def checks(mode: str, tasks: list[str] | None = None) -> dict[str, Any]:

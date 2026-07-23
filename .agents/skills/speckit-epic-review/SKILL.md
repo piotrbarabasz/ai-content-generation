@@ -44,7 +44,9 @@ modify code, tasks, manifests, runtime state, or Git history.
    not duplicated, and changes stay within the epic.
 8. Run only the exact commands in `required_checks`. Execute them locally and
    deterministically. Do not run network commands, real providers, or any
-   command not listed by the manifest. Record command, exit code, and result.
+   command not listed by the manifest. This is the only loop stage that may
+   execute a manifest-required full `python -m pytest` if the manifest asks
+   for it. Record command, exit code, and result.
 9. Inspect tests for behavioral assertions rather than import-only coverage.
    Check for secrets, credentials, generated outputs, runtime artifacts, and
    other sensitive material in the epic diff.

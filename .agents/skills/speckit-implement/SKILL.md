@@ -72,6 +72,8 @@ Report the blocking condition and stop if any check fails. Never overwrite, reve
 - Do not select, implement, or begin another task.
 - Do not run repository mechanical validation modules or raw Git inventory commands.
 - Run only task-focused tests explicitly listed in `VALIDATION_COMMANDS`.
+- Never run full `python -m pytest` in the programmer role unless the package
+  itself names that exact command as the task-focused validation command.
 
 ## Validation
 

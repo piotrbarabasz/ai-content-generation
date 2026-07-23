@@ -11,8 +11,10 @@ Validation order and reporting:
   construct semicolon-chained PowerShell validation commands. Every external
   command MUST have a finite timeout. A timeout MUST produce a structured
   failure and MUST NOT trigger automatic retries.
-- Run only validation commands listed in the task package.
-- Start with the task-focused tests, then run each broader validation command only when the package lists it.
+- Run only failing task-focused validation commands listed in the finalize
+  report or task package.
+- Start with the failing task-focused tests and do not rerun passing checks or
+  full `python -m pytest`.
 - Record every command exactly and return its exit status and relevant result. Do not omit failed commands.
 - Diagnose failures against the package, baseline, and implementation report.
 

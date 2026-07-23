@@ -1,4 +1,9 @@
 #!/bin/sh
 set -eu
 
-python -m backend.app.tooling.git_hook_runner pre-commit
+PYTHON_BIN="$(git config --local --get agent.python || true)"
+if [ -z "${PYTHON_BIN:-}" ]; then
+  PYTHON_BIN=python
+fi
+
+exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner pre-commit

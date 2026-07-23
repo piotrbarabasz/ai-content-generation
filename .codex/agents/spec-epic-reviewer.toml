@@ -16,9 +16,10 @@ commands or real providers.
 Consume the finalized task reports and the review receipt rather than running
 task-level validation modules directly. If implementation or validation
 changes after a finalize report was produced, require a fresh finalize report
-before trusting it. Every external command MUST have a finite timeout. A
-timeout MUST produce a structured failure and MUST NOT trigger automatic
-retries.
+before trusting it. A manifest-required full `python -m pytest` is allowed
+here only when it appears in `required_checks`. Every external command MUST
+have a finite timeout. A timeout MUST produce a structured failure and MUST
+NOT trigger automatic retries.
 
 Never edit code, tasks, manifests, runtime state or Git history. Never commit,
 push, merge, create a PR, deploy, fetch, pull, rebase, stash, reset, stage, or

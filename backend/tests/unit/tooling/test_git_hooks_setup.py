@@ -15,14 +15,16 @@ class GitHooksSetupTests(unittest.TestCase):
 
         self.assertTrue(pre_commit.is_file())
         self.assertTrue(pre_push.is_file())
-        self.assertEqual(
-            pre_commit.read_text(encoding="utf-8").strip(),
-            "#!/bin/sh\nset -eu\n\npython -m backend.app.tooling.git_hook_runner pre-commit",
-        )
-        self.assertEqual(
-            pre_push.read_text(encoding="utf-8").strip(),
-            "#!/bin/sh\nset -eu\n\npython -m backend.app.tooling.git_hook_runner pre-push",
-        )
+        pre_commit_text = pre_commit.read_text(encoding="utf-8")
+        pre_push_text = pre_push.read_text(encoding="utf-8")
+        self.assertIn("set -eu", pre_commit_text)
+        self.assertIn("set -eu", pre_push_text)
+        self.assertIn("git config --local --get agent.python", pre_commit_text)
+        self.assertIn("git config --local --get agent.python", pre_push_text)
+        self.assertIn('exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner pre-commit', pre_commit_text)
+        self.assertIn('exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner pre-push', pre_push_text)
+        self.assertIn('PYTHON_BIN="$(git config --local --get agent.python || true)"', pre_commit_text)
+        self.assertIn('PYTHON_BIN="$(git config --local --get agent.python || true)"', pre_push_text)
 
     def test_install_scripts_set_hooks_path_without_global(self) -> None:
         install_ps1 = SCRIPTS_DIR / "install-git-hooks.ps1"
@@ -36,12 +38,16 @@ class GitHooksSetupTests(unittest.TestCase):
         self.assertIn("git rev-parse --show-toplevel", ps1_text)
         self.assertIn("git config --local core.hooksPath .githooks", ps1_text)
         self.assertIn("git config --local --get core.hooksPath", ps1_text)
+        self.assertIn("git config --local agent.python", ps1_text)
+        self.assertIn('python -c "import sys; print(sys.executable)"', ps1_text)
         self.assertNotIn("--global", ps1_text)
         self.assertIn("HOOK_INSTALL: PASS", ps1_text)
 
         self.assertIn("git rev-parse --show-toplevel", sh_text)
         self.assertIn("git config --local core.hooksPath .githooks", sh_text)
         self.assertIn("git config --local --get core.hooksPath", sh_text)
+        self.assertIn("git config --local agent.python", sh_text)
+        self.assertIn("python -c 'import sys; print(sys.executable)'", sh_text)
         self.assertNotIn("--global", sh_text)
         self.assertIn("HOOK_INSTALL: PASS", sh_text)
         self.assertIn("chmod +x .githooks/pre-commit", sh_text)
@@ -70,6 +76,7 @@ class GitHooksSetupTests(unittest.TestCase):
     def test_readme_documents_hook_install_verification(self) -> None:
         readme = README_PATH.read_text(encoding="utf-8")
         self.assertIn("git config --local --get core.hooksPath", readme)
+        self.assertIn("git config --local --get agent.python", readme)
         self.assertIn(".githooks", readme)
         self.assertIn("one-time", readme.lower())
         self.assertIn("Python 3.11 or newer", readme)

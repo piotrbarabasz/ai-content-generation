@@ -15,6 +15,10 @@ These instructions govern repository work performed through the project-scoped C
   before implementation and `agent_task_finalize --task <task> --json`
   after implementation. Agents do not run repository validation modules
   directly.
+- `agent_task_preflight --selector <selector> --json` is the only
+  deterministic task-loop entrypoint before implementation, and the root
+  orchestrator consumes the returned feature context instead of spawning extra
+  prerequisite processes.
 - Manager, explorer, programmer, and reviewer must not run repository
   mechanical validation modules or raw Git inventory commands directly. They
   consume preflight and finalize reports instead.
@@ -102,18 +106,17 @@ write, validate, and delete operations instead of ad hoc Python snippets.
 
 The root Codex session is the dispatcher. All named agents are direct children of the root because `.codex/config.toml` sets `max_depth = 1`; subagents must not try to spawn nested agents. The root passes each report and handoff to the next direct agent.
 
-Run the roles sequentially in this logical order:
+Run the roles sequentially in this logical order on the happy path:
 
 ```text
 spec_manager
   -> spec_explorer
   -> spec_manager
   -> spec_programmer_fast or spec_programmer_high
-  -> spec_debugger
   -> spec_reviewer
   -> spec_manager
-      -> on FAIL: PROGRAMMER_ROUTE or spec_debugger, then debugger/reviewer as needed,
-                  with at most 2 repair cycles total
+      -> on FAIL from finalize or review: PROGRAMMER_ROUTE or spec_debugger,
+         then fresh finalize/reviewer as needed, with at most 2 repair cycles total
       -> on PASS: spec_closer
   -> spec_manager final summary
 ```
@@ -124,6 +127,7 @@ Rules for every run:
 - Never automatically continue to the next task, even after a successful close.
 - Permit at most two repair cycles after review failures.
 - Never run two write-capable agents concurrently. `spec_programmer_fast`, `spec_programmer_high`, `spec_debugger`, and `spec_closer` must be invoked one at a time, with the previous writer fully stopped before the next begins.
+- Do not invoke `spec_debugger` on the happy path. It is reserved for real FAIL or TIMEOUT evidence from finalize or review, and only when the issue is task-local and within the package allowlist.
 - Keep `spec_closer` separate from implementation and review. No other role may mark a task complete.
 - After every programmer or debugger repair, rerun
   `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
@@ -194,7 +198,7 @@ Use `$speckit-implement` to implement only the approved package. The skill requi
 
 ### `spec_debugger`
 
-Runs only package-listed validation commands, beginning with task-focused tests. It reports every command result and may make only minimal task-related fixes in allowed implementation or test files. It does not repair baseline failures.
+Consumes the latest finalize report, runs only the failing task-focused command or commands named there, and may make only minimal task-related fixes in allowed implementation or test files. It does not rerun passing checks, does not run full pytest, does not run repository validation modules, and does not repair baseline failures.
 
 ### `spec_reviewer`
 
@@ -207,7 +211,7 @@ Has one bookkeeping responsibility: after verifying a matching `PASS`, `SAFE_TO_
 ## Review failure routing
 
 - Route missing behavior, incorrect design, or incomplete implementation to `PROGRAMMER_ROUTE`.
-- Route reproducible test failures, narrow defects exposed by validation, or validation-specific corrections to `spec_debugger`.
+- Route reproducible test failures, narrow defects exposed by validation, or validation-specific corrections to `spec_debugger`. Do not route a happy-path task to the debugger.
 - Keep every repair inside the original package. If the fix requires a new file or wider scope, stop and have the manager reassess rather than silently expanding the allowlist.
 - Re-run appropriate debugging validation and independent review after a repair.
 - Stop after two failed repair cycles and report unresolved blockers. Do not close the task or start another one.

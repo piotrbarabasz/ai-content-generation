@@ -22,6 +22,13 @@ if [ ! -f .githooks/pre-push ]; then
   fail "missing hook file .githooks/pre-push"
 fi
 
+python_bin=$(python -c 'import sys; print(sys.executable)')
+git config --local agent.python "$python_bin"
+stored_python=$(git config --local --get agent.python || true)
+if [ "$stored_python" != "$python_bin" ]; then
+  fail "expected agent.python to match the active interpreter"
+fi
+
 git config --local core.hooksPath .githooks
 hooks_path=$(git config --local --get core.hooksPath || true)
 if [ "$hooks_path" != ".githooks" ]; then

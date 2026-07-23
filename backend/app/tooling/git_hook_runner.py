@@ -4,25 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
+import math
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from . import process_runner
+
 ROOT = Path(__file__).resolve().parents[3]
 MAX_OUTPUT_LINES = 20
 MAX_LINE_LENGTH = 300
 ZERO_SHA = "0" * 40
-COMMAND_TIMEOUTS = {
-    "workstream_validation": 30,
-    "repository_checks_task_metadata": 30,
-    "git_diff_cached_check": 30,
-    "git_diff_check": 30,
-    "pytest_unit_tooling": 180,
-    "pytest_full": 600,
+GLOBAL_TIMEOUTS = {
+    "pre-commit": 60,
+    "pre-push": 480,
+    "ci": 900,
 }
 
 
@@ -49,60 +47,31 @@ class HookCommandResult:
 class HookRunResult:
     mode: str
     status: str
+    global_timeout: bool
+    global_timeout_seconds: int
     commands: tuple[HookCommandResult, ...]
 
 
-PRE_COMMIT_COMMANDS = (
-    HookCommand(
-        name="workstream_validation",
-        argv=(sys.executable, "-m", "backend.app.tooling.workstream_validation"),
-        timeout_seconds=COMMAND_TIMEOUTS["workstream_validation"],
-    ),
-    HookCommand(
-        name="repository_checks_task_metadata",
-        argv=(sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
-        timeout_seconds=COMMAND_TIMEOUTS["repository_checks_task_metadata"],
-    ),
-    HookCommand(
-        name="git_diff_cached_check",
-        argv=("git", "--no-pager", "diff", "--cached", "--check"),
-        timeout_seconds=COMMAND_TIMEOUTS["git_diff_cached_check"],
-    ),
-)
+def _truncate(value: str, *, limit: int = MAX_LINE_LENGTH) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
 
-PRE_PUSH_COMMANDS = (
-    HookCommand(
-        name="pytest_unit_tooling",
-        argv=(sys.executable, "-m", "pytest", "backend/tests/unit/tooling"),
-        timeout_seconds=COMMAND_TIMEOUTS["pytest_unit_tooling"],
-    ),
-    HookCommand(
-        name="workstream_validation",
-        argv=(sys.executable, "-m", "backend.app.tooling.workstream_validation"),
-        timeout_seconds=COMMAND_TIMEOUTS["workstream_validation"],
-    ),
-    HookCommand(
-        name="repository_checks_task_metadata",
-        argv=(sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
-        timeout_seconds=COMMAND_TIMEOUTS["repository_checks_task_metadata"],
-    ),
-    HookCommand(
-        name="pytest_full",
-        argv=(sys.executable, "-m", "pytest"),
-        timeout_seconds=COMMAND_TIMEOUTS["pytest_full"],
-    ),
-    HookCommand(
-        name="git_diff_check",
-        argv=("git", "--no-pager", "diff", "--check"),
-        timeout_seconds=COMMAND_TIMEOUTS["git_diff_check"],
-    ),
-)
 
-HOOK_COMMANDS: dict[str, tuple[HookCommand, ...]] = {
-    "pre-commit": PRE_COMMIT_COMMANDS,
-    "pre-push": PRE_PUSH_COMMANDS,
-    "ci": PRE_PUSH_COMMANDS,
-}
+def _command_text(argv: Sequence[str]) -> str:
+    return " ".join(argv)
+
+
+def _summarize_output(stdout_lines: Sequence[str], stderr_lines: Sequence[str]) -> str | None:
+    stdout = [line.strip() for line in stdout_lines if line.strip()]
+    stderr = [line.strip() for line in stderr_lines if line.strip()]
+    if stdout and stderr:
+        return _truncate(f"{stdout[0]} | {stderr[0]}")
+    if stdout:
+        return _truncate(stdout[0])
+    if stderr:
+        return _truncate(stderr[0])
+    return None
 
 
 def _ci_diff_argv(base_sha: str | None, head_sha: str | None) -> tuple[str, ...]:
@@ -114,125 +83,152 @@ def _ci_diff_argv(base_sha: str | None, head_sha: str | None) -> tuple[str, ...]
 
 
 def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str | None = None) -> tuple[HookCommand, ...]:
-    commands = list(HOOK_COMMANDS[mode])
+    if mode == "pre-commit":
+        return (
+            HookCommand(
+                name="workstream_validation",
+                argv=(sys.executable, "-m", "backend.app.tooling.workstream_validation"),
+                timeout_seconds=20,
+            ),
+            HookCommand(
+                name="repository_checks_task_metadata",
+                argv=(sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
+                timeout_seconds=20,
+            ),
+            HookCommand(
+                name="git_diff_cached_check",
+                argv=("git", "--no-pager", "diff", "--cached", "--check"),
+                timeout_seconds=20,
+            ),
+        )
+
+    if mode == "pre-push":
+        return (
+            HookCommand(
+                name="workstream_validation",
+                argv=(sys.executable, "-m", "backend.app.tooling.workstream_validation"),
+                timeout_seconds=20,
+            ),
+            HookCommand(
+                name="repository_checks_task_metadata",
+                argv=(sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
+                timeout_seconds=20,
+            ),
+            HookCommand(
+                name="pytest_full",
+                argv=(sys.executable, "-m", "pytest"),
+                timeout_seconds=300,
+            ),
+            HookCommand(
+                name="git_diff_check",
+                argv=("git", "--no-pager", "diff", "--check"),
+                timeout_seconds=20,
+            ),
+        )
+
     if mode == "ci":
-        adjusted: list[HookCommand] = []
-        for command in commands:
-            if command.name == "git_diff_check":
-                adjusted.append(
-                    HookCommand(
-                        name=command.name,
-                        argv=_ci_diff_argv(base_sha, head_sha),
-                        timeout_seconds=command.timeout_seconds,
-                    )
-                )
-            else:
-                adjusted.append(command)
-        return tuple(adjusted)
-    return tuple(commands)
+        return (
+            HookCommand(
+                name="workstream_validation",
+                argv=(sys.executable, "-m", "backend.app.tooling.workstream_validation"),
+                timeout_seconds=30,
+            ),
+            HookCommand(
+                name="repository_checks_task_metadata",
+                argv=(sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
+                timeout_seconds=30,
+            ),
+            HookCommand(
+                name="pytest_full",
+                argv=(sys.executable, "-m", "pytest"),
+                timeout_seconds=600,
+            ),
+            HookCommand(
+                name="git_diff_check",
+                argv=_ci_diff_argv(base_sha, head_sha),
+                timeout_seconds=30,
+            ),
+        )
+
+    raise ValueError(f"unsupported mode: {mode}")
 
 
-def _command_text(argv: Sequence[str]) -> str:
-    return " ".join(argv)
+def _effective_timeout_seconds(command_timeout_seconds: int, remaining_seconds: float) -> int:
+    return max(1, min(command_timeout_seconds, max(1, math.ceil(remaining_seconds))))
 
 
-def _truncate(value: str, *, limit: int = MAX_LINE_LENGTH) -> str:
-    if len(value) <= limit:
-        return value
-    return value[: limit - 3] + "..."
+def _run_command(command: HookCommand, *, deadline: float, heartbeat_seconds: int) -> HookCommandResult:
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        raise TimeoutError("GLOBAL_TIMEOUT")
 
-
-def _to_text(value: Any) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    if value is None:
-        return ""
-    return str(value)
-
-
-def _summarize_output(stdout: str, stderr: str) -> str | None:
-    stdout = stdout.strip()
-    stderr = stderr.strip()
-    if stdout and stderr:
-        summary = f"{stdout.splitlines()[0]} | {stderr.splitlines()[0]}"
-    else:
-        text = stdout or stderr
-        if not text:
-            return None
-        summary = text.splitlines()[0]
-    return _truncate(summary)
-
-
-def _run_command(command: HookCommand) -> HookCommandResult:
-    env = os.environ.copy()
-    env.update({"GIT_PAGER": "cat", "PAGER": "cat", "TERM": "dumb", "PYTHONUNBUFFERED": "1"})
+    effective_timeout = _effective_timeout_seconds(command.timeout_seconds, remaining_seconds)
     started = time.perf_counter()
-    try:
-        result = subprocess.run(
-            list(command.argv),
-            cwd=ROOT,
-            shell=False,
-            timeout=command.timeout_seconds,
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-        timeout_note = f"TIMEOUT after {command.timeout_seconds} seconds"
-        if exc.stdout or exc.stderr:
-            output = _summarize_output(_to_text(exc.stdout), _to_text(exc.stderr))
-        else:
-            output = timeout_note
-        return HookCommandResult(
-            name=command.name,
-            command=_command_text(command.argv),
-            status="TIMEOUT",
-            exit_code=None,
-            timeout_seconds=command.timeout_seconds,
-            duration_ms=duration_ms,
-            timed_out=True,
-            output=output,
-        )
-    except (FileNotFoundError, OSError) as exc:
-        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-        return HookCommandResult(
-            name=command.name,
-            command=_command_text(command.argv),
-            status="FAIL",
-            exit_code=None,
-            timeout_seconds=command.timeout_seconds,
-            duration_ms=duration_ms,
-            output=_truncate(str(exc)),
-        )
-
+    result = process_runner.run_process(
+        command.argv,
+        cwd=ROOT,
+        timeout_seconds=effective_timeout,
+        total_deadline=deadline,
+        heartbeat_seconds=heartbeat_seconds,
+    )
     duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-    status = "PASS" if result.returncode == 0 else "FAIL"
+    output = None
+    if result.status != "PASS":
+        output = _summarize_output(result.stdout_lines, result.stderr_lines)
     return HookCommandResult(
         name=command.name,
         command=_command_text(command.argv),
-        status=status,
-        exit_code=result.returncode,
-        timeout_seconds=command.timeout_seconds,
+        status=result.status,
+        exit_code=result.exit_code,
+        timeout_seconds=effective_timeout,
         duration_ms=duration_ms,
-        output=_summarize_output(result.stdout or "", result.stderr or ""),
+        timed_out=result.timed_out,
+        output=output,
     )
 
 
-def run_hook(mode: str, *, base_sha: str | None = None, head_sha: str | None = None) -> HookRunResult:
+def run_hook(
+    mode: str,
+    *,
+    base_sha: str | None = None,
+    head_sha: str | None = None,
+    heartbeat_seconds: int = 30,
+) -> HookRunResult:
     commands = _commands_for_mode(mode, base_sha=base_sha, head_sha=head_sha)
+    deadline = time.monotonic() + GLOBAL_TIMEOUTS[mode]
     results: list[HookCommandResult] = []
+    global_timeout = False
     overall_status = "PASS"
 
     for command in commands:
-        result = _run_command(command)
+        try:
+            result = _run_command(command, deadline=deadline, heartbeat_seconds=heartbeat_seconds)
+        except TimeoutError:
+            global_timeout = True
+            overall_status = "TIMEOUT"
+            break
+
         results.append(result)
+        now = time.monotonic()
+        if result.status == "TIMEOUT" and now >= deadline:
+            global_timeout = True
+            overall_status = "TIMEOUT"
+            break
+        if now >= deadline:
+            global_timeout = True
+            overall_status = "TIMEOUT"
+            break
         if result.status != "PASS":
             overall_status = result.status
             break
 
-    return HookRunResult(mode=mode, status=overall_status, commands=tuple(results))
+    return HookRunResult(
+        mode=mode,
+        status=overall_status,
+        global_timeout=global_timeout,
+        global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+        commands=tuple(results),
+    )
 
 
 def _render_text(result: HookRunResult) -> str:
@@ -240,6 +236,8 @@ def _render_text(result: HookRunResult) -> str:
         f"mode: {result.mode}",
         f"status: {result.status}",
     ]
+    if result.global_timeout:
+        lines.append(f"GLOBAL_TIMEOUT: budget={result.global_timeout_seconds}s")
     for index, command in enumerate(result.commands, 1):
         exit_code = "None" if command.exit_code is None else str(command.exit_code)
         line = (
@@ -261,6 +259,8 @@ def _render_json(result: HookRunResult) -> str:
         "{",
         f'  "mode": {json.dumps(result.mode, ensure_ascii=False)},',
         f'  "status": {json.dumps(result.status, ensure_ascii=False)},',
+        f'  "global_timeout": {json.dumps(result.global_timeout)},',
+        f'  "global_timeout_seconds": {result.global_timeout_seconds},',
         '  "commands": [',
     ]
     for index, command in enumerate(result.commands):
@@ -282,10 +282,11 @@ def _render_json(result: HookRunResult) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="backend.app.tooling.git_hook_runner")
-    parser.add_argument("mode", choices=sorted(HOOK_COMMANDS))
+    parser.add_argument("mode", choices=["pre-commit", "pre-push", "ci"])
     parser.add_argument("--base-sha")
     parser.add_argument("--head-sha")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--no-heartbeat", action="store_true")
     return parser
 
 
@@ -296,7 +297,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code)
 
-    result = run_hook(args.mode, base_sha=args.base_sha, head_sha=args.head_sha)
+    try:
+        result = run_hook(
+            args.mode,
+            base_sha=args.base_sha,
+            head_sha=args.head_sha,
+            heartbeat_seconds=0 if args.no_heartbeat else 30,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+
     if args.json:
         print(_render_json(result))
     else:
@@ -305,4 +316,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
