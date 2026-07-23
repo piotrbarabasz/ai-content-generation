@@ -709,7 +709,7 @@ Notes: Static secret checks should be narrow to avoid false positives.
 
 ## Phase 17: Remediation - direct domain tests
 
-- [ ] T045 Add direct tests for shared domain primitives
+- [X] T045 Add direct tests for shared domain primitives
 Milestone: M001
 Epic: E001
 Risk: medium
