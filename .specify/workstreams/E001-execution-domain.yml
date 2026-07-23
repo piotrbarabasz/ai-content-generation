@@ -4,7 +4,7 @@ milestone: M001
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E001-execution-domain
-status: active
+status: completed
 risk: medium
 depends_on: []
 tasks:
