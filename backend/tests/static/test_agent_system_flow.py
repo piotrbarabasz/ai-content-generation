@@ -17,6 +17,8 @@ WORKFLOW_PATH = ROOT / ".github" / "workflows" / "agent-system-validation.yml"
 LOOP_SKILL_PATH = ROOT / ".agents" / "skills" / "speckit-loop" / "SKILL.md"
 IMPLEMENT_SKILL_PATH = ROOT / ".agents" / "skills" / "speckit-implement" / "SKILL.md"
 EPIC_REVIEW_SKILL_PATH = ROOT / ".agents" / "skills" / "speckit-epic-review" / "SKILL.md"
+EPIC_PR_SKILL_PATH = ROOT / ".agents" / "skills" / "speckit-epic-pr" / "SKILL.md"
+EPIC_CLOSE_SKILL_PATH = ROOT / ".agents" / "skills" / "speckit-epic-close" / "SKILL.md"
 AGENT_TOML_PATHS = sorted((ROOT / ".codex" / "agents").glob("*.toml"))
 RUNNER_PATH = ROOT / "backend" / "app" / "tooling" / "git_hook_runner.py"
 TASKS_PATH = ROOT / "specs" / "001-ai-content-studio" / "tasks.md"
@@ -82,6 +84,8 @@ class AgentSystemFlowTests(unittest.TestCase):
             LOOP_SKILL_PATH,
             IMPLEMENT_SKILL_PATH,
             EPIC_REVIEW_SKILL_PATH,
+            EPIC_PR_SKILL_PATH,
+            EPIC_CLOSE_SKILL_PATH,
             *AGENT_TOML_PATHS,
         ]:
             text = path.read_text(encoding="utf-8")
@@ -94,7 +98,14 @@ class AgentSystemFlowTests(unittest.TestCase):
 
         self.assertIn("agent_task_preflight --selector <selector> --json", agents)
         self.assertIn("agent_task_finalize --task <task> --json", agents)
+        self.assertIn("git config --local --get agent.python", agents)
+        self.assertIn("Python 3.11 or newer", agents)
+        self.assertIn("Never fall back to bare `python`", agents)
         self.assertIn("agent_task_preflight --selector <selector> --json", loop_skill)
+        self.assertIn("git config --local --get agent.python", loop_skill)
+        self.assertIn("Test-Path -LiteralPath", loop_skill)
+        self.assertIn("sys.version_info >= (3, 11)", loop_skill)
+        self.assertIn("Never fall back to bare `python`", loop_skill)
         self.assertIn("feature_dir", loop_skill)
         self.assertIn("spec_path", loop_skill)
         self.assertIn("plan_path", loop_skill)
@@ -112,6 +123,21 @@ class AgentSystemFlowTests(unittest.TestCase):
         self.assertNotIn(".specify/scripts/powershell/check-prerequisites.ps1", loop_skill)
         self.assertNotIn("FEATURE_DIR", loop_skill)
         self.assertNotIn("AVAILABLE_DOCS", loop_skill)
+
+    def test_backend_tooling_skills_pin_agent_python_before_invocation(self) -> None:
+        for path in [
+            AGENTS_PATH,
+            LOOP_SKILL_PATH,
+            EPIC_REVIEW_SKILL_PATH,
+            EPIC_PR_SKILL_PATH,
+            EPIC_CLOSE_SKILL_PATH,
+        ]:
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("git config --local --get agent.python", text, path)
+            self.assertIn("Test-Path -LiteralPath", text, path)
+            self.assertIn("sys.version_info >= (3, 11)", text, path)
+            self.assertIn("Never fall back to bare `python`", text, path)
+            self.assertNotIn("python -m backend.app.tooling", text, path)
 
     def test_programmer_and_debugger_docs_do_not_allow_full_pytest_runs(self) -> None:
         forbidden_bare_pytest = re.compile(r"^\s*python -m pytest\s*$", re.MULTILINE)

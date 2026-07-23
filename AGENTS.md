@@ -19,6 +19,23 @@ These instructions govern repository work performed through the project-scoped C
   deterministic task-loop entrypoint before implementation, and the root
   orchestrator consumes the returned feature context instead of spawning extra
   prerequisite processes.
+- Before any workflow Python command, resolve the pinned interpreter with
+  `git config --local --get agent.python`. Require a non-empty value, require
+  the file to exist, and require Python 3.11 or newer. Use that exact
+  interpreter for every `backend.app.tooling` invocation in the task loop and
+  Never fall back to bare `python`. If the config is missing or invalid, stop
+  and direct the user to `scripts/setup-dev.ps1`.
+
+  ```powershell
+  $pythonBin = git config --local --get agent.python
+  if (-not $pythonBin) {
+      throw "agent.python is not configured. Run scripts/setup-dev.ps1 to pin the repository interpreter."
+  }
+  if (-not (Test-Path -LiteralPath $pythonBin -PathType Leaf)) {
+      throw "agent.python points to a missing interpreter: $pythonBin"
+  }
+  & $pythonBin -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+  ```
 - Manager, explorer, programmer, and reviewer must not run repository
   mechanical validation modules or raw Git inventory commands directly. They
   consume preflight and finalize reports instead.
@@ -37,7 +54,7 @@ $speckit-loop T006A
 - `$speckit-loop next` selects one unchecked task only after declared dependencies and actual repository evidence show that it is ready.
 - `$speckit-loop T\d{3}[A-Z]?` validates and processes only that exact unchecked task.
 - Before implementation, the root orchestrator runs
-  `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
+  `& $pythonBin -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
   That report provides the active epic, branch, baseline snapshot, readiness
   checks, and the task selected for implementation.
 - Preflight does not modify tracked repository files, Git history, branches,
@@ -60,16 +77,16 @@ acceptance criteria, architecture invariants, security and scope drift. It
 never creates a PR or performs commit, push, merge, deploy, fetch, pull,
 rebase, stash, reset, stage, checkout, or manifest/runtime-state writes. If
 implementation changes after a finalize report was captured, rerun
-`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+`& $pythonBin -m backend.app.tooling.agent_task_finalize --task <task> --json`
 before handing evidence to the reviewer. Never reuse a stale finalize report.
 `SAFE_TO_CREATE_PR: yes` is valid only with `VERDICT: PASS`, and a final human
 LLM review remains required. After a passing review, the root orchestrator
-records an ignored receipt by invoking `python -m backend.app.tooling.
+records an ignored receipt by invoking `& $pythonBin -m backend.app.tooling.
 epic_review_receipt write --epic <EPIC_ID> --review-json <path>`. The CLI
 reads the current `HEAD` SHA, the current base SHA, the active epic, the epic
 manifest, the milestone manifest, and the required checks. The receipt is
 invalidated by a new commit or a changed base branch, and
-`$speckit-epic-pr` must re-validate it with `python -m backend.app.tooling.
+`$speckit-epic-pr` must re-validate it with `& $pythonBin -m backend.app.tooling.
 epic_review_receipt validate --epic <EPIC_ID>` before trusting it.
 
 To prepare an epic pull request, use `$speckit-epic-pr`. It requires an already
@@ -87,7 +104,7 @@ Task risk routing:
   before any programmer handoff. If the risk field is missing, routing must
   stop.
 
-For epic close merge evidence, use `python -m backend.app.tooling.epic_close_evidence
+For epic close merge evidence, use `& $pythonBin -m backend.app.tooling.epic_close_evidence
 --epic <EPIC_ID> --json`. Local ancestry can support merge commit and
 fast-forward evidence only; rebase and squash still require GitHub metadata or
 another authoritative artifact.
@@ -95,7 +112,7 @@ another authoritative artifact.
 For PR-related review, rely on the epic review receipt and task finalize
 reports. Inspect patch content only for specific files or a short explicit file
 list when required. Do not require one full epic patch output for the whole
-epic. Use `python -m backend.app.tooling.epic_review_receipt` for receipt
+epic. Use `& $pythonBin -m backend.app.tooling.epic_review_receipt` for receipt
 write, validate, and delete operations instead of ad hoc Python snippets.
 - `$speckit-implement` is the bounded implementation worker used by `spec_programmer_fast` or `spec_programmer_high` after `spec_manager` has issued a complete task package. It never selects queue work, changes bookkeeping, or expands the package.
 - Each invocation ends after its selected task is completed, blocked, or failed. Starting another task requires a new explicit `$speckit-loop next` or `$speckit-loop T\d{3}[A-Z]?` invocation.
@@ -130,7 +147,7 @@ Rules for every run:
 - Do not invoke `spec_debugger` on the happy path. It is reserved for real FAIL or TIMEOUT evidence from finalize or review, and only when the issue is task-local and within the package allowlist.
 - Keep `spec_closer` separate from implementation and review. No other role may mark a task complete.
 - After every programmer or debugger repair, rerun
-  `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
+  `& $pythonBin -m backend.app.tooling.agent_task_finalize --task <task> --json`
   before sending evidence back to the reviewer. Do not hand the reviewer a
   stale finalize report.
 - Do not commit, push, merge, force-push, create a release, or deploy from this loop.

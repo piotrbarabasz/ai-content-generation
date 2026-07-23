@@ -9,6 +9,21 @@ Run `$speckit-epic-close E###` from the repository root. This workflow is
 bookkeeping only and must not merge, close a PR, delete a branch, modify tasks,
 or perform unrelated changes.
 
+Before any Python command, resolve the pinned interpreter with:
+
+```powershell
+$pythonBin = git config --local --get agent.python
+if (-not $pythonBin) {
+    throw "agent.python is not configured. Run scripts/setup-dev.ps1 to pin the repository interpreter."
+}
+if (-not (Test-Path -LiteralPath $pythonBin -PathType Leaf)) {
+    throw "agent.python points to a missing interpreter: $pythonBin"
+}
+& $pythonBin -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+```
+
+Use `$pythonBin` for every Python invocation in this workflow. Never fall back to bare `python`.
+
 ## Preconditions
 
 1. Accept only an exact uppercase `E###` argument. Otherwise stop with:
@@ -23,7 +38,7 @@ or perform unrelated changes.
    task evidence consistent with the epic. Never modify task checkboxes.
 4. If a review receipt exists at `.specify/runtime/reviews/<EPIC_ID>.json`,
    remove only the selected epic's receipt after the close preconditions pass
-   by invoking `python -m backend.app.tooling.epic_review_receipt delete
+   by invoking `& $pythonBin -m backend.app.tooling.epic_review_receipt delete
    --epic <EPIC_ID>`.
 
 ## Merge evidence
@@ -34,7 +49,7 @@ exists, is merged, matches the epic branch and base branch, and includes either
 `mergedAt` or merge commit metadata. This is the preferred proof for squash
 merge, merge commit, and rebase merge histories.
 
-Use `python -m backend.app.tooling.epic_close_evidence --epic <EPIC_ID>
+Use `& $pythonBin -m backend.app.tooling.epic_close_evidence --epic <EPIC_ID>
 --json` to evaluate merge evidence deterministically. When GitHub metadata is
 unavailable, local ancestry can only support merge commit and fast-forward
 evidence; it cannot prove squash merge or a typical rebase merge. For squash
