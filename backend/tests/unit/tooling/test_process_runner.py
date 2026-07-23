@@ -58,14 +58,20 @@ def _fake_popen_factory(
     process: FakeProcess,
     stdout_text: str = "",
     stderr_text: str = "",
+    stdout_bytes: bytes | None = None,
+    stderr_bytes: bytes | None = None,
 ) -> callable:
     def fake_popen(argv, **kwargs):
         calls.append((tuple(argv), kwargs))
         stdout_handle = kwargs["stdout"]
         stderr_handle = kwargs["stderr"]
-        if stdout_text:
+        if stdout_bytes is not None:
+            stdout_handle.write(stdout_bytes)
+        elif stdout_text:
             stdout_handle.write(stdout_text.encode("utf-8"))
-        if stderr_text:
+        if stderr_bytes is not None:
+            stderr_handle.write(stderr_bytes)
+        elif stderr_text:
             stderr_handle.write(stderr_text.encode("utf-8"))
         stdout_handle.flush()
         stderr_handle.flush()
@@ -229,6 +235,87 @@ def test_output_truncation_limits_streams(tmp_path):
     assert result.stdout_lines[0] == "stdout-00"
     assert result.stderr_lines[0] == "stderr-00"
     assert result.output_truncated is True
+
+
+def test_raw_stdout_preserves_nul_bytes_and_long_output(monkeypatch):
+    calls = []
+    payload = b"alpha\0beta\0" + b"x" * 350
+    process = FakeProcess(poll_values=[0], final_returncode=0)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "Popen",
+        _fake_popen_factory(calls, process=process, stdout_bytes=payload, stderr_text="warn\n"),
+    )
+    _patch_perf_counter(monkeypatch, [61.0, 61.050])
+    _patch_monotonic(monkeypatch, [10.0, 10.0])
+
+    result = runner.run_process(
+        ["git", "status"],
+        cwd=runner.ROOT,
+        timeout_seconds=5,
+        heartbeat_seconds=0,
+        raw_stdout=True,
+        max_stdout_bytes=1_000_000,
+    )
+
+    assert result.status == "PASS"
+    assert result.exit_code == 0
+    assert result.stdout_lines == ()
+    assert result.stdout_bytes == payload
+    assert b"\0" in (result.stdout_bytes or b"")
+    assert len(result.stdout_bytes or b"") > 300
+    assert result.raw_output_truncated is False
+    assert len(calls) == 1
+
+
+def test_raw_stdout_limit_is_enforced(monkeypatch):
+    calls = []
+    payload = b"x" * 1_000_001
+    process = FakeProcess(poll_values=[0], final_returncode=0)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "Popen",
+        _fake_popen_factory(calls, process=process, stdout_bytes=payload),
+    )
+    _patch_perf_counter(monkeypatch, [62.0, 62.090])
+    _patch_monotonic(monkeypatch, [11.0, 11.0])
+
+    result = runner.run_process(
+        ["git", "status"],
+        cwd=runner.ROOT,
+        timeout_seconds=5,
+        heartbeat_seconds=0,
+        raw_stdout=True,
+        max_stdout_bytes=1_000_000,
+    )
+
+    assert result.status == "FAIL"
+    assert result.raw_output_truncated is True
+    assert result.stdout_bytes == payload[:1_000_000]
+    assert len(calls) == 1
+
+
+def test_raw_timeout_still_kills_tree(monkeypatch):
+    calls = []
+    process = FakeProcess(poll_values=[None, None, None], final_returncode=0)
+    terminate_calls = []
+    monkeypatch.setattr(runner.subprocess, "Popen", _fake_popen_factory(calls, process=process))
+    monkeypatch.setattr(runner, "_terminate_process_tree", lambda proc: terminate_calls.append(proc.pid) or True)
+    _patch_perf_counter(monkeypatch, [63.0, 63.100])
+    _patch_monotonic(monkeypatch, [12.0, 12.5, 13.0, 13.5, 14.1, 14.1])
+
+    result = runner.run_process(
+        ["tool"],
+        cwd=runner.ROOT,
+        timeout_seconds=1,
+        heartbeat_seconds=0,
+        raw_stdout=True,
+    )
+
+    assert result.status == "TIMEOUT"
+    assert result.timed_out is True
+    assert result.process_tree_killed is True
+    assert terminate_calls == [4321]
 
 
 def test_shell_false_and_environment_overrides_apply(monkeypatch):

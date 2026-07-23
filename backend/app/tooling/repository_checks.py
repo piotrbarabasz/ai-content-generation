@@ -120,15 +120,9 @@ def run_process(command: list[str]) -> dict[str, Any]:
     }
 
 
-def _status_output(result: process_runner.ProcessResult) -> str:
-    if result.stdout_lines:
-        return "".join(result.stdout_lines)
-    return ""
-
-
-def _split_status_records(raw_status: str) -> list[str]:
-    records = raw_status.split("\0")
-    if records and records[-1] == "":
+def _split_status_records(raw_status: bytes) -> list[bytes]:
+    records = raw_status.split(b"\0")
+    if records and records[-1] == b"":
         records.pop()
     return records
 
@@ -139,7 +133,11 @@ def _append_snapshot_path(bucket: list[str], path: str) -> None:
         bucket.append(normalized)
 
 
-def _parse_git_status_snapshot(raw_status: str) -> dict[str, Any]:
+def _decode_status_record(record: bytes) -> str:
+    return record.decode("utf-8", errors="replace")
+
+
+def _parse_git_status_snapshot(raw_status: bytes) -> dict[str, Any]:
     branch = ""
     tracked: list[str] = []
     staged: list[str] = []
@@ -149,8 +147,8 @@ def _parse_git_status_snapshot(raw_status: str) -> dict[str, Any]:
 
     records = _split_status_records(raw_status)
     index = 0
-    if records and records[0].startswith("## "):
-        branch = records[0][3:].strip()
+    if records and records[0].startswith(b"## "):
+        branch = _decode_status_record(records[0][3:]).strip()
         if "..." in branch:
             branch = branch.split("...", 1)[0].strip()
         if branch.startswith("HEAD"):
@@ -162,21 +160,22 @@ def _parse_git_status_snapshot(raw_status: str) -> dict[str, Any]:
         if not record:
             index += 1
             continue
-        if record.startswith("?? "):
-            _append_snapshot_path(untracked, record[3:])
+        decoded = _decode_status_record(record)
+        if record.startswith(b"?? "):
+            _append_snapshot_path(untracked, decoded[3:])
             index += 1
             continue
-        status = record[:2]
-        path = record[3:]
+        status = decoded[:2]
+        path = decoded[3:]
         index_status = status[0] if len(status) > 0 else " "
         worktree_status = status[1] if len(status) > 1 else " "
         if index_status in {"R", "C"} or worktree_status in {"R", "C"}:
             new_path = ""
             if index + 1 < len(records):
-                new_path = records[index + 1]
-            renamed.append({"old": path.replace("\\", "/").strip(), "new": new_path.replace("\\", "/").strip()})
-            _append_snapshot_path(staged, path)
-            _append_snapshot_path(tracked, new_path)
+                new_path = _decode_status_record(records[index + 1])
+            renamed.append({"old": new_path.replace("\\", "/").strip(), "new": path.replace("\\", "/").strip()})
+            _append_snapshot_path(staged, new_path)
+            _append_snapshot_path(tracked, path)
             index += 2
             continue
         if index_status == "D" or worktree_status == "D":
@@ -210,6 +209,8 @@ def capture_git_snapshot(
         timeout_seconds=timeout_seconds,
         total_deadline=total_deadline,
         heartbeat_seconds=0,
+        raw_stdout=True,
+        max_stdout_bytes=1_000_000,
     )
     head_result = process_runner.run_process(
         ["git", "rev-parse", "HEAD"],
@@ -235,9 +236,12 @@ def capture_git_snapshot(
         "reason": "",
     }
     if status_result.status == "PASS":
-        payload.update(_parse_git_status_snapshot(_status_output(status_result)))
+        payload.update(_parse_git_status_snapshot(getattr(status_result, "stdout_bytes", None) or b""))
     else:
-        payload["reason"] = "\n".join(status_result.stderr_lines or status_result.stdout_lines or ())
+        if getattr(status_result, "raw_output_truncated", False):
+            payload["reason"] = "raw git status output exceeded 1000000 bytes"
+        else:
+            payload["reason"] = "\n".join(status_result.stderr_lines or status_result.stdout_lines or ())
     if head_result.status == "PASS":
         payload["head_sha"] = "".join(head_result.stdout_lines).strip()
     else:
@@ -669,7 +673,9 @@ def checks(mode: str, tasks: list[str] | None = None) -> dict[str, Any]:
         )
     if mode in {"preflight", "pre-review"}:
         for result in git_checks():
-            result["name"] = _command_name(result["command"])
+            command = result.get("command")
+            if command:
+                result["name"] = _command_name(command)
             results.append(result)
     status = "PASS"
     if any(item["status"] == "TIMEOUT" for item in results):

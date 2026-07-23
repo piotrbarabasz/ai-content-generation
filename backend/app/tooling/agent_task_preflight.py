@@ -23,7 +23,9 @@ GLOBAL_TIMEOUT_SECONDS = 60
 SNAPSHOT_TIMEOUT_SECONDS = 20
 DIFF_CHECK_TIMEOUT_SECONDS = 20
 TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
+DEPENDENCY_TASK_PATTERN = re.compile(r"T\d{3}[A-Z]?")
 BASELINE_SCHEMA_VERSION = 1
+NO_DEPENDENCY_VALUES = {"none", "n/a", "[]"}
 
 DEPENDENCY_REASONS = (
     "unknown dependency task",
@@ -60,6 +62,20 @@ class PreflightResult:
     duration_ms: int
     checks: tuple[CheckResult, ...]
     baseline_path: str | None
+    reason: str | None = None
+    declared_dependencies: tuple[str, ...] = ()
+    completed_dependencies: tuple[str, ...] = ()
+    incomplete_dependencies: tuple[str, ...] = ()
+    unknown_dependencies: tuple[str, ...] = ()
+    feature_dir: str | None = None
+    spec_path: str | None = None
+    plan_path: str | None = None
+    tasks_path: str | None = None
+    data_model_path: str | None = None
+    research_path: str | None = None
+    quickstart_path: str | None = None
+    contracts_dir: str | None = None
+    available_docs: tuple[str, ...] = ()
 
 
 class SelectorUsageError(ValueError):
@@ -68,6 +84,14 @@ class SelectorUsageError(ValueError):
 
 class TaskValidationError(ValueError):
     """Raised when the selected task is not eligible for preflight."""
+
+
+class DependencyReadinessError(ValueError):
+    """Raised when explicit task selection fails dependency readiness."""
+
+    def __init__(self, readiness: dict[str, Any]) -> None:
+        super().__init__("task dependencies are incomplete")
+        self.readiness = readiness
 
 
 def _elapsed_ms(started: float) -> int:
@@ -128,6 +152,77 @@ def _load_active_epic() -> tuple[str, dict[str, Any], Path]:
     return active_epic, epic_manifest, epic_path
 
 
+def _empty_feature_payload() -> dict[str, Any]:
+    return {
+        "feature_dir": None,
+        "spec_path": None,
+        "plan_path": None,
+        "tasks_path": None,
+        "data_model_path": None,
+        "research_path": None,
+        "quickstart_path": None,
+        "contracts_dir": None,
+        "available_docs": (),
+    }
+
+
+def _resolve_repo_path(path_value: str) -> Path:
+    candidate = (ROOT / path_value).resolve()
+    root = ROOT.resolve()
+    if not candidate.is_relative_to(root):
+        raise ValueError(f"feature path escapes repository root: {path_value}")
+    return candidate
+
+
+def _resolve_feature_context(epic_manifest: dict[str, Any]) -> dict[str, Any]:
+    feature_value = epic_manifest.get("feature")
+    if not isinstance(feature_value, str) or not feature_value.strip():
+        raise ValueError("active epic manifest does not declare a feature directory")
+
+    feature_dir = _resolve_repo_path(feature_value.strip())
+    if not feature_dir.is_dir():
+        raise FileNotFoundError(f"feature directory does not exist: {feature_dir}")
+
+    spec_path = feature_dir / "spec.md"
+    plan_path = feature_dir / "plan.md"
+    tasks_path = feature_dir / "tasks.md"
+    required_paths = (spec_path, plan_path, tasks_path)
+    missing = [str(path) for path in required_paths if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("feature directory is missing required files: " + ", ".join(missing))
+
+    data_model_path = feature_dir / "data-model.md"
+    if not data_model_path.is_file():
+        data_model_path = None
+    research_path = feature_dir / "research.md"
+    if not research_path.is_file():
+        research_path = None
+    quickstart_path = feature_dir / "quickstart.md"
+    if not quickstart_path.is_file():
+        quickstart_path = None
+    contracts_dir = feature_dir / "contracts"
+    if not contracts_dir.is_dir():
+        contracts_dir = None
+
+    available_docs = tuple(
+        str(path)
+        for path in (data_model_path, research_path, quickstart_path, contracts_dir)
+        if path is not None
+    )
+
+    return {
+        "feature_dir": str(feature_dir),
+        "spec_path": str(spec_path),
+        "plan_path": str(plan_path),
+        "tasks_path": str(tasks_path),
+        "data_model_path": str(data_model_path) if data_model_path is not None else None,
+        "research_path": str(research_path) if research_path is not None else None,
+        "quickstart_path": str(quickstart_path) if quickstart_path is not None else None,
+        "contracts_dir": str(contracts_dir) if contracts_dir is not None else None,
+        "available_docs": available_docs,
+    }
+
+
 def _task_status_map() -> dict[str, bool]:
     task_states: dict[str, bool] = {}
     if not TASKS_FILE.is_file():
@@ -141,6 +236,27 @@ def _task_status_map() -> dict[str, bool]:
     return task_states
 
 
+def _task_dependency_map() -> dict[str, tuple[str, ...]]:
+    dependencies: dict[str, tuple[str, ...]] = {}
+    if not TASKS_FILE.is_file():
+        return dependencies
+    for task_id, _, lines in _task_iter_blocks(TASKS_FILE):
+        dependency_text = ""
+        for _, line in lines:
+            if line.startswith("Dependencies:"):
+                dependency_text = line[len("Dependencies:") :].strip()
+                break
+        if not dependency_text or dependency_text.lower() in NO_DEPENDENCY_VALUES:
+            dependencies[task_id] = ()
+            continue
+        dependency_ids: list[str] = []
+        for dependency_id in DEPENDENCY_TASK_PATTERN.findall(dependency_text):
+            if dependency_id not in dependency_ids:
+                dependency_ids.append(dependency_id)
+        dependencies[task_id] = tuple(dependency_ids)
+    return dependencies
+
+
 def _group_findings_by_task(findings: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for finding in findings:
@@ -151,11 +267,56 @@ def _group_findings_by_task(findings: list[dict[str, Any]]) -> dict[str, list[di
     return grouped
 
 
+def _dependency_readiness(
+    task_id: str,
+    manifest_tasks: list[str],
+    task_states: dict[str, bool],
+    dependency_map: dict[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    declared = list(dependency_map.get(task_id, ()))
+    completed = [dependency for dependency in declared if task_states.get(dependency) is True]
+    incomplete = [dependency for dependency in declared if dependency in task_states and task_states.get(dependency) is False]
+    unknown = [dependency for dependency in declared if dependency not in task_states and dependency not in manifest_tasks]
+    return {
+        "task": task_id,
+        "declared_dependencies": declared,
+        "completed_dependencies": completed,
+        "incomplete_dependencies": incomplete,
+        "unknown_dependencies": unknown,
+    }
+
+
+def _dependency_failure_reason(readiness: dict[str, Any]) -> str:
+    if readiness["unknown_dependencies"]:
+        return "unknown dependency task"
+    if readiness["incomplete_dependencies"]:
+        return "task dependencies are incomplete"
+    return "task dependencies are incomplete"
+
+
+def _is_ready_task(
+    task_id: str,
+    manifest_tasks: list[str],
+    task_states: dict[str, bool],
+    findings_by_task: dict[str, list[dict[str, Any]]],
+    dependency_map: dict[str, tuple[str, ...]],
+) -> bool:
+    if task_states.get(task_id) is True:
+        return False
+    if task_id not in manifest_tasks:
+        return False
+    if findings_by_task.get(task_id):
+        return False
+    readiness = _dependency_readiness(task_id, manifest_tasks, task_states, dependency_map)
+    return not readiness["incomplete_dependencies"] and not readiness["unknown_dependencies"]
+
+
 def _select_task(
     selector: str,
     manifest_tasks: list[str],
     task_states: dict[str, bool],
     findings_by_task: dict[str, list[dict[str, Any]]],
+    dependency_map: dict[str, tuple[str, ...]],
 ) -> str:
     if selector != "next":
         if not TASK_ID_PATTERN.fullmatch(selector):
@@ -164,16 +325,16 @@ def _select_task(
             raise TaskValidationError(f"task {selector} does not belong to the active epic")
         if task_states.get(selector) is True:
             raise TaskValidationError(f"task {selector} is already completed")
+        readiness = _dependency_readiness(selector, manifest_tasks, task_states, dependency_map)
+        if readiness["unknown_dependencies"] or readiness["incomplete_dependencies"]:
+            raise DependencyReadinessError(readiness)
         if findings_by_task.get(selector):
             raise TaskValidationError(f"task {selector} has outstanding metadata findings")
         return selector
 
     for task_id in manifest_tasks:
-        if task_states.get(task_id) is True:
-            continue
-        if findings_by_task.get(task_id):
-            continue
-        return task_id
+        if _is_ready_task(task_id, manifest_tasks, task_states, findings_by_task, dependency_map):
+            return task_id
     raise TaskValidationError("no ready task found for selector 'next'")
 
 
@@ -234,10 +395,24 @@ def _payload(result: PreflightResult) -> dict[str, Any]:
         "selector": result.selector,
         "task": result.task_id,
         "epic": result.epic_id,
+        "reason": result.reason,
+        "declared_dependencies": list(result.declared_dependencies),
+        "completed_dependencies": list(result.completed_dependencies),
+        "incomplete_dependencies": list(result.incomplete_dependencies),
+        "unknown_dependencies": list(result.unknown_dependencies),
         "branch": result.branch,
         "head_sha": result.head_sha,
         "duration_ms": result.duration_ms,
         "baseline_path": result.baseline_path,
+        "feature_dir": result.feature_dir,
+        "spec_path": result.spec_path,
+        "plan_path": result.plan_path,
+        "tasks_path": result.tasks_path,
+        "data_model_path": result.data_model_path,
+        "research_path": result.research_path,
+        "quickstart_path": result.quickstart_path,
+        "contracts_dir": result.contracts_dir,
+        "available_docs": list(result.available_docs),
         "checks": [
             {"name": check.name, "status": check.status, "details": check.details}
             for check in result.checks
@@ -271,6 +446,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **_empty_feature_payload(),
         )
 
     active_started = time.perf_counter()
@@ -285,6 +461,41 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
         status_text=epic_manifest.get("status"),
     )
     checks.append(active_check)
+
+    feature_started = time.perf_counter()
+    feature_payload = _empty_feature_payload()
+    try:
+        feature_payload = _resolve_feature_context(epic_manifest)
+    except (FileNotFoundError, ValueError) as exc:
+        feature_check = _stage_check(
+            "feature_context",
+            feature_started,
+            "FAIL",
+            feature=epic_manifest.get("feature"),
+            error=str(exc),
+        )
+        checks.append(feature_check)
+        return PreflightResult(
+            status="FAIL",
+            exit_code=1,
+            selector=selector,
+            task_id="",
+            epic_id=active_epic,
+            branch=str(epic_manifest.get("branch") or ""),
+            head_sha=None,
+            duration_ms=_elapsed_ms(started_perf),
+            checks=tuple(checks),
+            baseline_path=None,
+            **feature_payload,
+        )
+
+    feature_check = _stage_check(
+        "feature_context",
+        feature_started,
+        "PASS",
+        **feature_payload,
+    )
+    checks.append(feature_check)
 
     manifest_started = time.perf_counter()
     manifest_errors = workstream_validation.validate_manifests(WORKSTREAMS_DIR)
@@ -308,6 +519,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     consistency_started = time.perf_counter()
@@ -332,6 +544,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     guard_started = time.perf_counter()
@@ -339,7 +552,6 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
         task_selector=selector,
         runtime_file=ACTIVE_EPIC_FILE,
         directory=WORKSTREAMS_DIR,
-        tasks_file=TASKS_FILE,
     )
     guard_status, guard_exit_code = _choose_status(guard_errors)
     guard_check = _stage_check(
@@ -361,14 +573,52 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     task_states = _task_status_map()
+    dependency_map = _task_dependency_map()
     manifest_tasks = [str(task) for task in (epic_manifest.get("tasks") or []) if isinstance(task, str)]
     task_findings = repository_checks.task_metadata(manifest_tasks)
     findings_by_task = _group_findings_by_task(task_findings)
     task_started = time.perf_counter()
-    task_id = _select_task(selector, manifest_tasks, task_states, findings_by_task)
+    try:
+        task_id = _select_task(selector, manifest_tasks, task_states, findings_by_task, dependency_map)
+    except DependencyReadinessError as exc:
+        readiness = exc.readiness
+        task_check = _stage_check(
+            "dependency_readiness",
+            task_started,
+            "FAIL",
+            **readiness,
+        )
+        checks.append(task_check)
+        return PreflightResult(
+            status="FAIL",
+            exit_code=1,
+            selector=selector,
+            task_id=str(selector),
+            epic_id=active_epic,
+            branch=str(epic_manifest.get("branch") or ""),
+            head_sha=None,
+            duration_ms=_elapsed_ms(started_perf),
+            checks=tuple(checks),
+            baseline_path=None,
+            reason=_dependency_failure_reason(readiness),
+            declared_dependencies=tuple(readiness["declared_dependencies"]),
+            completed_dependencies=tuple(readiness["completed_dependencies"]),
+            incomplete_dependencies=tuple(readiness["incomplete_dependencies"]),
+            unknown_dependencies=tuple(readiness["unknown_dependencies"]),
+            **feature_payload,
+        )
+    dependency_readiness = _dependency_readiness(task_id, manifest_tasks, task_states, dependency_map)
+    dependency_check = _stage_check(
+        "dependency_readiness",
+        task_started,
+        "PASS",
+        **dependency_readiness,
+    )
+    checks.append(dependency_check)
     selected_findings = findings_by_task.get(task_id, [])
     dependency_findings = [finding for finding in selected_findings if any(keyword in str(finding.get("reason") or "").lower() for keyword in DEPENDENCY_REASONS)]
     ownership_findings = [finding for finding in selected_findings if any(keyword in str(finding.get("reason") or "").lower() for keyword in OWNERSHIP_REASONS)]
@@ -395,6 +645,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     snapshot_started = time.perf_counter()
@@ -423,6 +674,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     diff_started = time.perf_counter()
@@ -460,6 +712,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     if time.monotonic() >= deadline:
@@ -474,6 +727,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
             duration_ms=_elapsed_ms(started_perf),
             checks=tuple(checks),
             baseline_path=None,
+            **feature_payload,
         )
 
     baseline_path = _write_baseline(
@@ -508,6 +762,7 @@ def run_preflight(selector: str, *, version_info: tuple[int, int, int] | None = 
         duration_ms=_elapsed_ms(started_perf),
         checks=tuple(checks),
         baseline_path=str(baseline_path),
+        **feature_payload,
     )
 
 

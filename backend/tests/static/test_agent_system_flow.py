@@ -95,9 +95,11 @@ class AgentSystemFlowTests(unittest.TestCase):
         self.assertIn("agent_task_preflight --selector <selector> --json", agents)
         self.assertIn("agent_task_finalize --task <task> --json", agents)
         self.assertIn("agent_task_preflight --selector <selector> --json", loop_skill)
-        self.assertIn("FEATURE_DIR", loop_skill)
-        self.assertIn("AVAILABLE_DOCS", loop_skill)
-        self.assertIn("optional artifact paths", loop_skill)
+        self.assertIn("feature_dir", loop_skill)
+        self.assertIn("spec_path", loop_skill)
+        self.assertIn("plan_path", loop_skill)
+        self.assertIn("tasks_path", loop_skill)
+        self.assertIn("available_docs", loop_skill)
         self.assertIn("agent_task_finalize --task <task> --json", loop_skill)
         self.assertIn("never part of the happy path", loop_skill)
         happy_path = loop_skill.split("Run this sequence serially on the happy path:")[1].split(
@@ -108,6 +110,8 @@ class AgentSystemFlowTests(unittest.TestCase):
 
         self.assertNotIn(".specify/scripts/powershell/check-prerequisites.ps1", agents)
         self.assertNotIn(".specify/scripts/powershell/check-prerequisites.ps1", loop_skill)
+        self.assertNotIn("FEATURE_DIR", loop_skill)
+        self.assertNotIn("AVAILABLE_DOCS", loop_skill)
 
     def test_programmer_and_debugger_docs_do_not_allow_full_pytest_runs(self) -> None:
         forbidden_bare_pytest = re.compile(r"^\s*python -m pytest\s*$", re.MULTILINE)

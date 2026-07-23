@@ -32,6 +32,8 @@ class ProcessResult:
     output_truncated: bool
     process_tree_killed: bool
     pid: int | None
+    stdout_bytes: bytes | None = None
+    raw_output_truncated: bool = False
 
 
 def _command_name(argv: Sequence[str]) -> str:
@@ -101,6 +103,16 @@ def _read_limited_lines(path: Path, *, line_limit: int) -> tuple[tuple[str, ...]
         if len(lines) == line_limit and handle.read(1) != "":
             truncated = True
     return tuple(lines), truncated
+
+
+def _read_limited_bytes(path: Path, *, byte_limit: int) -> tuple[bytes, bool]:
+    if byte_limit < 0:
+        raise ValueError("byte_limit must be non-negative")
+    if not path.is_file():
+        return b"", False
+    with path.open("rb") as handle:
+        data = handle.read(byte_limit + 1)
+    return data[:byte_limit], len(data) > byte_limit
 
 
 def _spawn_process(
@@ -237,6 +249,8 @@ def run_process(
     total_deadline: float | None = None,
     heartbeat_seconds: int = 30,
     env_overrides: Mapping[str, str] | None = None,
+    raw_stdout: bool = False,
+    max_stdout_bytes: int = 1_000_000,
 ) -> ProcessResult:
     command = tuple(str(part) for part in argv)
     if not command:
@@ -270,6 +284,8 @@ def run_process(
             output_truncated=False,
             process_tree_killed=False,
             pid=None,
+            stdout_bytes=None,
+            raw_output_truncated=False,
         )
         _emit_stderr(_final_status_line(result))
         return result
@@ -312,13 +328,23 @@ def run_process(
             exit_code = process.wait()
 
         duration_ms = max(0, int((time.perf_counter() - started_perf) * 1000))
-        stdout_lines, stdout_truncated = _read_limited_lines(stdout_path, line_limit=MAX_STDOUT_LINES)
+        stdout_lines: tuple[str, ...]
+        stdout_truncated = False
+        stdout_bytes: bytes | None = None
+        raw_output_truncated = False
+        if raw_stdout:
+            stdout_bytes, raw_output_truncated = _read_limited_bytes(stdout_path, byte_limit=max_stdout_bytes)
+            stdout_lines = ()
+        else:
+            stdout_lines, stdout_truncated = _read_limited_lines(stdout_path, line_limit=MAX_STDOUT_LINES)
         stderr_lines, stderr_truncated = _read_limited_lines(stderr_path, line_limit=MAX_STDERR_LINES)
         output_truncated = stdout_truncated or stderr_truncated
 
         if timed_out:
             status = "TIMEOUT"
             exit_code = None
+        elif raw_stdout and raw_output_truncated:
+            status = "FAIL"
         else:
             status = "PASS" if exit_code == 0 else "FAIL"
 
@@ -333,6 +359,8 @@ def run_process(
             output_truncated=output_truncated,
             process_tree_killed=process_tree_killed,
             pid=pid,
+            stdout_bytes=stdout_bytes,
+            raw_output_truncated=raw_output_truncated,
         )
         _emit_stderr(_final_status_line(result))
         return result
@@ -349,6 +377,8 @@ def run_process(
             output_truncated=False,
             process_tree_killed=False,
             pid=None,
+            stdout_bytes=None,
+            raw_output_truncated=False,
         )
         _emit_stderr(_final_status_line(result))
         return result
@@ -365,6 +395,8 @@ def run_process(
             output_truncated=False,
             process_tree_killed=False,
             pid=None,
+            stdout_bytes=None,
+            raw_output_truncated=False,
         )
         _emit_stderr(_final_status_line(result))
         return result

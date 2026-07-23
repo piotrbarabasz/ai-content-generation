@@ -37,26 +37,26 @@ Never reinterpret free text as a task selector. Never continue to another task a
 
 From the repository root, consume the JSON feature context returned by
 `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`.
-Use the report's `FEATURE_DIR`, `AVAILABLE_DOCS`, and optional artifact paths;
-require absolute resolved paths and stop if `spec.md`, `plan.md`, or `tasks.md`
-is missing.
+Use the report's `feature_dir`, `spec_path`, `plan_path`, `tasks_path`, and
+`available_docs` fields; require absolute resolved paths and stop if
+`spec.md`, `plan.md`, or `tasks.md` is missing.
 
 Load:
 
-- `FEATURE_DIR/spec.md`;
-- `FEATURE_DIR/plan.md`;
-- `FEATURE_DIR/tasks.md`;
-- `FEATURE_DIR/data-model.md` when present;
-- every file under `FEATURE_DIR/contracts/` when present;
-- `FEATURE_DIR/research.md` when present;
-- `FEATURE_DIR/quickstart.md` when present;
+- `spec_path`;
+- `plan_path`;
+- `tasks_path`;
+- any optional document listed in `available_docs`;
 - `.specify/memory/constitution.md`.
 
 Treat `spec.md` as product truth, the plan and supporting design documents as technical truth, and `tasks.md` as a queue rather than proof that code exists.
 
 ## 3. Enforce checklist gates
 
-If `FEATURE_DIR/checklists/` exists, inspect every checklist item matching `- [ ]`, `- [x]`, or `- [X]`. Treat a checklist as mandatory unless it explicitly declares `optional: true` in YAML frontmatter or `Optional: true` in its header metadata.
+If `feature_dir/checklists/` exists, inspect every checklist item matching
+`- [ ]`, `- [x]`, or `- [X]`. Treat a checklist as mandatory unless it
+explicitly declares `optional: true` in YAML frontmatter or `Optional: true`
+in its header metadata.
 
 If any mandatory checklist has unchecked items:
 
@@ -150,7 +150,7 @@ Return explorer findings to `spec_manager`. Require the manager either to stop w
 ```text
 TASK_ID
 TASK_TEXT
-FEATURE_DIR
+feature_dir
 RELATED_REQUIREMENTS
 DEPENDENCY_EVIDENCE
 RELEVANT_ARTIFACTS

@@ -119,6 +119,10 @@ prepares a bounded package for implementation and independent review. It does
 not run the old prerequisite script or any extra repository validation module
 in the loop.
 
+The preflight JSON also exposes the selected feature context through
+`feature_dir`, `spec_path`, `plan_path`, `tasks_path` and `available_docs` so
+the loop can load the correct specification artifacts without guessing paths.
+
 Start the next dependency-ready task with:
 
 ```text

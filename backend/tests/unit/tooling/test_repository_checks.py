@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -880,10 +881,6 @@ def test_json_mode_serializes_checks(monkeypatch, capsys):
     assert parsed["checks"][0]["name"] == "task_metadata"
 
 
-def _git(tmp_path: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True, timeout=10)
-
-
 def test_capture_git_snapshot_handles_modified_staged_deleted_renamed_and_untracked_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(checks, "ROOT", tmp_path)
     _git(tmp_path, "init")
@@ -921,9 +918,157 @@ def test_capture_git_snapshot_handles_modified_staged_deleted_renamed_and_untrac
     assert "space name.txt" in snapshot["tracked"] or "space name.txt" in snapshot["staged"]
 
 
+def test_capture_git_snapshot_parses_raw_nul_output(monkeypatch):
+    raw_status = (
+        b"## feature/raw-snapshot\0"
+        b" M tracked file.txt\0"
+        b"A  staged file.txt\0"
+        b"D  deleted file.txt\0"
+        b"R  new file.txt\0"
+        b"old file.txt\0"
+        b"?? untracked file.txt\0"
+        b" M path with spaces/file name.txt\0"
+    )
+    calls = []
+
+    def fake_run_process(command, **kwargs):
+        calls.append(tuple(command))
+        if tuple(command) == ("git", "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"):
+            return checks.process_runner.ProcessResult(
+                command=tuple(command),
+                status="PASS",
+                exit_code=0,
+                duration_ms=1,
+                timed_out=False,
+                stdout_lines=(),
+                stderr_lines=(),
+                output_truncated=False,
+                process_tree_killed=False,
+                pid=123,
+                stdout_bytes=raw_status,
+                raw_output_truncated=False,
+            )
+        if tuple(command) == ("git", "rev-parse", "HEAD"):
+            return checks.process_runner.ProcessResult(
+                command=tuple(command),
+                status="PASS",
+                exit_code=0,
+                duration_ms=1,
+                timed_out=False,
+                stdout_lines=("a" * 40 + "\n",),
+                stderr_lines=(),
+                output_truncated=False,
+                process_tree_killed=False,
+                pid=456,
+            )
+        raise AssertionError(f"unexpected command: {tuple(command)}")
+
+    monkeypatch.setattr(checks.process_runner, "run_process", fake_run_process)
+    snapshot = checks.capture_git_snapshot()
+
+    assert calls == [
+        ("git", "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"),
+        ("git", "rev-parse", "HEAD"),
+    ]
+    assert snapshot["status"] == "PASS"
+    assert snapshot["branch"] == "feature/raw-snapshot"
+    assert "tracked file.txt" in snapshot["tracked"]
+    assert "staged file.txt" in snapshot["staged"]
+    assert "deleted file.txt" in snapshot["deleted"]
+    assert snapshot["renamed"] == [{"old": "old file.txt", "new": "new file.txt"}]
+    assert "untracked file.txt" in snapshot["untracked"]
+    assert "path with spaces/file name.txt" in snapshot["tracked"]
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["GIT_PAGER"] = "cat"
+    env["PAGER"] = "cat"
+    env["TERM"] = "dumb"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    return env
+
+
 def _git_head_sha(tmp_path: Path) -> str:
-    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True, timeout=10)
+    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True, timeout=10, env=_git_env())
     return result.stdout.strip()
+
+
+def _git(tmp_path: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True, timeout=10, env=_git_env())
+
+
+def test_capture_git_snapshot_handles_large_real_repo_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(checks, "ROOT", tmp_path)
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "config", "commit.gpgsign", "false")
+    empty_hooks = tmp_path / "empty-hooks"
+    empty_hooks.mkdir()
+    _git(tmp_path, "config", "core.hooksPath", str(empty_hooks))
+    _git(tmp_path, "config", "credential.interactive", "never")
+    _git(tmp_path, "branch", "-M", "feature/snapshot-test")
+
+    tracked_files = [f"tracked_{index:02d}.txt" for index in range(1, 16)]
+    tracked_files.append("path with spaces/file name.txt")
+    tracked_files.append("nested/" + ("very_long_segment_" * 6) + "/long-file.txt")
+    tracked_files.append("delete_me.txt")
+    tracked_files.append("rename_me.txt")
+    for path in tracked_files:
+        file_path = tmp_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(f"{path}\n", encoding="utf-8")
+    _git(tmp_path, "add", *tracked_files)
+    _git(tmp_path, "commit", "--no-gpg-sign", "-m", "initial commit")
+
+    changed_files = tracked_files[:10]
+    for path in changed_files:
+        (tmp_path / path).write_text(f"updated {path}\n", encoding="utf-8")
+    (tmp_path / "path with spaces/file name.txt").write_text("updated spaced path\n", encoding="utf-8")
+    (tmp_path / tracked_files[16]).write_text("updated long path\n", encoding="utf-8")
+    _git(tmp_path, "add", tracked_files[10], tracked_files[11])
+    (tmp_path / tracked_files[10]).write_text("updated after stage\n", encoding="utf-8")
+    (tmp_path / tracked_files[17]).unlink()
+    _git(tmp_path, "mv", tracked_files[18], "renamed file.txt")
+    (tmp_path / "untracked one.txt").write_text("one\n", encoding="utf-8")
+    (tmp_path / "untracked two.txt").write_text("two\n", encoding="utf-8")
+    (tmp_path / "untracked three.txt").write_text("three\n", encoding="utf-8")
+
+    snapshot = checks.capture_git_snapshot()
+
+    assert snapshot["status"] == "PASS"
+    assert snapshot["branch"] == "feature/snapshot-test"
+    assert snapshot["head_sha"] == _git_head_sha(tmp_path)
+    assert len(snapshot["tracked"]) + len(snapshot["staged"]) + len(snapshot["deleted"]) + len(snapshot["renamed"]) + len(snapshot["untracked"]) >= 15
+    assert "path with spaces/file name.txt" in snapshot["tracked"] or "path with spaces/file name.txt" in snapshot["staged"]
+    assert any("very_long_segment_" in path for path in snapshot["tracked"] + snapshot["staged"] + snapshot["deleted"] + snapshot["untracked"])
+    assert "delete_me.txt" in snapshot["deleted"]
+    assert snapshot["renamed"]
+    assert any(entry["new"] == "renamed file.txt" for entry in snapshot["renamed"])
+    assert "untracked one.txt" in snapshot["untracked"]
+    assert "untracked two.txt" in snapshot["untracked"]
+    assert "untracked three.txt" in snapshot["untracked"]
+
+
+def test_checks_preflight_handles_git_snapshot_without_command(monkeypatch):
+    monkeypatch.setattr(checks, "task_metadata", lambda tasks=None: [])
+    monkeypatch.setattr(
+        checks,
+        "git_checks",
+        lambda: [
+            {"name": "git_snapshot", "status": "PASS", "exit_code": 0, "snapshot": {"status": "PASS"}},
+            {"name": "git_diff_check", "status": "PASS", "exit_code": 0, "command": ["git", "--no-pager", "diff", "--check"]},
+        ],
+    )
+
+    result = checks.checks("preflight")
+
+    assert result["status"] == "PASS"
+    assert result["checks"][0]["name"] == "task_metadata"
+    assert result["checks"][1]["name"] == "git_snapshot"
+    assert result["checks"][2]["name"] == checks._command_name(["git", "--no-pager", "diff", "--check"])
 
 
 def test_git_checks_use_snapshot_and_diff_only(monkeypatch):
