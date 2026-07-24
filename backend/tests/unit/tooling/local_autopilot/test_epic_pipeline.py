@@ -539,6 +539,10 @@ def test_run_epic_happy_path_stop_before_push_activates_branch_and_completes(tmp
     assert (tmp_path / ".specify" / "runtime" / "active-epic").read_text(encoding="utf-8").strip() == "E002"
     assert "status: active" in manifest_path.read_text(encoding="utf-8")
     assert receipt.writes and receipt.validations
+    written_checks = receipt.writes[0]["required_checks"]
+    assert [check["command"] for check in written_checks] == ["python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py", "git --no-pager diff --check"]
+    assert written_checks[0]["executed_command"] == r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py"
+    assert written_checks[1]["executed_command"] == "git --no-pager diff --check"
     assert not repo.pushed_branches
     assert not github.calls
     assert result.pull_request is None
@@ -677,6 +681,43 @@ def test_run_epic_review_failure_blocks_push(tmp_path):
     assert not repo.pushed_branches
     assert not github.calls
     assert "review failed" in (result.reason or "")
+
+
+def test_run_epic_fails_when_required_check_result_count_differs_from_manifest(tmp_path):
+    _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
+    repo = FakeRepository(tmp_path)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    def fake_run_required_checks(epic_manifest, command_results, *, cancel_event):
+        return (
+            CommandResult(
+                command=("git", "--no-pager", "diff", "--check"),
+                status="PASS",
+                exit_code=0,
+                duration_ms=1,
+                timed_out=False,
+            ),
+        )
+
+    pipeline._run_required_checks = fake_run_required_checks  # type: ignore[method-assign]
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH), human_authorized=True)
+
+    assert result.status == RunStatus.FAILED
+    assert "declared=2 actual=1" in (result.reason or "")
+    assert not receipt.writes
+    assert task_pipeline.calls == []
 
 
 def test_run_epic_stop_before_push_ends_without_push_or_pr(tmp_path):

@@ -117,11 +117,14 @@ def _validate_required_checks(required_checks: Any, expected_commands: Sequence[
             errors.append(f"required_checks[{index}] must be a mapping")
             continue
         command = item.get("command")
+        executed_command = item.get("executed_command")
         exit_code = item.get("exit_code")
         if not isinstance(command, str) or not command.strip():
             errors.append(f"required_checks[{index}].command must be a non-empty string")
         else:
             normalized_commands.append(command)
+        if executed_command is not None and (not isinstance(executed_command, str) or not executed_command.strip()):
+            errors.append(f"required_checks[{index}].executed_command must be a non-empty string when provided")
         if not isinstance(exit_code, int):
             errors.append(f"required_checks[{index}].exit_code must be an integer")
         elif exit_code != 0:
@@ -177,10 +180,14 @@ def _canonicalize_review_checks(raw_checks: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         command = _normalize_command_value(item.get("command"))
+        executed_command = _normalize_command_value(item.get("executed_command"))
         exit_code = item.get("exit_code")
         if command is None or not isinstance(exit_code, int):
             continue
-        checks.append({"command": command, "exit_code": exit_code})
+        check = {"command": command, "exit_code": exit_code}
+        if executed_command is not None:
+            check["executed_command"] = executed_command
+        checks.append(check)
     return checks
 
 
