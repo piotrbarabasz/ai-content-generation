@@ -97,6 +97,8 @@ class EpicPipeline:
             self._require_not_cancelled(cancel_event)
             self.repository.require_clean_tree()
             self.repository.switch_to_master_and_pull(self._base_branch_for(run), "origin")
+            base_branch = self._base_branch_for(run)
+            base_head_sha = self.repository.head_sha()
 
             epic_id = self._epic_id_for(run)
             epic_manifest = get_epic(epic_id, self.workstreams_dir)
@@ -112,7 +114,7 @@ class EpicPipeline:
                     human_authorized = bool(run.request.human_authorized)
                 if not human_authorized:
                     raise EpicPipelineError("human authorization is required to activate a planned epic")
-                self.repository.create_branch(branch_name, base_branch=self._base_branch_for(run))
+                self.repository.create_branch(branch_name, base_branch=base_branch)
                 updated_manifest = activate_epic_with_human_authorization(
                     epic_id,
                     human_authorized=True,
@@ -122,9 +124,11 @@ class EpicPipeline:
                 self._write_active_epic(epic_id)
                 activation_commit_sha = self.repository.head_sha()
             else:
-                self.repository.create_branch(branch_name, base_branch=self._base_branch_for(run))
+                self.repository.create_branch(branch_name, base_branch=base_branch)
                 self._write_active_epic(epic_id)
                 activation_commit_sha = None
+
+            self.repository.sync_branch_with_base(branch_name, base_branch=base_branch, base_head_sha=base_head_sha)
 
             current_run = replace(
                 run,

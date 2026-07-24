@@ -17,6 +17,8 @@ from . import process_runner
 ROOT = Path(__file__).resolve().parents[4]
 AUTOPILOT_RESULT_MARKER = "AUTOPILOT_RESULT_JSON"
 TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
+SUCCESS_RESULT_STATUSES = {"PASS", "PASSED", "SUCCESS", "COMPLETED"}
+FAILURE_RESULT_STATUSES = {"FAIL", "FAILED", "BLOCKED", "CANCELLED", "TIMEOUT"}
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,9 @@ class CodexRunResult:
     pid: int | None
     raw_output: str
     result_json: dict[str, Any] | None
+    semantic_status: str | None = None
+    effective_sandbox: str | None = None
+    retryable: bool = False
     parse_error: str | None = None
 
 
@@ -200,15 +205,38 @@ class CodexAdapter:
                 stdin_text=prompt,
             )
             raw_output, parse_error = _read_output_last_message(output_last_message_path)
-            parsed_json = None
-            if raw_output is not None:
+            parsed_json: dict[str, Any] | None = None
+            semantic_status: str | None = None
+            retryable = False
+            effective_sandbox = _extract_effective_sandbox(process_result.stdout_lines)
+            if effective_sandbox == "read-only":
+                parse_error = "Codex effective sandbox is read-only; workspace-write was requested."
+            elif raw_output is not None:
+                if effective_sandbox is None:
+                    effective_sandbox = _extract_effective_sandbox(raw_output.splitlines())
                 parsed_json, parse_error = parse_autopilot_result(raw_output)
+                if parsed_json is not None:
+                    semantic_status, retryable, contract_error = validate_autopilot_result_contract(
+                        parsed_json,
+                        task_id=task_id,
+                    )
+                    if contract_error is not None:
+                        parse_error = contract_error
+                        retryable = False
+                    elif semantic_status == "FAIL":
+                        retryable = retryable and process_result.status == "PASS"
             status = process_result.status
-            exit_code = process_result.exit_code
-            if status == "PASS" and parsed_json is None:
+            if process_result.status == "PASS" and semantic_status == "PASS":
+                status = "PASS"
+            elif process_result.status == "PASS" and semantic_status == "FAIL":
                 status = "FAIL"
-                if exit_code == 0:
-                    exit_code = 1
+            elif process_result.status == "PASS" and parsed_json is None:
+                status = "FAIL"
+            elif process_result.status == "PASS" and parse_error is not None:
+                status = "FAIL"
+            exit_code = process_result.exit_code
+            if status == "FAIL" and exit_code == 0:
+                exit_code = 1
             return CodexRunResult(
                 command=tuple(process_result.command),
                 status=status,
@@ -222,6 +250,9 @@ class CodexAdapter:
                 pid=process_result.pid,
                 raw_output=raw_output or "",
                 result_json=parsed_json,
+                semantic_status=semantic_status,
+                effective_sandbox=effective_sandbox,
+                retryable=retryable,
                 parse_error=parse_error,
             )
         finally:
@@ -237,14 +268,16 @@ class CodexAdapter:
             raise RuntimeError(_missing_codex_cli_reason())
         return [
             executable,
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "never",
             "exec",
             "-C",
             str(self.root),
             "--ignore-user-config",
             "--ignore-rules",
             "--ephemeral",
-            "--sandbox",
-            "workspace-write",
             "--color",
             "never",
             "--output-last-message",
@@ -316,6 +349,28 @@ def parse_autopilot_result(text: str) -> tuple[dict[str, Any] | None, str | None
     return last_valid, None
 
 
+def validate_autopilot_result_contract(payload: dict[str, Any], *, task_id: str) -> tuple[str | None, bool, str | None]:
+    if not isinstance(payload, dict):
+        return None, False, "AUTOPILOT_RESULT_JSON block must decode to a JSON object"
+
+    normalized_task_id = _validate_task_id(task_id)
+    payload_task_id = payload.get("task_id")
+    if not isinstance(payload_task_id, str) or payload_task_id.strip() != normalized_task_id:
+        return None, False, f"AUTOPILOT_RESULT_JSON task_id must match {normalized_task_id}"
+
+    status_value = payload.get("status")
+    if status_value is None:
+        status_value = payload.get("final_status")
+    if not isinstance(status_value, str) or not status_value.strip():
+        return None, False, "AUTOPILOT_RESULT_JSON status is missing"
+    normalized_status = status_value.strip().upper()
+    if normalized_status in SUCCESS_RESULT_STATUSES:
+        return "PASS", _parse_retryable(payload), None
+    if normalized_status in FAILURE_RESULT_STATUSES:
+        return "FAIL", _parse_retryable(payload), None
+    return None, False, f"unknown AUTOPILOT_RESULT_JSON status: {status_value!r}"
+
+
 def _existing_executable(value: str | os.PathLike[str] | None) -> str | None:
     if value is None:
         return None
@@ -344,6 +399,23 @@ def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
     if not content.strip():
         return None, "AUTOPILOT_RESULT_JSON block not found (codex output-last-message is empty)"
     return content, None
+
+
+def _parse_retryable(payload: dict[str, Any]) -> bool:
+    retryable = payload.get("retryable", False)
+    return isinstance(retryable, bool) and retryable
+
+
+def _extract_effective_sandbox(stdout_lines: Sequence[str]) -> str | None:
+    for line in stdout_lines:
+        normalized = line.strip().lower()
+        if not normalized.startswith("sandbox:"):
+            continue
+        if "read-only" in normalized:
+            return "read-only"
+        if "workspace-write" in normalized:
+            return "workspace-write"
+    return None
 
 
 def _missing_codex_cli_reason() -> str:

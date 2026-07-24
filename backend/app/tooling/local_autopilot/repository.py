@@ -10,7 +10,7 @@ from typing import Iterable, Sequence
 from . import process_runner
 
 ROOT = Path(__file__).resolve().parents[4]
-FORBIDDEN_GIT_COMMANDS = {"merge", "rebase", "stash", "reset"}
+FORBIDDEN_GIT_COMMANDS = {"rebase", "stash", "reset"}
 TEXT_SUFFIXES = {".txt", ".md", ".py", ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".ps1", ".cmd", ".bat"}
 
 
@@ -46,6 +46,10 @@ class Repository:
     def _validate_command(self, args: Sequence[str]) -> None:
         for index, part in enumerate(args):
             if index == 0 and part == "git":
+                continue
+            if part == "merge":
+                if not _is_allowed_ff_only_merge(args):
+                    raise ValueError("forbidden git command: merge")
                 continue
             if part in FORBIDDEN_GIT_COMMANDS:
                 raise ValueError(f"forbidden git command: {part}")
@@ -90,6 +94,30 @@ class Repository:
         pull_result = self._git("git", "pull", "--ff-only", remote, base_branch)
         if pull_result.status != "PASS":
             raise RuntimeError(f"git pull --ff-only {remote} {base_branch} failed")
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        result = self._git("git", "merge-base", "--is-ancestor", ancestor, descendant)
+        return result.status == "PASS"
+
+    def merge_ff_only(self, branch: str) -> None:
+        result = self._git("git", "merge", "--ff-only", branch)
+        if result.status != "PASS":
+            raise RuntimeError(f"git merge --ff-only {branch} failed")
+
+    def sync_branch_with_base(self, branch: str, *, base_branch: str = "master", base_head_sha: str | None = None) -> None:
+        current = self.status()
+        if current.branch != branch:
+            raise RuntimeError(f"current branch {current.branch!r} does not match {branch!r}")
+        branch_head_sha = self.head_sha()
+        resolved_base_head = base_head_sha or self._git("git", "rev-parse", base_branch).stdout_lines[0].strip()
+        if not resolved_base_head:
+            raise RuntimeError(f"cannot resolve {base_branch} head")
+        if self.is_ancestor(branch_head_sha, resolved_base_head):
+            self.merge_ff_only(base_branch)
+            return
+        if self.is_ancestor(resolved_base_head, branch_head_sha):
+            return
+        raise RuntimeError(f"{branch} and {base_branch} have diverged")
 
     def create_branch(self, branch: str, *, base_branch: str = "master") -> None:
         if self.branch_exists(branch):
@@ -204,6 +232,11 @@ def _append_unique(bucket: list[str], value: str) -> None:
     normalized = value.replace("\\", "/").strip()
     if normalized and normalized not in bucket:
         bucket.append(normalized)
+
+
+def _is_allowed_ff_only_merge(args: Sequence[str]) -> bool:
+    parts = tuple(args)
+    return len(parts) == 4 and parts[:3] == ("git", "merge", "--ff-only") and bool(parts[3].strip())
 
 
 __all__ = ["GitStatus", "Repository", "ROOT"]

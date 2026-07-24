@@ -191,6 +191,7 @@ def test_build_command_uses_full_path_and_preserves_spaces(tmp_path, monkeypatch
     assert command[0] == str(executable)
     assert command[0].endswith("codex.cmd")
     assert "Program Files" in command[0]
+    assert command[1:6] == ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
     assert command[-2].endswith("output-last-message.txt")
 
 
@@ -236,7 +237,8 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
     command = adapter.build_command(output_last_message_path=tmp_path / "output-last-message.txt")
 
-    assert command[:4] == ["codex", "exec", "-C", str(tmp_path)]
+    assert command[:6] == ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
+    assert command[6:8] == ["-C", str(tmp_path)]
     assert "--ignore-user-config" in command
     assert "--ignore-rules" in command
     assert "--ephemeral" in command
@@ -260,15 +262,17 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
         if command == ("codex", "exec", "--help"):
             return _help_result(command, stdout=("Run Codex non-interactively",))
         assert kwargs["stdin_text"].startswith("You are Codex running inside the local AI Content Studio autopilot.")
+        assert command[:6] == ("codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec")
         _write_output_last_message(
             command,
             "\n".join(
                 [
+                    "sandbox: workspace-write",
                     "noise",
                     "AUTOPILOT_RESULT_JSON",
                     "{not-json}",
                     "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"status": "PASS", "task_id": "T007", "notes": "ok"}, indent=2),
+                    json.dumps({"status": "PASS", "task_id": "T007", "notes": "ok", "retryable": True}, indent=2),
                 ]
             ),
         )
@@ -292,11 +296,14 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
 
     assert isinstance(result, CodexRunResult)
     assert result.status == "PASS"
-    assert result.result_json == {"status": "PASS", "task_id": "T007", "notes": "ok"}
+    assert result.result_json == {"status": "PASS", "task_id": "T007", "notes": "ok", "retryable": True}
+    assert result.semantic_status == "PASS"
+    assert result.retryable is True
+    assert result.effective_sandbox == "workspace-write"
     assert result.parse_error is None
-    assert result.raw_output.startswith("noise")
+    assert result.raw_output.startswith("sandbox: workspace-write")
     assert result.stdout_lines == ("Codex CLI banner", "\x1b[31mstdout truncated\x1b[0m")
-    assert result.command[:4] == ("codex", "exec", "-C", str(tmp_path))
+    assert result.command[:6] == ("codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec")
     assert [command for command, _ in calls[:2]] == [("codex", "--help"), ("codex", "exec", "--help")]
     assert all("shell" not in kwargs for _, kwargs in calls)
     assert any(kwargs.get("stdin_text") for _, kwargs in calls)
@@ -325,6 +332,141 @@ def test_run_task_reports_missing_json_as_failure(tmp_path):
     assert result.status == "FAIL"
     assert result.result_json is None
     assert result.parse_error == "AUTOPILOT_RESULT_JSON block not found"
+
+
+def test_run_task_treats_fail_status_as_failure_even_when_exit_code_is_zero(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            "\n".join(
+                [
+                    "sandbox: workspace-write",
+                    "AUTOPILOT_RESULT_JSON",
+                    json.dumps({"status": "FAIL", "task_id": "T007", "retryable": False}, indent=2),
+                ]
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write", "Codex banner"))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.exit_code == 1
+    assert result.result_json == {"status": "FAIL", "task_id": "T007", "retryable": False}
+    assert result.semantic_status == "FAIL"
+    assert result.retryable is False
+
+
+def test_run_task_accepts_final_status_and_retryable_flag(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            "\n".join(
+                [
+                    "sandbox: workspace-write",
+                    "AUTOPILOT_RESULT_JSON",
+                    json.dumps({"final_status": "PASSED", "task_id": "T007", "retryable": True}, indent=2),
+                ]
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "PASS"
+    assert result.semantic_status == "PASS"
+    assert result.retryable is True
+
+
+def test_run_task_fails_when_task_id_does_not_match(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            "\n".join(
+                [
+                    "sandbox: workspace-write",
+                    "AUTOPILOT_RESULT_JSON",
+                    json.dumps({"status": "PASS", "task_id": "T008", "retryable": True}, indent=2),
+                ]
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.result_json == {"status": "PASS", "task_id": "T008", "retryable": True}
+    assert "task_id must match" in (result.parse_error or "")
+
+
+def test_run_task_fails_when_effective_sandbox_is_read_only(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            "\n".join(
+                [
+                    "sandbox: read-only",
+                    "AUTOPILOT_RESULT_JSON",
+                    json.dumps({"status": "PASS", "task_id": "T007", "retryable": True}, indent=2),
+                ]
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: read-only",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.retryable is False
+    assert result.effective_sandbox == "read-only"
+    assert "workspace-write was requested" in (result.parse_error or "")
 
 
 def test_run_task_reports_missing_output_last_message_file_as_failure(tmp_path):

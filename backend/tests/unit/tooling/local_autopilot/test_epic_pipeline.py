@@ -27,11 +27,15 @@ class FakeRepository:
     root: Path
     current_branch: str = "master"
     head_sha_value: str = "a" * 40
+    master_head_sha_value: str | None = None
     clean: bool = True
     commit_should_fail: bool = False
     push_should_fail: bool = False
+    diverged: bool = False
 
     def __post_init__(self) -> None:
+        if self.master_head_sha_value is None:
+            self.master_head_sha_value = self.head_sha_value
         self.calls: list[tuple[str, ...]] = []
         self.commit_messages: list[str] = []
         self.pushed_branches: list[str] = []
@@ -50,10 +54,42 @@ class FakeRepository:
     def switch_to_master_and_pull(self, base_branch: str = "master", remote: str = "origin") -> None:
         self.calls.append(("switch_to_master_and_pull", base_branch, remote))
         self.current_branch = base_branch
+        self.head_sha_value = self.master_head_sha_value or self.head_sha_value
 
     def create_branch(self, branch: str, *, base_branch: str = "master") -> None:
         self.calls.append(("create_branch", branch, base_branch))
         self.current_branch = branch
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        self.calls.append(("is_ancestor", ancestor, descendant))
+        if self.diverged:
+            return False
+        if ancestor == descendant:
+            return True
+        if ancestor == self.head_sha_value and descendant == (self.master_head_sha_value or self.head_sha_value):
+            return True
+        if ancestor == (self.master_head_sha_value or self.head_sha_value) and descendant == self.head_sha_value:
+            return self.head_sha_value != (self.master_head_sha_value or self.head_sha_value)
+        return False
+
+    def merge_ff_only(self, branch: str) -> None:
+        self.calls.append(("merge_ff_only", branch))
+        if self.diverged:
+            raise RuntimeError(f"git merge --ff-only {branch} failed")
+        self.head_sha_value = self.master_head_sha_value or self.head_sha_value
+
+    def sync_branch_with_base(self, branch: str, *, base_branch: str = "master", base_head_sha: str | None = None) -> None:
+        self.calls.append(("sync_branch_with_base", branch, base_branch, base_head_sha or ""))
+        if self.current_branch != branch:
+            raise RuntimeError(f"current branch {self.current_branch!r} does not match {branch!r}")
+        branch_head_sha = self.head_sha()
+        resolved_base_head = base_head_sha or self.master_head_sha_value or self.head_sha_value
+        if self.is_ancestor(branch_head_sha, resolved_base_head):
+            self.merge_ff_only(base_branch)
+            return
+        if self.is_ancestor(resolved_base_head, branch_head_sha):
+            return
+        raise RuntimeError(f"{branch} and {base_branch} have diverged")
 
     def stage_allowlist(self, allowlist) -> None:
         values = tuple(str(item) for item in allowlist)
@@ -524,6 +560,52 @@ def test_run_epic_resumes_from_next_ready_task(tmp_path):
     result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
 
     assert result.status == RunStatus.COMPLETED
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_syncs_existing_branch_before_tasks(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed")
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="a" * 40, master_head_sha_value="b" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
+
+    assert result.status == RunStatus.COMPLETED
+    assert ("sync_branch_with_base", "feature/E002", "master", "b" * 40) in repo.calls
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_rejects_diverged_existing_branch(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed")
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="a" * 40, master_head_sha_value="b" * 40, diverged=True)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
+
+    assert result.status == RunStatus.FAILED
+    assert "diverged" in (result.reason or "").lower()
     assert task_pipeline.calls == []
 
 

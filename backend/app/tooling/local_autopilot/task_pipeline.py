@@ -125,7 +125,9 @@ class TaskPipeline:
                     return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=attempts)
                 if codex_result.status != "PASS" or codex_result.result_json is None:
                     last_reason = codex_result.parse_error or f"codex exited with {codex_result.status}"
-                    if not self._can_retry(attempts):
+                    if codex_result.retryable and self._can_retry(attempts):
+                        continue
+                    if codex_result.retryable and not self._can_retry(attempts):
                         return self._failed_result(
                             run,
                             task_id,
@@ -134,7 +136,15 @@ class TaskPipeline:
                             reason=last_reason,
                             attempts=attempts,
                         )
-                    continue
+                    if not codex_result.retryable:
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason=last_reason,
+                            attempts=attempts,
+                        )
 
                 scope_check = self._check_scope_drift(baseline, task_context.allowlist)
                 if scope_check is not None:

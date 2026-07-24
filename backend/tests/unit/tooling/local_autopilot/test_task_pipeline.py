@@ -29,6 +29,7 @@ class ScenarioRunner:
     codex_result_status: str = "PASS"
     codex_json: dict[str, object] | None = None
     dirty_after_codex: bool = True
+    sandbox_banner: str = "sandbox: workspace-write"
 
     def __post_init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
@@ -133,7 +134,7 @@ class ScenarioRunner:
                 status = "PASS"
             return self._result(command, status=status, exit_code=0 if status == "PASS" else 1)
 
-        if command[:2] == ("codex", "exec") and "--help" not in command:
+        if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command:
             self._codex_attempts += 1
             prompt = kwargs.get("stdin_text", "")
             match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
@@ -145,6 +146,7 @@ class ScenarioRunner:
                 output_path.write_text(
                     "\n".join(
                         [
+                            self.sandbox_banner,
                             "Codex working",
                             "AUTOPILOT_RESULT_JSON",
                             json.dumps(payload, indent=2),
@@ -153,6 +155,7 @@ class ScenarioRunner:
                     encoding="utf-8",
                 )
             stdout = (
+                self.sandbox_banner,
                 "Codex working",
                 "AUTOPILOT_RESULT_JSON",
                 json.dumps(payload),
@@ -365,7 +368,7 @@ def test_run_task_happy_path_commits_and_saves_state(tmp_path):
     assert load_run_state("run-045", root=tmp_path) == result.run
     assert any(command[:3] == ("git", "add", "--") for command in runner.calls)
     assert any(command[:2] == ("git", "commit") for command in runner.calls)
-    assert any(command[:2] == ("codex", "exec") and "--help" not in command for command in runner.calls)
+    assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
 
 
 def test_run_task_fails_on_scope_drift(tmp_path):
@@ -393,7 +396,7 @@ def test_run_task_rejects_checked_checkbox(tmp_path):
 
     assert result.status == RunStatus.FAILED
     assert "must be unchecked" in (result.reason or "")
-    assert not any(command[:2] == ("codex", "exec") and "--help" not in command for command in runner.calls)
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
 
 
 def test_run_task_retries_validation_failure_until_success(tmp_path):
@@ -408,7 +411,7 @@ def test_run_task_retries_validation_failure_until_success(tmp_path):
 
     assert result.status == RunStatus.COMPLETED
     assert result.attempts == 2
-    assert sum(1 for command in runner.calls if command[:2] == ("codex", "exec") and "--help" not in command) == 2
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
     assert sum(1 for command in runner.calls if command[:2] == (runner.python_executable, "-m") and "pytest" in command) == 2
 
 
@@ -454,7 +457,7 @@ def test_run_task_fails_fast_on_dirty_tree(tmp_path):
 
     assert result.status == RunStatus.FAILED
     assert "working tree must be clean" in (result.reason or "")
-    assert not any(command[:2] == ("codex", "exec") and "--help" not in command for command in runner.calls)
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
 
 
 def test_run_task_cancels_before_work(tmp_path):
@@ -485,7 +488,57 @@ def test_run_task_honors_repair_limit(tmp_path):
     assert result.status == RunStatus.FAILED
     assert result.attempts == 2
     assert "validation failed" in (result.reason or "")
-    assert sum(1 for command in runner.calls if command[:2] == ("codex", "exec") and "--help" not in command) == 2
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
+
+
+def test_run_task_does_not_retry_nonretryable_codex_failure(tmp_path):
+    _setup_repo(tmp_path)
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_json={"status": "FAIL", "task_id": "T045", "retryable": False},
+    )
+    pipeline = _build_pipeline(tmp_path, runner, max_repair_cycles=1)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert result.attempts == 1
+    assert "codex exited with FAIL" in (result.reason or "")
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 1
+    assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
+
+
+def test_run_task_retries_retryable_codex_failure(tmp_path):
+    _setup_repo(tmp_path)
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_json={"status": "FAIL", "task_id": "T045", "retryable": True},
+    )
+    pipeline = _build_pipeline(tmp_path, runner, max_repair_cycles=1)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert result.attempts == 2
+    assert "codex exited with FAIL" in (result.reason or "")
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
+    assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
+
+
+def test_run_task_fails_fast_on_read_only_sandbox(tmp_path):
+    _setup_repo(tmp_path)
+    runner = ScenarioRunner(
+        tmp_path,
+        sandbox_banner="sandbox: read-only",
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert "workspace-write was requested" in (result.reason or "")
+    assert result.attempts == 1
+    assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
 
 
 def test_parse_preflight_json_document_uses_root_payload(tmp_path):
