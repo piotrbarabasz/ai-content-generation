@@ -93,6 +93,8 @@ class ScenarioRunner:
                 "epic": "E001",
                 "branch": "feat/local-autopilot-ui",
                 "baseline_path": str(self.root / ".specify" / "runtime" / "task-runs" / selector / "baseline.json"),
+                "feature_dir": str(self.root / "specs" / "001-ai-content-studio"),
+                "tasks_path": str(self.root / "specs" / "001-ai-content-studio" / "tasks.md"),
                 "duration_ms": 1,
                 "checks": [
                     {
@@ -138,26 +140,36 @@ class ScenarioRunner:
             self._codex_attempts += 1
             prompt = kwargs.get("stdin_text", "")
             match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
-            payload = self.codex_json or {"status": "PASS", "attempt": self._codex_attempts, "task_id": match.group(1) if match else None}
+            task_id = match.group(1) if match else None
+            payload = self.codex_json or {
+                "task_id": task_id,
+                "final_status": "COMPLETED",
+                "review_verdict": "PASS",
+                "reason": None,
+                "files_changed": ["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                "validation": [],
+                "tasks_md_change": f"- [X] {task_id} Implement deterministic pipeline for single task",
+                "repair_cycles_used": 0,
+                "safe_to_commit": True,
+                "next_task_started": False,
+                "retryable": False,
+            }
             output_path = None
             if "--output-last-message" in command:
                 output_path = Path(command[command.index("--output-last-message") + 1])
+            if (
+                self.codex_result_status == "PASS"
+                and isinstance(payload, dict)
+                and str(payload.get("final_status") or "").upper() == "COMPLETED"
+                and bool(payload.get("safe_to_commit", False))
+                and task_id is not None
+            ):
+                self._mark_complete(task_id)
             if output_path is not None:
-                output_path.write_text(
-                    "\n".join(
-                        [
-                            self.sandbox_banner,
-                            "Codex working",
-                            "AUTOPILOT_RESULT_JSON",
-                            json.dumps(payload, indent=2),
-                        ]
-                    ),
-                    encoding="utf-8",
-                )
+                output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             stdout = (
                 self.sandbox_banner,
                 "Codex working",
-                "AUTOPILOT_RESULT_JSON",
                 json.dumps(payload),
             )
             return self._result(command, stdout=stdout, status=self.codex_result_status, exit_code=0 if self.codex_result_status == "PASS" else 1)
@@ -169,7 +181,7 @@ class ScenarioRunner:
             stdout = ("## feat/local-autopilot-ui",)
             return self._result(command, stdout=stdout)
         if self._codex_attempts and self.dirty_after_codex:
-            dirty_paths = self.scope_drift_paths or ("backend/app/tooling/local_autopilot/task_pipeline.py",)
+            dirty_paths = self.scope_drift_paths or ("specs/001-ai-content-studio/tasks.md",)
             stdout = ("## feat/local-autopilot-ui", *[f" M {path}" for path in dirty_paths])
             return self._result(command, stdout=stdout)
         if self.initial_dirty_paths:
@@ -200,6 +212,12 @@ class ScenarioRunner:
             pid=4321,
         )
 
+    def _mark_complete(self, task_id: str) -> None:
+        tasks_path = self.root / "specs" / "001-ai-content-studio" / "tasks.md"
+        text = tasks_path.read_text(encoding="utf-8")
+        text = text.replace(f"- [ ] {task_id}", f"- [X] {task_id}", 1)
+        tasks_path.write_text(text, encoding="utf-8")
+
 
 def _write(path: Path, text: str, *, newline: bool = True) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +237,7 @@ def _setup_repo(
     checkbox: str = " ",
     validation_commands: str = "python -m pytest backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
     implementation_newline: bool = True,
+    checklists: dict[str, str] | None = None,
 ) -> tuple[Path, Path, Path]:
     workstreams = tmp_path / ".specify" / "workstreams"
     runtime = tmp_path / ".specify" / "runtime" / "task-runs" / "T045"
@@ -228,6 +247,8 @@ def _setup_repo(
     workstreams.mkdir(parents=True, exist_ok=True)
     runtime.mkdir(parents=True, exist_ok=True)
     feature_dir.mkdir(parents=True, exist_ok=True)
+    checklist_dir = feature_dir / "checklists"
+    checklist_dir.mkdir(parents=True, exist_ok=True)
 
     _write(
         workstreams / "M001.yml",
@@ -311,6 +332,8 @@ def _setup_repo(
             indent=2,
         ),
     )
+    for filename, content in (checklists or {}).items():
+        _write(feature_dir / "checklists" / filename, content)
     (tmp_path / ".specify" / "runtime" / "active-epic").write_text("E001\n", encoding="utf-8")
     return implementation_file, test_file, feature_dir / "tasks.md"
 
@@ -399,7 +422,55 @@ def test_run_task_rejects_checked_checkbox(tmp_path):
     assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
 
 
-def test_run_task_retries_validation_failure_until_success(tmp_path):
+def test_run_task_blocks_on_incomplete_required_checklist(tmp_path):
+    _setup_repo(
+        tmp_path,
+        checklists={
+            "required-checklist.md": "\n".join(
+                [
+                    "# Required checklist",
+                    "- [ ] Item one",
+                    "",
+                ]
+            ),
+        },
+    )
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.BLOCKED
+    assert result.attempts == 0
+    assert "required checklist items are incomplete" in (result.reason or "")
+    assert "required-checklist.md" in (result.reason or "")
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+    assert load_run_state("run-045", root=tmp_path).status == RunStatus.BLOCKED
+
+
+def test_run_task_ignores_optional_checklist(tmp_path):
+    _setup_repo(
+        tmp_path,
+        checklists={
+            "optional-checklist.md": "\n".join(
+                [
+                    "optional: true",
+                    "- [ ] Item one",
+                    "",
+                ]
+            ),
+        },
+    )
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_fails_on_validation_failure_without_retries(tmp_path):
     _setup_repo(tmp_path, validation_commands="python -m pytest backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py")
     runner = ScenarioRunner(
         tmp_path,
@@ -409,10 +480,30 @@ def test_run_task_retries_validation_failure_until_success(tmp_path):
 
     result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
 
+    assert result.status == RunStatus.FAILED
+    assert result.attempts == 1
+    assert "validation failed" in (result.reason or "")
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 1
+    assert sum(1 for command in runner.calls if command[:2] == (runner.python_executable, "-m") and "pytest" in command) == 1
+
+
+def test_run_task_preserves_quoted_validation_arguments_as_single_argv(tmp_path):
+    _setup_repo(
+        tmp_path,
+        validation_commands='python -m pytest "backend/tests/unit/tooling/local_autopilot/test task pipeline.py"',
+    )
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
     assert result.status == RunStatus.COMPLETED
-    assert result.attempts == 2
-    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
-    assert sum(1 for command in runner.calls if command[:2] == (runner.python_executable, "-m") and "pytest" in command) == 2
+    assert any(
+        command[:3] == (runner.python_executable, "-m", "pytest")
+        and len(command) == 4
+        and command[3] == "backend/tests/unit/tooling/local_autopilot/test task pipeline.py"
+        for command in runner.calls
+    )
 
 
 def test_run_task_repairs_whitespace_once(tmp_path):
@@ -486,16 +577,28 @@ def test_run_task_honors_repair_limit(tmp_path):
     result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
 
     assert result.status == RunStatus.FAILED
-    assert result.attempts == 2
+    assert result.attempts == 1
     assert "validation failed" in (result.reason or "")
-    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 1
 
 
 def test_run_task_does_not_retry_nonretryable_codex_failure(tmp_path):
     _setup_repo(tmp_path)
     runner = ScenarioRunner(
         tmp_path,
-        codex_json={"status": "FAIL", "task_id": "T045", "retryable": False},
+        codex_json={
+            "task_id": "T045",
+            "final_status": "FAILED",
+            "review_verdict": "FAIL",
+            "reason": "codex reported failure",
+            "files_changed": [],
+            "validation": [],
+            "tasks_md_change": "",
+            "repair_cycles_used": 0,
+            "safe_to_commit": False,
+            "next_task_started": False,
+            "retryable": False,
+        },
     )
     pipeline = _build_pipeline(tmp_path, runner, max_repair_cycles=1)
 
@@ -512,16 +615,28 @@ def test_run_task_retries_retryable_codex_failure(tmp_path):
     _setup_repo(tmp_path)
     runner = ScenarioRunner(
         tmp_path,
-        codex_json={"status": "FAIL", "task_id": "T045", "retryable": True},
+        codex_json={
+            "task_id": "T045",
+            "final_status": "FAILED",
+            "review_verdict": "FAIL",
+            "reason": "codex reported failure",
+            "files_changed": [],
+            "validation": [],
+            "tasks_md_change": "",
+            "repair_cycles_used": 0,
+            "safe_to_commit": False,
+            "next_task_started": False,
+            "retryable": True,
+        },
     )
     pipeline = _build_pipeline(tmp_path, runner, max_repair_cycles=1)
 
     result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
 
     assert result.status == RunStatus.FAILED
-    assert result.attempts == 2
+    assert result.attempts == 1
     assert "codex exited with FAIL" in (result.reason or "")
-    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 2
+    assert sum(1 for command in runner.calls if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command) == 1
     assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
 
 

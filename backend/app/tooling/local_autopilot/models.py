@@ -36,6 +36,7 @@ class RunStatus(str, Enum):
     WAITING_FOR_MERGE = "waiting_for_merge"
     CLOSING = "closing"
     COMPLETED = "completed"
+    BLOCKED = "blocked"
     FAILED = "failed"
     CANCELLED = "cancelled"
 

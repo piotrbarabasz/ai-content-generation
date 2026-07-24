@@ -23,6 +23,7 @@ def test_enum_values_are_stable() -> None:
     assert RunMode.FULL.value == "full"
     assert RunMode.STOP_BEFORE_PUSH.value == "stop_before_push"
     assert RunStatus.WAITING_FOR_MERGE.value == "waiting_for_merge"
+    assert RunStatus.BLOCKED.value == "blocked"
     assert RunStatus.CANCELLED.value == "cancelled"
 
 

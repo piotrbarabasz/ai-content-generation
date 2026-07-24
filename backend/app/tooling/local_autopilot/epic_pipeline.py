@@ -151,6 +151,17 @@ class EpicPipeline:
                 command_results.extend(task_result_bundle.command_results)
                 current_run = task_result_bundle.run
                 save_run_state(current_run, root=self.root)
+                if task_result_bundle.status == RunStatus.BLOCKED:
+                    return self._finalize_blocked(
+                        current_run,
+                        epic_id=epic_id,
+                        branch_name=branch_name,
+                        task_ids=tuple(task_ids),
+                        task_results=tuple(task_results),
+                        command_results=tuple(command_results),
+                        reason=task_result_bundle.reason or "task pipeline blocked",
+                        activation_commit_sha=activation_commit_sha,
+                    )
                 if task_result_bundle.status != RunStatus.COMPLETED:
                     return self._finalize_failure(
                         current_run,
@@ -512,6 +523,41 @@ class EpicPipeline:
         save_run_state(finalized_run, root=self.root)
         return EpicPipelineResult(
             status=RunStatus.FAILED,
+            run=finalized_run,
+            epic_id=epic_id or "",
+            branch_name=branch_name or "",
+            task_ids=tuple(task_ids),
+            task_results=tuple(task_results),
+            command_results=tuple(command_results),
+            activation_commit_sha=activation_commit_sha,
+            reason=reason,
+        )
+
+    def _finalize_blocked(
+        self,
+        run: AutopilotRun,
+        *,
+        epic_id: str | None,
+        branch_name: str | None,
+        task_ids: Sequence[str],
+        task_results: Sequence[TaskResult],
+        command_results: Sequence[CommandResult],
+        reason: str,
+        activation_commit_sha: str | None,
+    ) -> EpicPipelineResult:
+        finalized_run = self._finalize_run(
+            run,
+            status=RunStatus.BLOCKED,
+            epic_id=epic_id,
+            branch_name=branch_name,
+            task_results=task_results,
+            command_results=command_results,
+            pull_request=run.pull_request,
+            last_error=reason,
+        )
+        save_run_state(finalized_run, root=self.root)
+        return EpicPipelineResult(
+            status=RunStatus.BLOCKED,
             run=finalized_run,
             epic_id=epic_id or "",
             branch_name=branch_name or "",

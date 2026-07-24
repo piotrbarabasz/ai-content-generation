@@ -48,6 +48,41 @@ def _write_output_last_message(command: tuple[str, ...], text: str) -> None:
     output_path.write_text(text, encoding="utf-8")
 
 
+def _result_payload(
+    task_id: str = "T007",
+    *,
+    final_status: str = "COMPLETED",
+    review_verdict: str | None = "PASS",
+    reason: str | None = None,
+    files_changed: list[str] | None = None,
+    validation: list[object] | None = None,
+    tasks_md_change: str = "- [X] T007 Implement one task",
+    repair_cycles_used: int = 0,
+    safe_to_commit: bool | None = None,
+    next_task_started: bool = False,
+    retryable: bool = False,
+) -> dict[str, object]:
+    if safe_to_commit is None:
+        safe_to_commit = final_status == "COMPLETED"
+    if files_changed is None:
+        files_changed = ["backend/app/tooling/local_autopilot/task_pipeline.py"]
+    if validation is None:
+        validation = []
+    return {
+        "task_id": task_id,
+        "final_status": final_status,
+        "review_verdict": review_verdict,
+        "reason": reason,
+        "files_changed": files_changed,
+        "validation": validation,
+        "tasks_md_change": tasks_md_change,
+        "repair_cycles_used": repair_cycles_used,
+        "safe_to_commit": safe_to_commit,
+        "next_task_started": next_task_started,
+        "retryable": retryable,
+    }
+
+
 def test_detect_availability_uses_codex_help_and_exec_help(tmp_path):
     calls: list[tuple[str, ...]] = []
 
@@ -186,13 +221,20 @@ def test_build_command_uses_full_path_and_preserves_spaces(tmp_path, monkeypatch
     monkeypatch.setattr(codex_module, "resolve_codex_cli_executable", lambda: str(executable))
 
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
-    command = adapter.build_command(output_last_message_path=tmp_path / "Program Files" / "output-last-message.txt")
+    command = adapter.build_command(
+        output_last_message_path=tmp_path / "Program Files" / "output-last-message.txt",
+        output_schema_path=tmp_path / "Program Files" / "schema.json",
+    )
 
     assert command[0] == str(executable)
     assert command[0].endswith("codex.cmd")
     assert "Program Files" in command[0]
     assert command[1:6] == ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
-    assert command[-2].endswith("output-last-message.txt")
+    assert command[-5] == "--output-last-message"
+    assert command[-4].endswith("output-last-message.txt")
+    assert command[-3] == "--output-schema"
+    assert command[-2].endswith("schema.json")
+    assert command[-1] == "-"
 
 
 def test_detect_availability_reports_missing_cli_when_no_executable(tmp_path, monkeypatch):
@@ -227,7 +269,9 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
     assert "Use the local speckit-loop workflow for exactly one task and do not broaden scope." in prompt
     assert "Use the specified Python interpreter exactly as given." in prompt
     assert "Do not create commits, pushes, pull requests, merges, or deployments." in prompt
-    assert "AUTOPILOT_RESULT_JSON" in prompt
+    assert "Return exactly one JSON object that matches the provided schema." in prompt
+    assert "Do not wrap the JSON in markers, fences, or explanatory text." in prompt
+    assert "Do not emit any trailing text after the JSON object." in prompt
 
     with pytest.raises(ValueError):
         adapter.build_prompt(task_id="bad", task_text="x", agent_python="py", speckit_selector="T007")
@@ -235,7 +279,10 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
 
 def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
-    command = adapter.build_command(output_last_message_path=tmp_path / "output-last-message.txt")
+    command = adapter.build_command(
+        output_last_message_path=tmp_path / "output-last-message.txt",
+        output_schema_path=tmp_path / "schema.json",
+    )
 
     assert command[:6] == ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
     assert command[6:8] == ["-C", str(tmp_path)]
@@ -247,7 +294,11 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     assert "--color" in command
     assert "never" in command
     assert "--output-last-message" in command
-    assert command[-2] == str(tmp_path / "output-last-message.txt")
+    assert "--output-schema" in command
+    assert command[-5] == "--output-last-message"
+    assert command[-4] == str(tmp_path / "output-last-message.txt")
+    assert command[-3] == "--output-schema"
+    assert command[-2] == str(tmp_path / "schema.json")
     assert command[-1] == "-"
 
 
@@ -272,7 +323,22 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
                     "AUTOPILOT_RESULT_JSON",
                     "{not-json}",
                     "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"status": "PASS", "task_id": "T007", "notes": "ok", "retryable": True}, indent=2),
+                    json.dumps(
+                        _result_payload(
+                            "T007",
+                            final_status="COMPLETED",
+                            review_verdict="PASS",
+                            reason=None,
+                            files_changed=["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                            validation=[{"name": "pytest", "status": "PASS"}],
+                            tasks_md_change="- [X] T007 Implement one task",
+                            repair_cycles_used=0,
+                            safe_to_commit=True,
+                            next_task_started=False,
+                            retryable=True,
+                        ),
+                        indent=2,
+                    ),
                 ]
             ),
         )
@@ -296,7 +362,19 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
 
     assert isinstance(result, CodexRunResult)
     assert result.status == "PASS"
-    assert result.result_json == {"status": "PASS", "task_id": "T007", "notes": "ok", "retryable": True}
+    assert result.result_json == _result_payload(
+        "T007",
+        final_status="COMPLETED",
+        review_verdict="PASS",
+        reason=None,
+        files_changed=["backend/app/tooling/local_autopilot/task_pipeline.py"],
+        validation=[{"name": "pytest", "status": "PASS"}],
+        tasks_md_change="- [X] T007 Implement one task",
+        repair_cycles_used=0,
+        safe_to_commit=True,
+        next_task_started=False,
+        retryable=True,
+    )
     assert result.semantic_status == "PASS"
     assert result.retryable is True
     assert result.effective_sandbox == "workspace-write"
@@ -347,7 +425,22 @@ def test_run_task_treats_fail_status_as_failure_even_when_exit_code_is_zero(tmp_
                 [
                     "sandbox: workspace-write",
                     "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"status": "FAIL", "task_id": "T007", "retryable": False}, indent=2),
+                    json.dumps(
+                        _result_payload(
+                            "T007",
+                            final_status="FAILED",
+                            review_verdict="FAIL",
+                            reason="validation failed",
+                            files_changed=[],
+                            validation=[],
+                            tasks_md_change="",
+                            repair_cycles_used=1,
+                            safe_to_commit=False,
+                            next_task_started=False,
+                            retryable=False,
+                        ),
+                        indent=2,
+                    ),
                 ]
             ),
         )
@@ -364,7 +457,19 @@ def test_run_task_treats_fail_status_as_failure_even_when_exit_code_is_zero(tmp_
 
     assert result.status == "FAIL"
     assert result.exit_code == 1
-    assert result.result_json == {"status": "FAIL", "task_id": "T007", "retryable": False}
+    assert result.result_json == _result_payload(
+        "T007",
+        final_status="FAILED",
+        review_verdict="FAIL",
+        reason="validation failed",
+        files_changed=[],
+        validation=[],
+        tasks_md_change="",
+        repair_cycles_used=1,
+        safe_to_commit=False,
+        next_task_started=False,
+        retryable=False,
+    )
     assert result.semantic_status == "FAIL"
     assert result.retryable is False
 
@@ -378,12 +483,20 @@ def test_run_task_accepts_final_status_and_retryable_flag(tmp_path):
             return _help_result(command, stdout=("Run Codex non-interactively",))
         _write_output_last_message(
             command,
-            "\n".join(
-                [
-                    "sandbox: workspace-write",
-                    "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"final_status": "PASSED", "task_id": "T007", "retryable": True}, indent=2),
-                ]
+            json.dumps(
+                {
+                    "TASK_ID": "T007",
+                    "FINAL_STATUS": "COMPLETED",
+                    "REVIEW_VERDICT": "PASS",
+                    "FILES_CHANGED": ["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                    "VALIDATION": [],
+                    "TASKS_MD_CHANGE": "- [X] T007 Implement one task",
+                    "REPAIR_CYCLES_USED": 0,
+                    "SAFE_TO_COMMIT": True,
+                    "NEXT_TASK_STARTED": False,
+                    "RETRYABLE": True,
+                },
+                indent=2,
             ),
         )
         return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
@@ -400,6 +513,50 @@ def test_run_task_accepts_final_status_and_retryable_flag(tmp_path):
     assert result.status == "PASS"
     assert result.semantic_status == "PASS"
     assert result.retryable is True
+    assert result.result_json["task_id"] == "T007"
+    assert result.result_json["final_status"] == "COMPLETED"
+
+
+def test_run_task_reports_blocked_status_from_blocked_reason_alias(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            json.dumps(
+                {
+                    "TASK_ID": "T007",
+                    "FINAL_STATUS": "FAILED",
+                    "BLOCKED_REASON": "Mandatory checklists are incomplete",
+                    "FILES_CHANGED": [],
+                    "VALIDATION": [],
+                    "TASKS_MD_CHANGE": "",
+                    "REPAIR_CYCLES_USED": 0,
+                    "SAFE_TO_COMMIT": False,
+                    "NEXT_TASK_STARTED": False,
+                    "RETRYABLE": False,
+                },
+                indent=2,
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.semantic_status == "BLOCKED"
+    assert result.parse_error is None
+    assert result.result_json["reason"] == "Mandatory checklists are incomplete"
 
 
 def test_run_task_fails_when_task_id_does_not_match(tmp_path):
@@ -415,7 +572,21 @@ def test_run_task_fails_when_task_id_does_not_match(tmp_path):
                 [
                     "sandbox: workspace-write",
                     "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"status": "PASS", "task_id": "T008", "retryable": True}, indent=2),
+                    json.dumps(
+                        {
+                            "TASK_ID": "T008",
+                            "FINAL_STATUS": "COMPLETED",
+                            "REVIEW_VERDICT": "PASS",
+                            "FILES_CHANGED": ["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                            "VALIDATION": [],
+                            "TASKS_MD_CHANGE": "- [X] T007 Implement one task",
+                            "REPAIR_CYCLES_USED": 0,
+                            "SAFE_TO_COMMIT": True,
+                            "NEXT_TASK_STARTED": False,
+                            "RETRYABLE": True,
+                        },
+                        indent=2,
+                    ),
                 ]
             ),
         )
@@ -431,7 +602,8 @@ def test_run_task_fails_when_task_id_does_not_match(tmp_path):
     )
 
     assert result.status == "FAIL"
-    assert result.result_json == {"status": "PASS", "task_id": "T008", "retryable": True}
+    assert result.result_json is not None
+    assert result.result_json["TASK_ID"] == "T008"
     assert "task_id must match" in (result.parse_error or "")
 
 
@@ -448,7 +620,22 @@ def test_run_task_fails_when_effective_sandbox_is_read_only(tmp_path):
                 [
                     "sandbox: read-only",
                     "AUTOPILOT_RESULT_JSON",
-                    json.dumps({"status": "PASS", "task_id": "T007", "retryable": True}, indent=2),
+                    json.dumps(
+                        _result_payload(
+                            "T007",
+                            final_status="COMPLETED",
+                            review_verdict="PASS",
+                            reason=None,
+                            files_changed=["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                            validation=[],
+                            tasks_md_change="- [X] T007 Implement one task",
+                            repair_cycles_used=0,
+                            safe_to_commit=True,
+                            next_task_started=False,
+                            retryable=True,
+                        ),
+                        indent=2,
+                    ),
                 ]
             ),
         )
@@ -578,14 +765,62 @@ def test_parse_autopilot_result_picks_last_valid_block():
             "AUTOPILOT_RESULT_JSON",
             "{not-json}",
             "AUTOPILOT_RESULT_JSON",
-            '{"status": "PASS", "task_id": "T001"}',
-            "tail",
+            '{"TASK_ID": "T001", "FINAL_STATUS": "COMPLETED", "REVIEW_VERDICT": "PASS", "FILES_CHANGED": [], "VALIDATION": [], "TASKS_MD_CHANGE": "-", "REPAIR_CYCLES_USED": 0, "SAFE_TO_COMMIT": true, "NEXT_TASK_STARTED": false, "RETRYABLE": false}',
         ]
     )
 
     parsed, error = parse_autopilot_result(text)
     assert error is None
-    assert parsed == {"status": "PASS", "task_id": "T001"}
+    assert parsed and parsed["TASK_ID"] == "T001"
+
+
+def test_parse_autopilot_result_rejects_trailing_text():
+    payload = json.dumps({"task_id": "T001", "final_status": "COMPLETED"})
+    parsed, error = parse_autopilot_result(f"{payload} trailing")
+    assert parsed is None
+    assert "trailing non-whitespace text" in (error or "")
+
+
+def test_run_task_rejects_case_insensitive_key_collisions(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            json.dumps(
+                {
+                    "task_id": "T007",
+                    "TASK_ID": "T008",
+                    "final_status": "COMPLETED",
+                    "review_verdict": "PASS",
+                    "files_changed": [],
+                    "validation": [],
+                    "tasks_md_change": "- [X] T007 Implement one task",
+                    "repair_cycles_used": 0,
+                    "safe_to_commit": True,
+                    "next_task_started": False,
+                    "retryable": False,
+                },
+                indent=2,
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert "duplicate AUTOPILOT_RESULT_JSON key" in (result.parse_error or "")
+    assert result.result_json is not None
 
 
 def test_run_local_autopilot_ps1_configures_current_process_only(tmp_path, monkeypatch):

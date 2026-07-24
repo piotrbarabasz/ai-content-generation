@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import re
 import time
 from dataclasses import dataclass, replace
@@ -30,6 +31,7 @@ class TaskContext:
     task_line: int
     task_title: str
     checkbox: str
+    feature_dir: Path
     epic_id: str
     milestone_id: str
     implementation_files: tuple[str, ...]
@@ -37,6 +39,7 @@ class TaskContext:
     allowlist: tuple[str, ...]
     validation_commands: tuple[str, ...]
     tasks_path: Path
+    tasks_text: str
 
 
 @dataclass(frozen=True)
@@ -80,7 +83,6 @@ class TaskPipeline:
         task_id: str,
         cancel_event: Any | None = None,
     ) -> TaskPipelineResult:
-        started = time.perf_counter()
         command_results: list[CommandResult] = []
         try:
             self._require_not_cancelled(cancel_event)
@@ -99,155 +101,182 @@ class TaskPipeline:
             if preflight_payload.get("branch") != branch_name:
                 raise TaskPipelineError(f"preflight branch is {preflight_payload.get('branch')!r}, expected {branch_name!r}")
             baseline_path = _require_text(preflight_payload, "baseline_path")
-
-            task_context = self._load_task_context(task_id)
+            feature_dir = _resolve_path(self.root, _require_text(preflight_payload, "feature_dir"))
+            tasks_path = _resolve_path(self.root, _require_text(preflight_payload, "tasks_path"))
+            task_context = self._load_task_context(task_id, tasks_path=tasks_path, feature_dir=feature_dir)
             if task_context.checkbox != " ":
                 raise TaskPipelineError(f"{task_context.tasks_path.name}:{task_context.task_line}: task {task_id} must be unchecked before running")
+            checklist_blocker = self._check_required_checklists(task_context.feature_dir)
+            if checklist_blocker is not None:
+                return self._blocked_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason=str(checklist_blocker),
+                    attempts=0,
+                )
 
             baseline_file = _resolve_path(self.root, baseline_path)
             if not _path_exists(baseline_file):
                 raise TaskPipelineError(f"baseline does not exist: {baseline_path}")
             baseline = _load_json_mapping(baseline_file)
-            attempts = 0
-            last_reason: str | None = None
-            while True:
-                attempts += 1
-                codex_result = self.codex.run_task(
-                    task_id=task_id,
-                    task_text=task_context.task_title,
-                    agent_python=python_executable,
-                    speckit_selector=task_id,
-                    timeout_seconds=self.config.codex_timeout_seconds,
-                    cancel_event=cancel_event,
-                )
-                command_results.extend(self._command_results_from_codex(codex_result))
-                if codex_result.cancelled:
-                    return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=attempts)
-                if codex_result.status != "PASS" or codex_result.result_json is None:
-                    last_reason = codex_result.parse_error or f"codex exited with {codex_result.status}"
-                    if codex_result.retryable and self._can_retry(attempts):
-                        continue
-                    if codex_result.retryable and not self._can_retry(attempts):
-                        return self._failed_result(
-                            run,
-                            task_id,
-                            task_context=task_context,
-                            command_results=command_results,
-                            reason=last_reason,
-                            attempts=attempts,
-                        )
-                    if not codex_result.retryable:
-                        return self._failed_result(
-                            run,
-                            task_id,
-                            task_context=task_context,
-                            command_results=command_results,
-                            reason=last_reason,
-                            attempts=attempts,
-                        )
-
-                scope_check = self._check_scope_drift(baseline, task_context.allowlist)
-                if scope_check is not None:
-                    return self._failed_result(
-                        run,
-                        task_id,
-                        task_context=task_context,
-                        command_results=command_results,
-                        reason=str(scope_check),
-                        attempts=attempts,
-                    )
-
-                validation_results = self._run_validation_commands(task_context.validation_commands, python_executable, cancel_event)
-                command_results.extend(validation_results)
-                if any(result.status != "PASS" for result in validation_results):
-                    last_reason = "validation failed"
-                    if not self._can_retry(attempts):
-                        return self._failed_result(
-                            run,
-                            task_id,
-                            task_context=task_context,
-                            command_results=command_results,
-                            reason=last_reason,
-                            attempts=attempts,
-                        )
-                    continue
-
-                diff_result = self._diff_check()
-                command_results.append(diff_result)
-                if diff_result.status != "PASS":
-                    repaired = self._repair_whitespace(task_context.allowlist)
-                    if repaired:
-                        command_results.extend(repaired)
-                        diff_result = self._diff_check()
-                        command_results.append(diff_result)
-                    if diff_result.status != "PASS":
-                        return self._failed_result(
-                            run,
-                            task_id,
-                            task_context=task_context,
-                            command_results=command_results,
-                            reason="git diff --check failed",
-                            attempts=attempts,
-                        )
-
-                self._mark_task_complete(task_context)
-                tasks_path = task_context.tasks_path
-                self.repository.stage_allowlist(list(task_context.allowlist) + [tasks_path.relative_to(self.root).as_posix()])
-                cached_check = self.repository.diff_check(cached=True)
-                command_results.append(self._command_result_from_process(cached_check))
-                if cached_check.status != "PASS":
-                    return self._failed_result(
-                        run,
-                        task_id,
-                        task_context=task_context,
-                        command_results=command_results,
-                        reason="git diff --cached --check failed",
-                        attempts=attempts,
-                    )
-
-                commit_message = f"feat({task_id}): {task_context.task_title}"
-                commit_result = self.repository.commit(commit_message)
-                command_results.append(self._command_result_from_process(commit_result))
-                if commit_result.status != "PASS":
-                    return self._failed_result(
-                        run,
-                        task_id,
-                        task_context=task_context,
-                        command_results=command_results,
-                        reason="git commit failed",
-                        attempts=attempts,
-                    )
-
-                self.repository.require_clean_tree()
-                commit_sha = self.repository.head_sha()
-                task_result = TaskResult(
-                    task_id=task_id,
-                    status=RunStatus.COMPLETED,
-                    command_results=tuple(command_results),
-                    commit_sha=commit_sha,
-                    title=task_context.task_title,
-                )
-                updated_run = self._update_run(
+            original_tasks_text = task_context.tasks_text
+            codex_result = self.codex.run_task(
+                task_id=task_id,
+                task_text=task_context.task_title,
+                agent_python=python_executable,
+                speckit_selector=task_id,
+                timeout_seconds=self.config.codex_timeout_seconds,
+                cancel_event=cancel_event,
+            )
+            attempts = 1
+            command_results.extend(self._command_results_from_codex(codex_result))
+            if codex_result.cancelled:
+                return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=attempts)
+            if codex_result.status == "BLOCKED":
+                return self._blocked_result(
                     run,
-                    status=RunStatus.COMPLETED,
-                    epic_id=epic_id,
-                    branch_name=branch_name,
-                    current_task_id=task_id,
-                    task_result=task_result,
-                    last_error=None,
-                )
-                save_run_state(updated_run, root=self.root)
-                return TaskPipelineResult(
-                    status=RunStatus.COMPLETED,
-                    run=updated_run,
-                    task_result=task_result,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason=codex_result.parse_error or self._blocked_reason_from_codex(codex_result) or "codex returned BLOCKED",
                     attempts=attempts,
-                    baseline_path=str(baseline_file),
-                    allowlist=task_context.allowlist,
-                    validation_commands=task_context.validation_commands,
-                    command_results=tuple(command_results),
-                    reason=None,
                 )
+            if codex_result.status != "PASS" or codex_result.result_json is None:
+                last_reason = codex_result.parse_error or f"codex exited with {codex_result.status}"
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason=last_reason,
+                    attempts=attempts,
+                )
+            if not codex_result.result_json.get("safe_to_commit", False):
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason="codex result is not marked safe_to_commit",
+                    attempts=attempts,
+                )
+
+            bookkeeping_path = task_context.tasks_path.relative_to(self.root).as_posix()
+            scope_check = self._check_scope_drift(baseline, [*task_context.allowlist, bookkeeping_path])
+            if scope_check is not None:
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason=str(scope_check),
+                    attempts=attempts,
+                )
+
+            validation_results = self._run_validation_commands(task_context.validation_commands, python_executable, cancel_event)
+            command_results.extend(validation_results)
+            if any(result.status != "PASS" for result in validation_results):
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason="validation failed",
+                    attempts=attempts,
+                )
+
+            diff_result = self._diff_check()
+            command_results.append(diff_result)
+            if diff_result.status != "PASS":
+                repaired = self._repair_whitespace(task_context.allowlist)
+                if repaired:
+                    command_results.extend(repaired)
+                    diff_result = self._diff_check()
+                    command_results.append(diff_result)
+                if diff_result.status != "PASS":
+                    return self._failed_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason="git diff --check failed",
+                        attempts=attempts,
+                    )
+
+            current_tasks_text = task_context.tasks_path.read_text(encoding="utf-8")
+            tasks_change = self._verify_task_completion_change(
+                task_context,
+                before_text=original_tasks_text,
+                after_text=current_tasks_text,
+            )
+            if tasks_change is not None:
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason=tasks_change,
+                    attempts=attempts,
+                )
+
+            self.repository.stage_allowlist(list(task_context.allowlist) + [task_context.tasks_path.relative_to(self.root).as_posix()])
+            cached_check = self.repository.diff_check(cached=True)
+            command_results.append(self._command_result_from_process(cached_check))
+            if cached_check.status != "PASS":
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason="git diff --cached --check failed",
+                    attempts=attempts,
+                )
+
+            commit_message = f"feat({task_id}): {task_context.task_title}"
+            commit_result = self.repository.commit(commit_message)
+            command_results.append(self._command_result_from_process(commit_result))
+            if commit_result.status != "PASS":
+                return self._failed_result(
+                    run,
+                    task_id,
+                    task_context=task_context,
+                    command_results=command_results,
+                    reason="git commit failed",
+                    attempts=attempts,
+                )
+
+            self.repository.require_clean_tree()
+            commit_sha = self.repository.head_sha()
+            task_result = TaskResult(
+                task_id=task_id,
+                status=RunStatus.COMPLETED,
+                command_results=tuple(command_results),
+                commit_sha=commit_sha,
+                title=task_context.task_title,
+            )
+            updated_run = self._update_run(
+                run,
+                status=RunStatus.COMPLETED,
+                epic_id=epic_id,
+                branch_name=branch_name,
+                current_task_id=task_id,
+                task_result=task_result,
+                last_error=None,
+            )
+            save_run_state(updated_run, root=self.root)
+            return TaskPipelineResult(
+                status=RunStatus.COMPLETED,
+                run=updated_run,
+                task_result=task_result,
+                attempts=attempts,
+                baseline_path=str(baseline_file),
+                allowlist=task_context.allowlist,
+                validation_commands=task_context.validation_commands,
+                command_results=tuple(command_results),
+                reason=None,
+            )
         except (KeyboardInterrupt, TaskPipelineError, RuntimeError, ValueError, FileNotFoundError, OSError) as exc:
             if isinstance(exc, KeyboardInterrupt):
                 return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=0)
@@ -318,8 +347,7 @@ class TaskPipeline:
         payload = _parse_preflight_json_document(_combine_lines(result.stdout_lines))
         return payload, command_result
 
-    def _load_task_context(self, task_id: str) -> TaskContext:
-        tasks_path = self.root / "specs" / "001-ai-content-studio" / "tasks.md"
+    def _load_task_context(self, task_id: str, *, tasks_path: Path, feature_dir: Path) -> TaskContext:
         for found_task_id, start_line, lines in task_consistency._iter_task_blocks(tasks_path):
             if found_task_id != task_id:
                 continue
@@ -344,6 +372,7 @@ class TaskPipeline:
                 task_line=start_line,
                 task_title=title,
                 checkbox=checkbox,
+                feature_dir=feature_dir,
                 epic_id=epic[1].strip(),
                 milestone_id=milestone[1].strip(),
                 implementation_files=implementation_files,
@@ -351,8 +380,29 @@ class TaskPipeline:
                 allowlist=tuple([*implementation_files, *test_file_list]),
                 validation_commands=commands,
                 tasks_path=tasks_path,
+                tasks_text=tasks_path.read_text(encoding="utf-8"),
             )
         raise TaskPipelineError(f"task does not exist in tasks.md: {task_id}")
+
+    def _check_required_checklists(self, feature_dir: Path) -> TaskPipelineError | None:
+        checklist_dir = feature_dir / "checklists"
+        if not checklist_dir.is_dir():
+            return None
+        violations: list[str] = []
+        for checklist_path in sorted(checklist_dir.glob("*.md")):
+            try:
+                text = checklist_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                violations.append(f"{checklist_path.relative_to(self.root)}:1: failed to read checklist: {exc}")
+                continue
+            if "optional: true" in text.lower():
+                continue
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if re.search(r"^\s*-\s*\[\s\]\s*", line):
+                    violations.append(f"{checklist_path.relative_to(self.root)}:{line_number}: {line}")
+        if violations:
+            return TaskPipelineError("required checklist items are incomplete:\n" + "\n".join(violations))
+        return None
 
     def _check_scope_drift(self, baseline: dict[str, Any], allowlist: Sequence[str]) -> TaskPipelineError | None:
         current = self.repository.status()
@@ -416,21 +466,37 @@ class TaskPipeline:
             ),
         )
 
-    def _mark_task_complete(self, task_context: TaskContext) -> None:
-        lines = task_context.tasks_path.read_text(encoding="utf-8").splitlines()
-        updated: list[str] = []
-        replaced = False
-        for line in lines:
-            if not replaced and line.startswith(f"- [{task_context.checkbox}] {task_context.task_id}"):
-                if task_context.checkbox != " ":
-                    raise TaskPipelineError(f"{task_context.tasks_path.name}:{task_context.task_line}: task {task_context.task_id} cannot be re-closed")
-                updated.append(line.replace("- [ ]", "- [X]", 1))
-                replaced = True
-                continue
-            updated.append(line)
-        if not replaced:
-            raise TaskPipelineError(f"{task_context.tasks_path.name}:{task_context.task_line}: task line was not found")
-        task_context.tasks_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    def _verify_task_completion_change(self, task_context: TaskContext, *, before_text: str, after_text: str) -> str | None:
+        before_lines = before_text.splitlines()
+        after_lines = after_text.splitlines()
+        if before_lines == after_lines:
+            return "tasks.md was not updated by the successful speckit-loop"
+        if len(before_lines) != len(after_lines):
+            return "tasks.md changed more than one line"
+        diff_indexes = [index for index, (before_line, after_line) in enumerate(zip(before_lines, after_lines), start=1) if before_line != after_line]
+        if len(diff_indexes) != 1:
+            return "tasks.md changed more than one task"
+        line_number = diff_indexes[0]
+        before_line = before_lines[line_number - 1]
+        after_line = after_lines[line_number - 1]
+        expected_before = f"- [ ] {task_context.task_id}"
+        expected_after = f"- [X] {task_context.task_id}"
+        if not before_line.startswith(expected_before):
+            return f"{task_context.tasks_path.name}:{line_number}: only the selected task may be closed"
+        if before_line.replace("- [ ]", "- [X]", 1) != after_line:
+            return f"{task_context.tasks_path.name}:{line_number}: task text must remain identical apart from the checkbox"
+        if not after_line.startswith(expected_after):
+            return f"{task_context.tasks_path.name}:{line_number}: the selected task must be marked complete"
+        return None
+
+    def _blocked_reason_from_codex(self, result: Any) -> str | None:
+        if isinstance(result.result_json, dict):
+            reason = result.result_json.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason.strip()
+        if getattr(result, "parse_error", None):
+            return str(result.parse_error)
+        return None
 
     def _update_run(
         self,
@@ -483,6 +549,44 @@ class TaskPipeline:
         save_run_state(updated_run, root=self.root)
         return TaskPipelineResult(
             status=RunStatus.FAILED,
+            run=updated_run,
+            task_result=task_result,
+            attempts=attempts,
+            baseline_path="",
+            allowlist=(),
+            validation_commands=(),
+            command_results=tuple(command_results),
+            reason=reason,
+        )
+
+    def _blocked_result(
+        self,
+        run: AutopilotRun,
+        task_id: str,
+        command_results: Sequence[CommandResult],
+        *,
+        reason: str,
+        attempts: int,
+        task_context: TaskContext | None = None,
+    ) -> TaskPipelineResult:
+        task_result = TaskResult(
+            task_id=task_id,
+            status=RunStatus.BLOCKED,
+            command_results=tuple(command_results),
+            title=task_context.task_title if task_context is not None else None,
+        )
+        updated_run = self._update_run(
+            run,
+            status=RunStatus.BLOCKED,
+            epic_id=run.epic_id,
+            branch_name=run.branch_name,
+            current_task_id=task_id,
+            task_result=task_result,
+            last_error=reason,
+        )
+        save_run_state(updated_run, root=self.root)
+        return TaskPipelineResult(
+            status=RunStatus.BLOCKED,
             run=updated_run,
             task_result=task_result,
             attempts=attempts,
@@ -635,7 +739,10 @@ def _safe_validation_command_argv(command: str) -> list[str]:
         raise TaskPipelineError("validation command is empty")
     if any(operator in normalized for operator in FORBIDDEN_SHELL_OPERATORS):
         raise TaskPipelineError(f"validation command contains forbidden shell operators: {command!r}")
-    argv = re.split(r"\s+", normalized)
+    try:
+        argv = shlex.split(normalized, posix=True)
+    except ValueError as exc:
+        raise TaskPipelineError(f"validation command is not parseable: {command!r}") from exc
     if not argv:
         raise TaskPipelineError("validation command is empty")
     return argv

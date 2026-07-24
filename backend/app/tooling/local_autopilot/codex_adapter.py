@@ -18,7 +18,42 @@ ROOT = Path(__file__).resolve().parents[4]
 AUTOPILOT_RESULT_MARKER = "AUTOPILOT_RESULT_JSON"
 TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
 SUCCESS_RESULT_STATUSES = {"PASS", "PASSED", "SUCCESS", "COMPLETED"}
-FAILURE_RESULT_STATUSES = {"FAIL", "FAILED", "BLOCKED", "CANCELLED", "TIMEOUT"}
+FAILURE_RESULT_STATUSES = {"FAIL", "FAILED", "CANCELLED", "TIMEOUT"}
+BLOCKED_RESULT_STATUSES = {"BLOCKED"}
+AUTOPILOT_RESULT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["task_id", "final_status", "review_verdict", "reason", "files_changed", "validation", "tasks_md_change", "repair_cycles_used", "safe_to_commit", "next_task_started", "retryable"],
+    "properties": {
+        "task_id": {"type": "string", "pattern": "^T\\d{3}[A-Z]?$"},
+        "final_status": {"type": "string", "enum": ["COMPLETED", "BLOCKED", "FAILED"]},
+        "review_verdict": {"anyOf": [{"type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"]}, {"type": "null"}]},
+        "reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+        "validation": {"type": "array"},
+        "tasks_md_change": {"type": "string"},
+        "repair_cycles_used": {"type": "integer", "minimum": 0},
+        "safe_to_commit": {"type": "boolean"},
+        "next_task_started": {"type": "boolean"},
+        "retryable": {"type": "boolean"},
+    },
+}
+AUTOPILOT_RESULT_KEY_ALIASES = {
+    "status": "final_status",
+    "final_status": "final_status",
+    "task_id": "task_id",
+    "review_verdict": "review_verdict",
+    "blocked_reason": "reason",
+    "reason": "reason",
+    "files_changed": "files_changed",
+    "validation": "validation",
+    "tasks_md_change": "tasks_md_change",
+    "repair_cycles_used": "repair_cycles_used",
+    "safe_to_commit": "safe_to_commit",
+    "next_task_started": "next_task_started",
+    "retryable": "retryable",
+}
 
 
 @dataclass(frozen=True)
@@ -118,8 +153,10 @@ class CodexAdapter:
                 "Use the specified Python interpreter exactly as given.",
                 "Do not create commits, pushes, pull requests, merges, or deployments.",
                 "Do not attempt any GitHub or network operations.",
-                "If the task cannot be completed, return FAIL with a reason in the final AUTOPILOT_RESULT_JSON block.",
-                "The final response must end exactly with the AUTOPILOT_RESULT_JSON marker and a pretty-printed JSON object.",
+                "Return exactly one JSON object that matches the provided schema.",
+                "Do not wrap the JSON in markers, fences, or explanatory text.",
+                "If the task cannot be completed, set final_status to BLOCKED or FAILED and include a reason.",
+                "Do not emit any trailing text after the JSON object.",
             ]
         )
 
@@ -194,8 +231,13 @@ class CodexAdapter:
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
         output_last_message_path = _create_output_last_message_path()
+        output_schema_path = _create_output_schema_path()
         try:
-            command = self.build_command(output_last_message_path=output_last_message_path)
+            _write_autopilot_result_schema(output_schema_path)
+            command = self.build_command(
+                output_last_message_path=output_last_message_path,
+                output_schema_path=output_schema_path,
+            )
             process_result = self._run(
                 command,
                 cwd=self.root,
@@ -214,28 +256,27 @@ class CodexAdapter:
             elif raw_output is not None:
                 if effective_sandbox is None:
                     effective_sandbox = _extract_effective_sandbox(raw_output.splitlines())
-                parsed_json, parse_error = parse_autopilot_result(raw_output)
-                if parsed_json is not None:
-                    semantic_status, retryable, contract_error = validate_autopilot_result_contract(
-                        parsed_json,
+                raw_json, parse_error = parse_autopilot_result(raw_output)
+                parsed_json = raw_json
+                if raw_json is not None:
+                    validated_json, semantic_status, retryable, contract_error = validate_autopilot_result_contract(
+                        raw_json,
                         task_id=task_id,
                     )
+                    if validated_json is not None:
+                        parsed_json = validated_json
                     if contract_error is not None:
                         parse_error = contract_error
                         retryable = False
-                    elif semantic_status == "FAIL":
-                        retryable = retryable and process_result.status == "PASS"
             status = process_result.status
-            if process_result.status == "PASS" and semantic_status == "PASS":
-                status = "PASS"
-            elif process_result.status == "PASS" and semantic_status == "FAIL":
-                status = "FAIL"
+            if process_result.status == "PASS" and semantic_status is not None:
+                status = semantic_status
             elif process_result.status == "PASS" and parsed_json is None:
                 status = "FAIL"
             elif process_result.status == "PASS" and parse_error is not None:
                 status = "FAIL"
             exit_code = process_result.exit_code
-            if status == "FAIL" and exit_code == 0:
+            if status in {"FAIL", "BLOCKED"} and exit_code == 0:
                 exit_code = 1
             return CodexRunResult(
                 command=tuple(process_result.command),
@@ -256,13 +297,15 @@ class CodexAdapter:
                 parse_error=parse_error,
             )
         finally:
-            try:
-                output_last_message_path.unlink()
-            except FileNotFoundError:
-                pass
+            for path in (output_last_message_path, output_schema_path):
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
 
-    def build_command(self, *, output_last_message_path: Path | str) -> list[str]:
+    def build_command(self, *, output_last_message_path: Path | str, output_schema_path: Path | str) -> list[str]:
         output_path = Path(output_last_message_path)
+        schema_path = Path(output_schema_path)
         executable = resolve_codex_cli_executable()
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
@@ -281,6 +324,8 @@ class CodexAdapter:
             "never",
             "--output-last-message",
             str(output_path),
+            "--output-schema",
+            str(schema_path),
             "-",
         ]
 
@@ -325,18 +370,12 @@ def resolve_codex_cli_executable() -> str | None:
 def parse_autopilot_result(text: str) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(text, str) or not text.strip():
         return None, "AUTOPILOT_RESULT_JSON block not found"
-    decoder = json.JSONDecoder()
     last_valid: dict[str, Any] | None = None
     last_error: str | None = "AUTOPILOT_RESULT_JSON block not found"
-    for match in re.finditer(rf"(?m)^{re.escape(AUTOPILOT_RESULT_MARKER)}\s*$", text):
-        candidate = text[match.end() :].lstrip()
-        if not candidate:
-            last_error = "AUTOPILOT_RESULT_JSON block not found"
-            continue
-        try:
-            parsed, _ = decoder.raw_decode(candidate)
-        except json.JSONDecodeError as exc:
-            last_error = f"invalid AUTOPILOT_RESULT_JSON block: {exc}"
+    for candidate in _autopilot_result_candidates(text):
+        parsed, error = _decode_json_document(candidate)
+        if error is not None:
+            last_error = error
             continue
         if isinstance(parsed, dict):
             last_valid = parsed
@@ -348,26 +387,99 @@ def parse_autopilot_result(text: str) -> tuple[dict[str, Any] | None, str | None
     return last_valid, None
 
 
-def validate_autopilot_result_contract(payload: dict[str, Any], *, task_id: str) -> tuple[str | None, bool, str | None]:
+def validate_autopilot_result_contract(
+    payload: dict[str, Any],
+    *,
+    task_id: str,
+) -> tuple[dict[str, Any] | None, str | None, bool, str | None]:
     if not isinstance(payload, dict):
-        return None, False, "AUTOPILOT_RESULT_JSON block must decode to a JSON object"
+        return None, None, False, "AUTOPILOT_RESULT_JSON block must decode to a JSON object"
+
+    normalized_payload, blocked_reason_present, normalize_error = _normalize_autopilot_result_payload(payload)
+    if normalize_error is not None:
+        return None, None, False, normalize_error
 
     normalized_task_id = _validate_task_id(task_id)
-    payload_task_id = payload.get("task_id")
+    payload_task_id = normalized_payload.get("task_id")
     if not isinstance(payload_task_id, str) or payload_task_id.strip() != normalized_task_id:
-        return None, False, f"AUTOPILOT_RESULT_JSON task_id must match {normalized_task_id}"
+        return None, None, False, f"AUTOPILOT_RESULT_JSON task_id must match {normalized_task_id}"
 
-    status_value = payload.get("status")
-    if status_value is None:
-        status_value = payload.get("final_status")
+    status_value = normalized_payload.get("final_status")
     if not isinstance(status_value, str) or not status_value.strip():
-        return None, False, "AUTOPILOT_RESULT_JSON status is missing"
+        return None, None, False, "AUTOPILOT_RESULT_JSON final_status is missing"
     normalized_status = status_value.strip().upper()
+
+    reason_value = normalized_payload.get("reason")
+    if normalized_status in FAILURE_RESULT_STATUSES or normalized_status in BLOCKED_RESULT_STATUSES:
+        if not isinstance(reason_value, str) or not reason_value.strip():
+            return None, None, False, "AUTOPILOT_RESULT_JSON reason is missing"
+
+    review_verdict = normalized_payload.get("review_verdict")
+    if review_verdict is not None and (not isinstance(review_verdict, str) or not review_verdict.strip()):
+        return None, None, False, "AUTOPILOT_RESULT_JSON review_verdict must be a string or null"
+
+    files_changed = normalized_payload.get("files_changed")
+    if not isinstance(files_changed, list):
+        return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must be an array"
+    if any(not isinstance(item, str) for item in files_changed):
+        return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must contain strings"
+
+    validation = normalized_payload.get("validation")
+    if not isinstance(validation, list):
+        return None, None, False, "AUTOPILOT_RESULT_JSON validation must be an array"
+
+    tasks_md_change = normalized_payload.get("tasks_md_change")
+    if not isinstance(tasks_md_change, str):
+        return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must be a string"
+
+    repair_cycles_used = normalized_payload.get("repair_cycles_used")
+    if not isinstance(repair_cycles_used, int) or repair_cycles_used < 0:
+        return None, None, False, "AUTOPILOT_RESULT_JSON repair_cycles_used must be a non-negative integer"
+
+    safe_to_commit = normalized_payload.get("safe_to_commit")
+    if not isinstance(safe_to_commit, bool):
+        return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be a boolean"
+
+    next_task_started = normalized_payload.get("next_task_started")
+    if not isinstance(next_task_started, bool):
+        return None, None, False, "AUTOPILOT_RESULT_JSON next_task_started must be a boolean"
+
+    retryable = normalized_payload.get("retryable")
+    if not isinstance(retryable, bool):
+        return None, None, False, "AUTOPILOT_RESULT_JSON retryable must be a boolean"
+
     if normalized_status in SUCCESS_RESULT_STATUSES:
-        return "PASS", _parse_retryable(payload), None
-    if normalized_status in FAILURE_RESULT_STATUSES:
-        return "FAIL", _parse_retryable(payload), None
-    return None, False, f"unknown AUTOPILOT_RESULT_JSON status: {status_value!r}"
+        if not safe_to_commit:
+            return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be true for completed results"
+        if not tasks_md_change.strip():
+            return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must describe the completed task.md change"
+        semantic_status = "PASS"
+    elif normalized_status in BLOCKED_RESULT_STATUSES or blocked_reason_present:
+        semantic_status = "BLOCKED"
+    elif normalized_status in FAILURE_RESULT_STATUSES:
+        semantic_status = "FAIL"
+    else:
+        return None, None, False, f"unknown AUTOPILOT_RESULT_JSON final_status: {status_value!r}"
+
+    canonical_payload = {
+        **normalized_payload,
+        "task_id": normalized_task_id,
+        "final_status": normalized_status,
+        "review_verdict": review_verdict.strip() if isinstance(review_verdict, str) else None,
+        "reason": reason_value.strip() if isinstance(reason_value, str) else None,
+        "files_changed": [item.strip() for item in files_changed],
+        "validation": list(validation),
+        "tasks_md_change": tasks_md_change,
+        "repair_cycles_used": repair_cycles_used,
+        "safe_to_commit": safe_to_commit,
+        "next_task_started": next_task_started,
+        "retryable": retryable,
+    }
+    if semantic_status == "PASS":
+        return canonical_payload, semantic_status, retryable, None
+    if semantic_status == "BLOCKED":
+        return canonical_payload, semantic_status, False, None
+    return canonical_payload, semantic_status, retryable, None
 
 
 def _existing_executable(value: str | os.PathLike[str] | None) -> str | None:
@@ -388,6 +500,12 @@ def _create_output_last_message_path() -> Path:
     return Path(raw_path)
 
 
+def _create_output_schema_path() -> Path:
+    fd, raw_path = tempfile.mkstemp(prefix="autopilot-codex-schema-", suffix=".json")
+    os.close(fd)
+    return Path(raw_path)
+
+
 def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
     if not path.is_file():
         return None, "AUTOPILOT_RESULT_JSON block not found (codex did not write output-last-message)"
@@ -403,6 +521,62 @@ def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
 def _parse_retryable(payload: dict[str, Any]) -> bool:
     retryable = payload.get("retryable", False)
     return isinstance(retryable, bool) and retryable
+
+
+def _write_autopilot_result_schema(path: Path) -> None:
+    path.write_text(json.dumps(AUTOPILOT_RESULT_SCHEMA, indent=2), encoding="utf-8")
+
+
+def _autopilot_result_candidates(text: str) -> list[str]:
+    stripped = text.strip()
+    candidates: list[str] = []
+    if stripped.startswith("{"):
+        candidates.append(stripped)
+    candidates.extend(text[match.end() :].lstrip() for match in re.finditer(rf"(?m)^{re.escape(AUTOPILOT_RESULT_MARKER)}\s*$", text))
+    return [candidate for candidate in candidates if candidate.strip()]
+
+
+def _decode_json_document(text: str) -> tuple[Any | None, str | None]:
+    decoder = json.JSONDecoder()
+    candidate = text.lstrip()
+    try:
+        parsed, end = decoder.raw_decode(candidate)
+    except json.JSONDecodeError as exc:
+        return None, f"invalid AUTOPILOT_RESULT_JSON block: {exc}"
+    if candidate[end:].strip():
+        return None, "AUTOPILOT_RESULT_JSON block has trailing non-whitespace text"
+    return parsed, None
+
+
+def _normalize_autopilot_result_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, bool, str | None]:
+    normalized: dict[str, Any] = {}
+    blocked_reason_present = False
+    for key, value in payload.items():
+        if not isinstance(key, str) or not key.strip():
+            return None, False, "AUTOPILOT_RESULT_JSON keys must be non-empty strings"
+        lower_key = key.strip().lower()
+        canonical_key = AUTOPILOT_RESULT_KEY_ALIASES.get(lower_key, lower_key)
+        if canonical_key in normalized:
+            return None, False, f"duplicate AUTOPILOT_RESULT_JSON key after normalization: {key!r}"
+        normalized[canonical_key] = value
+        if lower_key == "blocked_reason":
+            blocked_reason_present = True
+
+    if "task_id" not in normalized:
+        return None, False, "AUTOPILOT_RESULT_JSON task_id is missing"
+    if "final_status" not in normalized:
+        return None, False, "AUTOPILOT_RESULT_JSON final_status is missing"
+
+    normalized.setdefault("review_verdict", None)
+    normalized.setdefault("reason", None)
+    normalized.setdefault("files_changed", [])
+    normalized.setdefault("validation", [])
+    normalized.setdefault("tasks_md_change", "")
+    normalized.setdefault("repair_cycles_used", 0)
+    normalized.setdefault("safe_to_commit", False)
+    normalized.setdefault("next_task_started", False)
+    normalized.setdefault("retryable", False)
+    return normalized, blocked_reason_present, None
 
 
 def _extract_effective_sandbox(stdout_lines: Sequence[str]) -> str | None:
