@@ -50,6 +50,7 @@ class SimState:
     prs_by_branch: dict[tuple[str, str], PullRequestInfo] | None = None
     prs_by_number: dict[int, dict[str, object]] | None = None
     next_pr_number: int = 500
+    sandbox_banner: str = "sandbox: workspace-write"
 
     def __post_init__(self) -> None:
         self.branch_exists = set(self.branch_exists or ())
@@ -107,6 +108,16 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command)
 
+        if command == ("git", "merge-base", "--is-ancestor", self.state.head_sha, self.state.base_sha):
+            return self._result(command)
+
+        if command == ("git", "merge-base", "--is-ancestor", self.state.base_sha, self.state.head_sha):
+            return self._result(command)
+
+        if command == ("git", "merge", "--ff-only", "master"):
+            self.state.head_sha = self.state.base_sha
+            return self._result(command)
+
         if command[:3] == ("git", "add", "--"):
             return self._result(command)
 
@@ -147,7 +158,7 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command, stdout=("Run Codex non-interactively",))
 
-        if command[:2] == ("codex", "exec") and "--help" not in command:
+        if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command:
             self.state.codex_attempts += 1
             prompt = kwargs.get("stdin_text", "")
             match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
@@ -164,13 +175,17 @@ class SimulatedShell:
                 return self._result(command, status="CANCELLED", exit_code=None, timed_out=False, cancelled=True)
             if self.state.invalid_codex_json:
                 if output_path is not None:
-                    output_path.write_text("noise\nAUTOPILOT_RESULT_JSON\n{bad-json", encoding="utf-8")
-                return self._result(command, stdout=("noise", "AUTOPILOT_RESULT_JSON", "{bad-json"), status="PASS")
+                    output_path.write_text(
+                        "\n".join([self.state.sandbox_banner, "noise", "AUTOPILOT_RESULT_JSON", "{bad-json"]),
+                        encoding="utf-8",
+                    )
+                return self._result(command, stdout=(self.state.sandbox_banner, "noise", "AUTOPILOT_RESULT_JSON", "{bad-json"), status="PASS")
             payload = {"status": "PASS", "task_id": self.state.codex_prompt_task}
             if output_path is not None:
                 output_path.write_text(
                     "\n".join(
                         [
+                            self.state.sandbox_banner,
                             "working",
                             "AUTOPILOT_RESULT_JSON",
                             json.dumps(payload, indent=2),
@@ -178,7 +193,7 @@ class SimulatedShell:
                     ),
                     encoding="utf-8",
                 )
-            return self._result(command, stdout=("working", "AUTOPILOT_RESULT_JSON", json.dumps(payload)))
+            return self._result(command, stdout=(self.state.sandbox_banner, "working", "AUTOPILOT_RESULT_JSON", json.dumps(payload)))
 
         if command == ("gh", "auth", "status"):
             if not self.state.gh_ok:

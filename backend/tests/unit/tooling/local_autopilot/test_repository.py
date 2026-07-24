@@ -132,6 +132,85 @@ def test_forbidden_git_commands_are_rejected(tmp_path):
         repo._git("git", "merge", "main")
 
 
+def test_merge_ff_only_is_allowed(tmp_path):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        calls.append(command)
+        if command == ("git", "merge", "--ff-only", "master"):
+            return _result(command)
+        raise AssertionError(command)
+
+    repo = Repository(tmp_path, process_runner_fn=fake_run)
+    repo.merge_ff_only("master")
+
+    assert ("git", "merge", "--ff-only", "master") in calls
+
+
+def test_sync_branch_with_base_fast_forwards_when_branch_is_behind(tmp_path):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        calls.append(command)
+        if command == ("git", "status", "--porcelain=v1", "--branch", "--untracked-files=all"):
+            return _result(command, stdout_lines=("## feature/E002",))
+        if command == ("git", "rev-parse", "HEAD"):
+            return _result(command, stdout_lines=("a" * 40,))
+        if command == ("git", "merge-base", "--is-ancestor", "a" * 40, "b" * 40):
+            return _result(command)
+        if command == ("git", "merge", "--ff-only", "master"):
+            return _result(command)
+        raise AssertionError(command)
+
+    repo = Repository(tmp_path, process_runner_fn=fake_run)
+    repo.sync_branch_with_base("feature/E002", base_branch="master", base_head_sha="b" * 40)
+
+    assert ("git", "merge", "--ff-only", "master") in calls
+
+
+def test_sync_branch_with_base_noops_when_branch_contains_base(tmp_path):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        calls.append(command)
+        if command == ("git", "status", "--porcelain=v1", "--branch", "--untracked-files=all"):
+            return _result(command, stdout_lines=("## feature/E002",))
+        if command == ("git", "rev-parse", "HEAD"):
+            return _result(command, stdout_lines=("b" * 40,))
+        if command == ("git", "merge-base", "--is-ancestor", "b" * 40, "a" * 40):
+            return _result(command, status="FAIL", exit_code=1)
+        if command == ("git", "merge-base", "--is-ancestor", "a" * 40, "b" * 40):
+            return _result(command)
+        raise AssertionError(command)
+
+    repo = Repository(tmp_path, process_runner_fn=fake_run)
+    repo.sync_branch_with_base("feature/E002", base_branch="master", base_head_sha="a" * 40)
+
+    assert ("git", "merge", "--ff-only", "master") not in calls
+
+
+def test_sync_branch_with_base_rejects_diverged_branches(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("git", "status", "--porcelain=v1", "--branch", "--untracked-files=all"):
+            return _result(command, stdout_lines=("## feature/E002",))
+        if command == ("git", "rev-parse", "HEAD"):
+            return _result(command, stdout_lines=("a" * 40,))
+        if command == ("git", "merge-base", "--is-ancestor", "a" * 40, "b" * 40):
+            return _result(command, status="FAIL", exit_code=1)
+        if command == ("git", "merge-base", "--is-ancestor", "b" * 40, "a" * 40):
+            return _result(command, status="FAIL", exit_code=1)
+        raise AssertionError(command)
+
+    repo = Repository(tmp_path, process_runner_fn=fake_run)
+
+    with pytest.raises(RuntimeError):
+        repo.sync_branch_with_base("feature/E002", base_branch="master", base_head_sha="b" * 40)
+
+
 def test_normalize_allowlist_eof_only_changes_text_files(tmp_path):
     text_file = tmp_path / "backend" / "app" / "tooling" / "local_autopilot" / "notes.txt"
     text_file.parent.mkdir(parents=True, exist_ok=True)
