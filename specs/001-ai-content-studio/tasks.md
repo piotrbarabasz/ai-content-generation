@@ -96,7 +96,7 @@ Notes: Add artifact reference fields to `WorkflowRun` and `GenerationJob` here s
 
 ## Phase 3: Core workflow engine
 
-- [ ] T007 Define module execution contracts and registry types
+- [X] T007 Define module execution contracts and registry types
 Milestone: M001
 Epic: E002
 Risk: high
@@ -111,7 +111,7 @@ Test requirements: Add direct registry and execution-plan tests in this task.
 Parallelizable: no
 Notes: Keep the contract explicit about enabled and disabled execution behavior.
 
-- [ ] T008 Implement the core workflow engine
+- [X] T008 Implement the core workflow engine
 Milestone: M001
 Epic: E002
 Risk: high
