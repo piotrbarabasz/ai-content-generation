@@ -263,13 +263,37 @@ class SimulatedShell:
             payload = {
                 "status": "PASS",
                 "exit_code": 0,
-                "task_id": selector,
-                "epic_id": "E002",
+                "task": selector,
+                "epic": "E002",
                 "branch": self.state.branch,
                 "baseline_path": str(baseline_path),
                 "duration_ms": 1,
+                "checks": [
+                    {
+                        "name": "selected_task_metadata",
+                        "status": "PASS",
+                        "details": {
+                            "task": selector,
+                            "nested": [
+                                {"name": "first", "details": {"value": 1}},
+                                {"name": "second", "details": {"value": 2}},
+                            ],
+                        },
+                    },
+                    {
+                        "name": "baseline_capture",
+                        "status": "PASS",
+                        "details": {
+                            "baseline_path": str(baseline_path),
+                            "nested": [
+                                {"name": "outer", "details": {"value": 3}},
+                                {"name": "inner", "details": {"value": 4}},
+                            ],
+                        },
+                    },
+                ],
             }
-            return self._result(command, stdout=(json.dumps(payload),))
+            return self._result(command, stdout=tuple(json.dumps(payload, indent=2).splitlines()))
 
         if command[:2] == (self.python_executable, "-m") and "pytest" in command:
             return self._result(command, stdout=("ok",))

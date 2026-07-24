@@ -90,13 +90,15 @@ class TaskPipeline:
             python_executable = self._resolve_agent_python()
             preflight_payload, preflight_command = self._run_preflight(task_id, python_executable, cancel_event)
             command_results.append(preflight_command)
-            baseline_path = _require_text(preflight_payload, "baseline_path")
-            if preflight_payload.get("task_id") != task_id:
-                raise TaskPipelineError(f"preflight selected {preflight_payload.get('task_id')!r}, expected {task_id!r}")
-            if preflight_payload.get("epic_id") != epic_id:
-                raise TaskPipelineError(f"preflight epic is {preflight_payload.get('epic_id')!r}, expected {epic_id!r}")
+            if preflight_payload.get("status") != "PASS":
+                raise TaskPipelineError(f"preflight status is {preflight_payload.get('status')!r}, expected 'PASS'")
+            if preflight_payload.get("task") != task_id:
+                raise TaskPipelineError(f"preflight selected {preflight_payload.get('task')!r}, expected {task_id!r}")
+            if preflight_payload.get("epic") != epic_id:
+                raise TaskPipelineError(f"preflight epic is {preflight_payload.get('epic')!r}, expected {epic_id!r}")
             if preflight_payload.get("branch") != branch_name:
                 raise TaskPipelineError(f"preflight branch is {preflight_payload.get('branch')!r}, expected {branch_name!r}")
+            baseline_path = _require_text(preflight_payload, "baseline_path")
 
             task_context = self._load_task_context(task_id)
             if task_context.checkbox != " ":
@@ -303,9 +305,7 @@ class TaskPipeline:
         command_result = self._command_result_from_process(result)
         if result.status != "PASS":
             raise TaskPipelineError(f"preflight failed: {result.status}")
-        payload = _parse_last_json_object(_combine_lines(result.stdout_lines))
-        if not isinstance(payload, dict):
-            raise TaskPipelineError("preflight did not return JSON")
+        payload = _parse_preflight_json_document(_combine_lines(result.stdout_lines))
         return payload, command_result
 
     def _load_task_context(self, task_id: str) -> TaskContext:
@@ -585,20 +585,20 @@ def _timestamp() -> str:
 
 
 def _combine_lines(lines: Sequence[str]) -> str:
-    return "\n".join(line for line in lines if line)
+    return "\n".join(lines)
 
 
-def _parse_last_json_object(text: str) -> Any:
-    decoder = json.JSONDecoder()
-    last: Any = None
-    for match in re.finditer(r"(?m)^\s*\{", text):
-        candidate = text[match.start() :].lstrip()
-        try:
-            parsed, _ = decoder.raw_decode(candidate)
-        except json.JSONDecodeError:
-            continue
-        last = parsed
-    return last
+def _parse_preflight_json_document(text: str) -> dict[str, Any]:
+    normalized = text.strip()
+    if not normalized:
+        raise TaskPipelineError("preflight did not return JSON")
+    try:
+        payload = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise TaskPipelineError(f"preflight output is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise TaskPipelineError("preflight JSON must be an object")
+    return payload
 
 
 def _load_json_mapping(path: Path) -> dict[str, Any]:
