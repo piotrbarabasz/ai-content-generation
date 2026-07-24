@@ -111,7 +111,7 @@ Test requirements: Add direct registry and execution-plan tests in this task.
 Parallelizable: no
 Notes: Keep the contract explicit about enabled and disabled execution behavior.
 
-- [ ] T008 Implement the core workflow engine
+- [X] T008 Implement the core workflow engine
 Milestone: M001
 Epic: E002
 Risk: high
