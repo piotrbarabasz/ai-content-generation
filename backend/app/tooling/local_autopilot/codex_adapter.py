@@ -135,6 +135,22 @@ class CodexAdapter:
         normalized_task_text = _validate_non_empty_text("task_text", task_text)
         normalized_agent_python = _validate_non_empty_text("agent_python", agent_python)
         normalized_selector = _validate_non_empty_text("speckit_selector", speckit_selector)
+        canonical_result_example = json.dumps(
+            {
+                "task_id": normalized_task_id,
+                "final_status": "COMPLETED",
+                "review_verdict": "PASS",
+                "reason": None,
+                "files_changed": [],
+                "validation": [],
+                "tasks_md_change": f"- [X] {normalized_task_id} ...",
+                "repair_cycles_used": 0,
+                "safe_to_commit": True,
+                "next_task_started": False,
+                "retryable": False,
+            },
+            indent=2,
+        )
         return "\n".join(
             [
                 "You are Codex running inside the local AI Content Studio autopilot.",
@@ -153,8 +169,11 @@ class CodexAdapter:
                 "Use the specified Python interpreter exactly as given.",
                 "Do not create commits, pushes, pull requests, merges, or deployments.",
                 "Do not attempt any GitHub or network operations.",
-                "Return exactly one JSON object that matches the provided schema.",
-                "Do not wrap the JSON in markers, fences, or explanatory text.",
+                "Return exactly one JSON object and nothing else.",
+                "Do not wrap the JSON in markers, fences, markdown, or explanatory text.",
+                "Use the canonical lowercase keys task_id, final_status, review_verdict, reason, files_changed, validation, tasks_md_change, repair_cycles_used, safe_to_commit, next_task_started and retryable.",
+                "The final response must follow this example shape exactly:",
+                canonical_result_example,
                 "If the task cannot be completed, set final_status to BLOCKED or FAILED and include a reason.",
                 "Do not emit any trailing text after the JSON object.",
             ]
@@ -231,13 +250,8 @@ class CodexAdapter:
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
         output_last_message_path = _create_output_last_message_path()
-        output_schema_path = _create_output_schema_path()
         try:
-            _write_autopilot_result_schema(output_schema_path)
-            command = self.build_command(
-                output_last_message_path=output_last_message_path,
-                output_schema_path=output_schema_path,
-            )
+            command = self.build_command(output_last_message_path=output_last_message_path)
             process_result = self._run(
                 command,
                 cwd=self.root,
@@ -246,6 +260,7 @@ class CodexAdapter:
                 heartbeat_seconds=30,
                 stdin_text=prompt,
             )
+            process_error = _extract_codex_process_error(process_result)
             raw_output, parse_error = _read_output_last_message(output_last_message_path)
             parsed_json: dict[str, Any] | None = None
             semantic_status: str | None = None
@@ -268,6 +283,8 @@ class CodexAdapter:
                     if contract_error is not None:
                         parse_error = contract_error
                         retryable = False
+            if process_error is not None and (parse_error is None or _is_generic_missing_output_error(parse_error)):
+                parse_error = process_error
             status = process_result.status
             if process_result.status == "PASS" and semantic_status is not None:
                 status = semantic_status
@@ -297,15 +314,13 @@ class CodexAdapter:
                 parse_error=parse_error,
             )
         finally:
-            for path in (output_last_message_path, output_schema_path):
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+            try:
+                output_last_message_path.unlink()
+            except FileNotFoundError:
+                pass
 
-    def build_command(self, *, output_last_message_path: Path | str, output_schema_path: Path | str) -> list[str]:
+    def build_command(self, *, output_last_message_path: Path | str) -> list[str]:
         output_path = Path(output_last_message_path)
-        schema_path = Path(output_schema_path)
         executable = resolve_codex_cli_executable()
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
@@ -324,8 +339,6 @@ class CodexAdapter:
             "never",
             "--output-last-message",
             str(output_path),
-            "--output-schema",
-            str(schema_path),
             "-",
         ]
 
@@ -500,12 +513,6 @@ def _create_output_last_message_path() -> Path:
     return Path(raw_path)
 
 
-def _create_output_schema_path() -> Path:
-    fd, raw_path = tempfile.mkstemp(prefix="autopilot-codex-schema-", suffix=".json")
-    os.close(fd)
-    return Path(raw_path)
-
-
 def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
     if not path.is_file():
         return None, "AUTOPILOT_RESULT_JSON block not found (codex did not write output-last-message)"
@@ -521,10 +528,6 @@ def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
 def _parse_retryable(payload: dict[str, Any]) -> bool:
     retryable = payload.get("retryable", False)
     return isinstance(retryable, bool) and retryable
-
-
-def _write_autopilot_result_schema(path: Path) -> None:
-    path.write_text(json.dumps(AUTOPILOT_RESULT_SCHEMA, indent=2), encoding="utf-8")
 
 
 def _autopilot_result_candidates(text: str) -> list[str]:
@@ -589,6 +592,56 @@ def _extract_effective_sandbox(stdout_lines: Sequence[str]) -> str | None:
         if "workspace-write" in normalized:
             return "workspace-write"
     return None
+
+
+def _extract_codex_process_error(process_result: process_runner.ProcessResult) -> str | None:
+    if process_result.timed_out:
+        return "Codex request timed out"
+    if process_result.cancelled:
+        return None
+
+    diagnostic_lines = [line for line in (*process_result.stderr_lines, *process_result.stdout_lines) if line.strip()]
+    if not diagnostic_lines:
+        return None
+
+    tokens = (
+        "invalid_json_schema",
+        "invalid_request_error",
+        "authentication_error",
+        "rate_limit",
+        "context_length",
+        "model_not_found",
+    )
+    lowered_lines = [line.lower() for line in diagnostic_lines]
+    for token in tokens:
+        for index, lowered_line in enumerate(lowered_lines):
+            if token not in lowered_line:
+                continue
+            if token == "invalid_json_schema":
+                detail = _extract_invalid_json_schema_detail(diagnostic_lines[index:])
+                if detail is not None:
+                    return f"Codex request failed: {token}: {detail}"
+            return f"Codex request failed: {token}"
+    return None
+
+
+def _extract_invalid_json_schema_detail(lines: Sequence[str]) -> str | None:
+    for line in lines:
+        lowered = line.lower()
+        if "additionalproperties" in lowered or "additional properties" in lowered:
+            if "false" in lowered:
+                return "additionalProperties must be false."
+            return "additionalProperties must be false."
+        if "invalid schema" in lowered and "response_format" in lowered:
+            return "additionalProperties must be false."
+    return None
+
+
+def _is_generic_missing_output_error(message: str | None) -> bool:
+    if message is None:
+        return False
+    lowered = message.lower()
+    return "autopilot_result_json block not found" in lowered or "codex output-last-message is empty" in lowered
 
 
 def _missing_codex_cli_reason() -> str:

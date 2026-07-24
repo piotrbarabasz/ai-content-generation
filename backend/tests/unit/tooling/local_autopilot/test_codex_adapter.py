@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,13 @@ import pytest
 
 from app.tooling.local_autopilot import process_runner
 from app.tooling.local_autopilot import codex_adapter as codex_module
-from app.tooling.local_autopilot.codex_adapter import CodexAdapter, CodexAvailability, CodexRunResult, parse_autopilot_result
+from app.tooling.local_autopilot.codex_adapter import (
+    CodexAdapter,
+    CodexAvailability,
+    CodexRunResult,
+    parse_autopilot_result,
+    validate_autopilot_result_contract,
+)
 
 
 @dataclass
@@ -223,17 +230,14 @@ def test_build_command_uses_full_path_and_preserves_spaces(tmp_path, monkeypatch
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
     command = adapter.build_command(
         output_last_message_path=tmp_path / "Program Files" / "output-last-message.txt",
-        output_schema_path=tmp_path / "Program Files" / "schema.json",
     )
 
     assert command[0] == str(executable)
     assert command[0].endswith("codex.cmd")
     assert "Program Files" in command[0]
     assert command[1:6] == ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
-    assert command[-5] == "--output-last-message"
-    assert command[-4].endswith("output-last-message.txt")
-    assert command[-3] == "--output-schema"
-    assert command[-2].endswith("schema.json")
+    assert command[-3] == "--output-last-message"
+    assert command[-2].endswith("output-last-message.txt")
     assert command[-1] == "-"
 
 
@@ -269,8 +273,26 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
     assert "Use the local speckit-loop workflow for exactly one task and do not broaden scope." in prompt
     assert "Use the specified Python interpreter exactly as given." in prompt
     assert "Do not create commits, pushes, pull requests, merges, or deployments." in prompt
-    assert "Return exactly one JSON object that matches the provided schema." in prompt
-    assert "Do not wrap the JSON in markers, fences, or explanatory text." in prompt
+    assert "Return exactly one JSON object and nothing else." in prompt
+    assert "Do not wrap the JSON in markers, fences, markdown, or explanatory text." in prompt
+    assert "Use the canonical lowercase keys task_id, final_status, review_verdict, reason, files_changed, validation, tasks_md_change, repair_cycles_used, safe_to_commit, next_task_started and retryable." in prompt
+    assert "The final response must follow this example shape exactly:" in prompt
+    assert json.dumps(
+        {
+            "task_id": "T007",
+            "final_status": "COMPLETED",
+            "review_verdict": "PASS",
+            "reason": None,
+            "files_changed": [],
+            "validation": [],
+            "tasks_md_change": "- [X] T007 ...",
+            "repair_cycles_used": 0,
+            "safe_to_commit": True,
+            "next_task_started": False,
+            "retryable": False,
+        },
+        indent=2,
+    ) in prompt
     assert "Do not emit any trailing text after the JSON object." in prompt
 
     with pytest.raises(ValueError):
@@ -281,7 +303,6 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
     command = adapter.build_command(
         output_last_message_path=tmp_path / "output-last-message.txt",
-        output_schema_path=tmp_path / "schema.json",
     )
 
     assert command[:6] == ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
@@ -294,12 +315,48 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     assert "--color" in command
     assert "never" in command
     assert "--output-last-message" in command
-    assert "--output-schema" in command
-    assert command[-5] == "--output-last-message"
-    assert command[-4] == str(tmp_path / "output-last-message.txt")
-    assert command[-3] == "--output-schema"
-    assert command[-2] == str(tmp_path / "schema.json")
+    assert "--output-schema" not in command
+    assert command[-3] == "--output-last-message"
+    assert command[-2] == str(tmp_path / "output-last-message.txt")
     assert command[-1] == "-"
+
+
+def test_parse_autopilot_result_accepts_raw_json():
+    parsed, error = parse_autopilot_result(
+        json.dumps(
+            {
+                "task_id": "T007",
+                "final_status": "COMPLETED",
+                "review_verdict": "PASS",
+                "reason": None,
+                "files_changed": [],
+                "validation": [],
+                "tasks_md_change": "- [X] T007 ...",
+                "repair_cycles_used": 0,
+                "safe_to_commit": True,
+                "next_task_started": False,
+                "retryable": False,
+            },
+            indent=2,
+        )
+    )
+
+    assert error is None
+    assert parsed is not None
+    assert parsed["task_id"] == "T007"
+
+
+def test_validate_autopilot_result_contract_requires_reason_for_blocked_and_failed():
+    blocked_payload = _result_payload("T007", final_status="BLOCKED", review_verdict="FAIL", reason=None, safe_to_commit=False)
+    failed_payload = _result_payload("T007", final_status="FAILED", review_verdict="FAIL", reason=None, safe_to_commit=False)
+
+    blocked = validate_autopilot_result_contract(blocked_payload, task_id="T007")
+    failed = validate_autopilot_result_contract(failed_payload, task_id="T007")
+
+    assert blocked[0] is None
+    assert "reason is missing" in (blocked[3] or "")
+    assert failed[0] is None
+    assert "reason is missing" in (failed[3] or "")
 
 
 def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_path):
@@ -412,6 +469,40 @@ def test_run_task_reports_missing_json_as_failure(tmp_path):
     assert result.parse_error == "AUTOPILOT_RESULT_JSON block not found"
 
 
+def test_run_task_surfaces_codex_api_error_before_empty_output(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        return FakeProcessResult(
+            command=command,
+            status="FAIL",
+            exit_code=1,
+            stdout_lines=(),
+            stderr_lines=(
+                "invalid_request_error",
+                "code: invalid_json_schema",
+                "message: Invalid schema for response_format 'codex_output_schema': additionalProperties is required to be supplied and to be false.",
+            ),
+        )
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.result_json is None
+    assert "invalid_json_schema" in (result.parse_error or "")
+    assert "empty" not in (result.parse_error or "").lower()
+
+
 def test_run_task_treats_fail_status_as_failure_even_when_exit_code_is_zero(tmp_path):
     def fake_run(argv, **kwargs):
         command = tuple(argv)
@@ -472,6 +563,59 @@ def test_run_task_treats_fail_status_as_failure_even_when_exit_code_is_zero(tmp_
     )
     assert result.semantic_status == "FAIL"
     assert result.retryable is False
+
+
+def test_run_task_removes_output_last_message_tempfile(tmp_path, monkeypatch):
+    created_paths: list[Path] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def fake_mkstemp(*args, **kwargs):
+        fd, raw_path = real_mkstemp(*args, **kwargs)
+        created_paths.append(Path(raw_path))
+        return fd, raw_path
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(
+            command,
+            json.dumps(
+                _result_payload(
+                    "T007",
+                    final_status="COMPLETED",
+                    review_verdict="PASS",
+                    reason=None,
+                    files_changed=[],
+                    validation=[],
+                    tasks_md_change="- [X] T007 Implement one task",
+                    repair_cycles_used=0,
+                    safe_to_commit=True,
+                    next_task_started=False,
+                    retryable=False,
+                ),
+                indent=2,
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    monkeypatch.setattr(codex_module.tempfile, "mkstemp", fake_mkstemp)
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "PASS"
+    assert len(created_paths) == 1
+    assert created_paths[0].suffix == ".txt"
+    assert not created_paths[0].exists()
 
 
 def test_run_task_accepts_final_status_and_retryable_flag(tmp_path):
