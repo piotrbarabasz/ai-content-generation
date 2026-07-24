@@ -215,6 +215,7 @@ Provider interfaces and expected methods are documented in [contracts/provider-c
 - The existing repo artifacts are embedded in script and CLI code, which may require lifting into explicit modules.
 - Some repository concepts such as rendering and captions are only partially implemented and need careful scoping for MVP.
 - Export bundle requirements could expand if the workflow accumulates too many artifact types; the MVP should constrain them to the required manifest and artifact references.
+- Any remaining ambiguity around default provider selection, review-policy edge cases or export bundle content variants is intentionally deferred to the corresponding implementation follow-up tasks rather than expanding MVP scope.
 
 ## Phased Implementation
 
