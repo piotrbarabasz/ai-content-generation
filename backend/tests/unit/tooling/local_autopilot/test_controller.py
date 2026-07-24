@@ -29,6 +29,23 @@ def _process_result(command: tuple[str, ...]) -> ProcessResult:
     )
 
 
+def _logged_process_result(command: tuple[str, ...]) -> ProcessResult:
+    label = "status" if command == ("git", "status") else "head"
+    return ProcessResult(
+        command=command,
+        status="PASS",
+        exit_code=0,
+        duration_ms=5,
+        timed_out=False,
+        cancelled=False,
+        stdout_lines=(f"stdout {label}",),
+        stderr_lines=(f"stderr {label}",),
+        output_truncated=False,
+        process_tree_killed=False,
+        pid=1234,
+    )
+
+
 def _wait_until_idle(controller: AutopilotController, *, timeout_seconds: float = 5.0) -> None:
     deadline = time.monotonic() + timeout_seconds
     while controller.is_running():
@@ -104,6 +121,58 @@ def test_controller_start_emits_logs_and_updates_snapshot(tmp_path):
     assert snapshot.pull_request_url == "https://example.invalid/pr/7"
     assert controller.latest_pr_url() == "https://example.invalid/pr/7"
     assert calls[0] == ("git", "status")
+
+
+def test_logging_process_runner_preserves_downstream_cancel_event_and_defaults_to_controller_event(tmp_path):
+    controller_cancel_event = threading.Event()
+    downstream_cancel_event = threading.Event()
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def process_runner(argv, **kwargs):
+        command = tuple(argv)
+        calls.append((command, dict(kwargs)))
+        return _logged_process_result(command)
+
+    controller = AutopilotController(
+        root=tmp_path,
+        process_runner_fn=process_runner,
+        epic_pipeline_runner=lambda *args, **kwargs: None,  # pragma: no cover
+        milestone_pipeline_runner=lambda *args, **kwargs: None,  # pragma: no cover
+    )
+
+    runner = controller._logging_process_runner(controller_cancel_event)
+
+    explicit_result = runner(
+        ["git", "status"],
+        cwd=tmp_path,
+        timeout_seconds=1,
+        heartbeat_seconds=0,
+        cancel_event=downstream_cancel_event,
+    )
+    default_result = runner(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        timeout_seconds=1,
+        heartbeat_seconds=0,
+    )
+
+    assert explicit_result.command == ("git", "status")
+    assert default_result.command == ("git", "rev-parse", "HEAD")
+    assert len(calls) == 2
+    assert calls[0][1]["cancel_event"] is downstream_cancel_event
+    assert calls[1][1]["cancel_event"] is controller_cancel_event
+
+    events = controller.poll_events()
+    assert [event.message for event in events] == [
+        "$ git status",
+        "stdout status",
+        "stderr status",
+        "command status: PASS",
+        "$ git rev-parse HEAD",
+        "stdout head",
+        "stderr head",
+        "command status: PASS",
+    ]
 
 
 def test_controller_resume_uses_latest_milestone_state(tmp_path):

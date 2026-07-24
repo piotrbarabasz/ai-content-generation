@@ -313,7 +313,8 @@ class AutopilotController:
     def _logging_process_runner(self, cancel_event: threading.Event) -> Callable[..., process_runner.ProcessResult]:
         def _runner(argv: list[str], **kwargs: Any) -> process_runner.ProcessResult:
             self._emit("log", f"$ {' '.join(argv)}")
-            result = self._run(argv, cancel_event=cancel_event, **kwargs)
+            kwargs.setdefault("cancel_event", cancel_event)
+            result = self._run(argv, **kwargs)
             for line in result.stdout_lines:
                 self._emit("log", line)
             for line in result.stderr_lines:
