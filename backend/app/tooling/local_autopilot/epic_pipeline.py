@@ -199,7 +199,22 @@ class EpicPipeline:
                     activation_commit_sha=activation_commit_sha,
                 )
 
+            expected_required_commands = self._required_check_commands(epic_manifest)
             required_check_results = self._run_required_checks(epic_manifest, command_results, cancel_event=cancel_event)
+            if len(required_check_results) != len(expected_required_commands):
+                return self._finalize_failure(
+                    current_run,
+                    epic_id=epic_id,
+                    branch_name=branch_name,
+                    task_ids=tuple(task_ids),
+                    task_results=tuple(task_results),
+                    command_results=tuple(command_results),
+                    reason=(
+                        "required checks results count does not match the epic manifest: "
+                        f"declared={len(expected_required_commands)} actual={len(required_check_results)}"
+                    ),
+                    activation_commit_sha=activation_commit_sha,
+                )
             command_results.extend(required_check_results)
             if any(result.status != "PASS" for result in required_check_results):
                 return self._finalize_failure(
@@ -393,6 +408,9 @@ class EpicPipeline:
         if result.status != "PASS":
             raise EpicPipelineError("activation commit failed")
 
+    def _required_check_commands(self, epic_manifest: dict[str, Any]) -> list[str]:
+        return [command for command in (epic_manifest.get("required_checks") or []) if isinstance(command, str) and command.strip()]
+
     def _run_required_checks(
         self,
         epic_manifest: dict[str, Any],
@@ -401,7 +419,7 @@ class EpicPipeline:
         cancel_event: Any | None,
     ) -> tuple[CommandResult, ...]:
         results: list[CommandResult] = []
-        required_commands = [command for command in (epic_manifest.get("required_checks") or []) if isinstance(command, str) and command.strip()]
+        required_commands = self._required_check_commands(epic_manifest)
         if not required_commands:
             raise EpicPipelineError("epic manifest does not declare required checks")
         python_executable = self._resolve_agent_python()
@@ -445,9 +463,19 @@ class EpicPipeline:
         epic_manifest: dict[str, Any],
         required_check_results: Sequence[CommandResult],
     ) -> Path:
+        expected_commands = self._required_check_commands(epic_manifest)
+        if len(required_check_results) != len(expected_commands):
+            raise EpicPipelineError(
+                "required checks results count does not match the epic manifest: "
+                f"declared={len(expected_commands)} actual={len(required_check_results)}"
+            )
         payload = [
-            {"command": " ".join(result.command), "exit_code": result.exit_code or 0}
-            for result in required_check_results
+            {
+                "command": expected_command,
+                "executed_command": " ".join(result.command),
+                "exit_code": result.exit_code if result.exit_code is not None else 0,
+            }
+            for expected_command, result in zip(expected_commands, required_check_results, strict=True)
         ]
         return self.review_receipt_writer(
             epic_id=str(epic_manifest.get("id") or ""),

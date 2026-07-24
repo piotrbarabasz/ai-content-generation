@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.tooling import epic_review_receipt as receipt
 
 
@@ -81,6 +83,90 @@ def test_write_and_validate_review_receipt(tmp_path, monkeypatch):
         expected_required_commands=["python -m pytest"],
     )
     assert errors == []
+
+
+def test_validate_review_receipt_accepts_executed_command_evidence():
+    errors = receipt.validate_review_receipt(
+        _receipt(
+            required_checks=[
+                {
+                    "command": "python -m pytest",
+                    "executed_command": r"D:\repo\.venv\Scripts\python.exe -m pytest",
+                    "exit_code": 0,
+                }
+            ]
+        ),
+        epic_id="E001",
+        milestone_id="M001",
+        branch="epic/E001",
+        base_branch="master",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        expected_required_commands=["python -m pytest"],
+    )
+
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "required_checks, expected_commands, expected_error",
+    [
+        (
+            [
+                {"command": "python -m pytest", "executed_command": r"D:\repo\.venv\Scripts\python.exe -m pytest", "exit_code": 0},
+                {"command": "git --no-pager diff --check", "executed_command": "git --no-pager diff --check", "exit_code": 0},
+            ],
+            ["git --no-pager diff --check", "python -m pytest"],
+            "required_checks commands do not match the epic manifest",
+        ),
+        (
+            [{"command": "python -m pytest", "executed_command": r"D:\repo\.venv\Scripts\python.exe -m pytest", "exit_code": 0}],
+            ["python -m pytest", "git --no-pager diff --check"],
+            "required_checks commands do not match the epic manifest",
+        ),
+        (
+            [{"command": "python -m pytest --verbose", "executed_command": r"D:\repo\.venv\Scripts\python.exe -m pytest --verbose", "exit_code": 0}],
+            ["python -m pytest"],
+            "required_checks commands do not match the epic manifest",
+        ),
+    ],
+)
+def test_validate_review_receipt_rejects_required_check_order_length_and_identity_mismatches(required_checks, expected_commands, expected_error):
+    errors = receipt.validate_review_receipt(
+        _receipt(required_checks=required_checks),
+        epic_id="E001",
+        milestone_id="M001",
+        branch="epic/E001",
+        base_branch="master",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        expected_required_commands=expected_commands,
+    )
+
+    assert any(expected_error in error for error in errors)
+
+
+def test_validate_review_receipt_rejects_nonzero_exit_code():
+    errors = receipt.validate_review_receipt(
+        _receipt(
+            required_checks=[
+                {
+                    "command": "python -m pytest",
+                    "executed_command": r"D:\repo\.venv\Scripts\python.exe -m pytest",
+                    "exit_code": 1,
+                }
+            ]
+        ),
+        epic_id="E001",
+        milestone_id="M001",
+        branch="epic/E001",
+        base_branch="master",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        expected_required_commands=["python -m pytest"],
+    )
+
+    assert any("exit_code must be 0" in error for error in errors)
 
 
 def test_missing_receipt_is_reported(tmp_path):
