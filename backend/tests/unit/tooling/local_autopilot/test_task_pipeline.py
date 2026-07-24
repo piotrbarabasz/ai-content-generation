@@ -28,6 +28,7 @@ class ScenarioRunner:
     preflight_status: str = "PASS"
     codex_result_status: str = "PASS"
     codex_json: dict[str, object] | None = None
+    codex_api_error_lines: tuple[str, ...] = ()
     dirty_after_codex: bool = True
     sandbox_banner: str = "sandbox: workspace-write"
 
@@ -141,6 +142,14 @@ class ScenarioRunner:
             prompt = kwargs.get("stdin_text", "")
             match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
             task_id = match.group(1) if match else None
+            if self.codex_api_error_lines:
+                return self._result(
+                    command,
+                    status="FAIL",
+                    exit_code=1,
+                    stdout=(),
+                    stderr=self.codex_api_error_lines,
+                )
             payload = self.codex_json or {
                 "task_id": task_id,
                 "final_status": "COMPLETED",
@@ -654,6 +663,29 @@ def test_run_task_fails_fast_on_read_only_sandbox(tmp_path):
     assert "workspace-write was requested" in (result.reason or "")
     assert result.attempts == 1
     assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
+
+
+def test_run_task_stops_before_validation_on_codex_api_error(tmp_path):
+    implementation_file, _, tasks_file = _setup_repo(tmp_path)
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_api_error_lines=(
+            "invalid_request_error",
+            "code: invalid_json_schema",
+            "message: Invalid schema for response_format 'codex_output_schema': additionalProperties is required to be supplied and to be false.",
+        ),
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert "invalid_json_schema" in (result.reason or "")
+    assert not any(command[:2] == (runner.python_executable, "-m") and "pytest" in command for command in runner.calls)
+    assert not any(command[:2] == ("git", "commit") for command in runner.calls)
+    assert tasks_file.read_text(encoding="utf-8") == original_tasks_text
+    assert implementation_file.read_text(encoding="utf-8").endswith("\n")
 
 
 def test_parse_preflight_json_document_uses_root_payload(tmp_path):
