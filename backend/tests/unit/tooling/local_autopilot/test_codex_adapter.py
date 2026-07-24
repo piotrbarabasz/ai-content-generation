@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -39,6 +40,12 @@ def _default_codex_executable(monkeypatch):
 
 def _help_result(command: tuple[str, ...], *, status: str = "PASS", stdout: tuple[str, ...] = ()) -> FakeProcessResult:
     return FakeProcessResult(command=command, status=status, exit_code=0 if status == "PASS" else 1, stdout_lines=stdout)
+
+
+def _write_output_last_message(command: tuple[str, ...], text: str) -> None:
+    index = command.index("--output-last-message")
+    output_path = Path(command[index + 1])
+    output_path.write_text(text, encoding="utf-8")
 
 
 def test_detect_availability_uses_codex_help_and_exec_help(tmp_path):
@@ -179,11 +186,12 @@ def test_build_command_uses_full_path_and_preserves_spaces(tmp_path, monkeypatch
     monkeypatch.setattr(codex_module, "resolve_codex_cli_executable", lambda: str(executable))
 
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
-    command = adapter.build_command("hello")
+    command = adapter.build_command(output_last_message_path=tmp_path / "Program Files" / "output-last-message.txt")
 
     assert command[0] == str(executable)
     assert command[0].endswith("codex.cmd")
     assert "Program Files" in command[0]
+    assert command[-2].endswith("output-last-message.txt")
 
 
 def test_detect_availability_reports_missing_cli_when_no_executable(tmp_path, monkeypatch):
@@ -211,7 +219,12 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
     )
 
     assert "Selected task: T007" in prompt
-    assert "Use the local speckit-loop workflow" in prompt
+    assert "Execute the following command now:" in prompt
+    assert "$speckit-loop T007" in prompt
+    assert "Start immediately. Do not ask the user what task to execute." in prompt
+    assert "Do not wait for another message." in prompt
+    assert "Use the local speckit-loop workflow for exactly one task and do not broaden scope." in prompt
+    assert "Use the specified Python interpreter exactly as given." in prompt
     assert "Do not create commits, pushes, pull requests, merges, or deployments." in prompt
     assert "AUTOPILOT_RESULT_JSON" in prompt
 
@@ -221,13 +234,19 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
 
 def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
-    command = adapter.build_command("hello")
+    command = adapter.build_command(output_last_message_path=tmp_path / "output-last-message.txt")
 
     assert command[:4] == ["codex", "exec", "-C", str(tmp_path)]
     assert "--ignore-user-config" in command
     assert "--ignore-rules" in command
     assert "--ephemeral" in command
-    assert command[-1] == "hello"
+    assert "--sandbox" in command
+    assert "workspace-write" in command
+    assert "--color" in command
+    assert "never" in command
+    assert "--output-last-message" in command
+    assert command[-2] == str(tmp_path / "output-last-message.txt")
+    assert command[-1] == "-"
 
 
 def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_path):
@@ -240,18 +259,26 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
             return _help_result(command, stdout=("Codex CLI",))
         if command == ("codex", "exec", "--help"):
             return _help_result(command, stdout=("Run Codex non-interactively",))
+        assert kwargs["stdin_text"].startswith("You are Codex running inside the local AI Content Studio autopilot.")
+        _write_output_last_message(
+            command,
+            "\n".join(
+                [
+                    "noise",
+                    "AUTOPILOT_RESULT_JSON",
+                    "{not-json}",
+                    "AUTOPILOT_RESULT_JSON",
+                    json.dumps({"status": "PASS", "task_id": "T007", "notes": "ok"}, indent=2),
+                ]
+            ),
+        )
         return FakeProcessResult(
             command=command,
             status="PASS",
             exit_code=0,
-            stdout_lines=(
-                "noise",
-                "AUTOPILOT_RESULT_JSON",
-                "{not-json}",
-                "AUTOPILOT_RESULT_JSON",
-                '{"status": "PASS", "task_id": "T007", "notes": "ok"}',
-            ),
-            stderr_lines=("secret=redacted",),
+            stdout_lines=("Codex CLI banner", "\x1b[31mstdout truncated\x1b[0m"),
+            stderr_lines=("secret=redacted", "stderr banner"),
+            output_truncated=True,
         )
 
     adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
@@ -267,9 +294,13 @@ def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_p
     assert result.status == "PASS"
     assert result.result_json == {"status": "PASS", "task_id": "T007", "notes": "ok"}
     assert result.parse_error is None
+    assert result.raw_output.startswith("noise")
+    assert result.stdout_lines == ("Codex CLI banner", "\x1b[31mstdout truncated\x1b[0m")
     assert result.command[:4] == ("codex", "exec", "-C", str(tmp_path))
     assert [command for command, _ in calls[:2]] == [("codex", "--help"), ("codex", "exec", "--help")]
     assert all("shell" not in kwargs for _, kwargs in calls)
+    assert any(kwargs.get("stdin_text") for _, kwargs in calls)
+    assert any(kwargs.get("stdin_text") and "$speckit-loop T007" in kwargs["stdin_text"] for _, kwargs in calls)
 
 
 def test_run_task_reports_missing_json_as_failure(tmp_path):
@@ -279,7 +310,8 @@ def test_run_task_reports_missing_json_as_failure(tmp_path):
             return _help_result(command, stdout=("Codex CLI",))
         if command == ("codex", "exec", "--help"):
             return _help_result(command, stdout=("Run Codex non-interactively",))
-        return FakeProcessResult(command=command, status="FAIL", exit_code=1, stdout_lines=("no json",))
+        _write_output_last_message(command, "no json")
+        return FakeProcessResult(command=command, status="FAIL", exit_code=1, stdout_lines=("stdout",))
 
     adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
     result = adapter.run_task(
@@ -293,6 +325,53 @@ def test_run_task_reports_missing_json_as_failure(tmp_path):
     assert result.status == "FAIL"
     assert result.result_json is None
     assert result.parse_error == "AUTOPILOT_RESULT_JSON block not found"
+
+
+def test_run_task_reports_missing_output_last_message_file_as_failure(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        return FakeProcessResult(command=command, status="FAIL", exit_code=1, stdout_lines=("stdout",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.result_json is None
+    assert "output-last-message" in (result.parse_error or "")
+
+
+def test_run_task_reports_empty_output_last_message_file_as_failure(tmp_path):
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(command, "")
+        return FakeProcessResult(command=command, status="FAIL", exit_code=1, stdout_lines=("stdout",))
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert result.result_json is None
+    assert "empty" in (result.parse_error or "")
 
 
 def test_run_task_propagates_cancel_event(tmp_path):
@@ -332,6 +411,7 @@ def test_run_task_treats_missing_result_json_as_failure_even_on_zero_exit(tmp_pa
             return _help_result(command, stdout=("Codex CLI",))
         if command == ("codex", "exec", "--help"):
             return _help_result(command, stdout=("Run Codex non-interactively",))
+        _write_output_last_message(command, "plain text")
         return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("plain text",))
 
     adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)

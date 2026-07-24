@@ -111,6 +111,7 @@ def _spawn_process(
     *,
     cwd: Path,
     env_overrides: Mapping[str, str] | None,
+    stdin_text: str | None,
     popen_factory: Callable[..., subprocess.Popen[bytes]],
 ) -> tuple[subprocess.Popen[bytes], Path, Path]:
     stdout_fd, stdout_path = _mkstemp_path(".stdout")
@@ -125,6 +126,8 @@ def _spawn_process(
             "stderr": stderr_handle,
             "env": _build_env(env_overrides),
         }
+        if stdin_text is not None:
+            popen_kwargs["stdin"] = subprocess.PIPE
         if os.name == "nt":
             popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
@@ -134,6 +137,22 @@ def _spawn_process(
         stdout_handle.close()
         stderr_handle.close()
     return process, stdout_path, stderr_path
+
+
+def _write_stdin_text(process: subprocess.Popen[bytes], stdin_text: str) -> None:
+    stdin_handle = process.stdin
+    if stdin_handle is None:
+        raise RuntimeError("stdin pipe is not available")
+    try:
+        stdin_handle.write(stdin_text.encode("utf-8"))
+        stdin_handle.flush()
+    except BrokenPipeError:
+        pass
+    finally:
+        try:
+            stdin_handle.close()
+        except OSError:
+            pass
 
 
 def _kill_windows_tree(
@@ -236,6 +255,7 @@ def run_process(
     total_deadline: float | None = None,
     heartbeat_seconds: int = 30,
     env_overrides: Mapping[str, str] | None = None,
+    stdin_text: str | None = None,
     popen_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
     taskkill_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> ProcessResult:
@@ -301,10 +321,13 @@ def run_process(
             command,
             cwd=cwd,
             env_overrides=env_overrides,
+            stdin_text=stdin_text,
             popen_factory=popen_factory,
         )
         pid = process.pid
         _emit_stderr(f"START {Path(command[0]).name} pid={pid} timeout={timeout_seconds}s")
+        if stdin_text is not None:
+            _write_stdin_text(process, stdin_text)
 
         next_heartbeat = started_monotonic + heartbeat_seconds if heartbeat_seconds > 0 else None
         while True:

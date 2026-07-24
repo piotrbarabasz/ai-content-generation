@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import threading
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -102,11 +103,18 @@ class CodexAdapter:
                 f"Python interpreter: {normalized_agent_python}",
                 f"Spec Kit selector: {normalized_selector}",
                 "Work on exactly one task only.",
-                "Use the local speckit-loop workflow for that one task and do not broaden scope.",
+                "Execute the following command now:",
+                "",
+                f"$speckit-loop {normalized_selector}",
+                "",
+                "Start immediately. Do not ask the user what task to execute.",
+                "Do not wait for another message.",
+                "Use the local speckit-loop workflow for exactly one task and do not broaden scope.",
+                "Use the specified Python interpreter exactly as given.",
                 "Do not create commits, pushes, pull requests, merges, or deployments.",
                 "Do not attempt any GitHub or network operations.",
-                "When you finish, end with a single AUTOPILOT_RESULT_JSON block containing a JSON object.",
-                "The JSON block must be the final machine-readable result.",
+                "If the task cannot be completed, return FAIL with a reason in the final AUTOPILOT_RESULT_JSON block.",
+                "The final response must end exactly with the AUTOPILOT_RESULT_JSON marker and a pretty-printed JSON object.",
             ]
         )
 
@@ -177,40 +185,53 @@ class CodexAdapter:
             agent_python=agent_python,
             speckit_selector=speckit_selector,
         )
-        command = self.build_command(prompt)
-        process_result = self._run(
-            command,
-            cwd=self.root,
-            timeout_seconds=timeout_seconds,
-            cancel_event=cancel_event,
-            heartbeat_seconds=30,
-        )
-        raw_output = "\n".join(list(process_result.stdout_lines) + list(process_result.stderr_lines))
-        parsed_json, parse_error = parse_autopilot_result(raw_output)
-        status = process_result.status
-        exit_code = process_result.exit_code
-        if status == "PASS" and parsed_json is None:
-            status = "FAIL"
-            if exit_code == 0:
-                exit_code = 1
-        return CodexRunResult(
-            command=tuple(process_result.command),
-            status=status,
-            exit_code=exit_code,
-            timed_out=process_result.timed_out,
-            cancelled=process_result.cancelled,
-            stdout_lines=process_result.stdout_lines,
-            stderr_lines=process_result.stderr_lines,
-            output_truncated=process_result.output_truncated,
-            process_tree_killed=process_result.process_tree_killed,
-            pid=process_result.pid,
-            raw_output=raw_output,
-            result_json=parsed_json,
-            parse_error=parse_error,
-        )
+        executable = resolve_codex_cli_executable()
+        if executable is None:
+            raise RuntimeError(_missing_codex_cli_reason())
+        output_last_message_path = _create_output_last_message_path()
+        try:
+            command = self.build_command(output_last_message_path=output_last_message_path)
+            process_result = self._run(
+                command,
+                cwd=self.root,
+                timeout_seconds=timeout_seconds,
+                cancel_event=cancel_event,
+                heartbeat_seconds=30,
+                stdin_text=prompt,
+            )
+            raw_output, parse_error = _read_output_last_message(output_last_message_path)
+            parsed_json = None
+            if raw_output is not None:
+                parsed_json, parse_error = parse_autopilot_result(raw_output)
+            status = process_result.status
+            exit_code = process_result.exit_code
+            if status == "PASS" and parsed_json is None:
+                status = "FAIL"
+                if exit_code == 0:
+                    exit_code = 1
+            return CodexRunResult(
+                command=tuple(process_result.command),
+                status=status,
+                exit_code=exit_code,
+                timed_out=process_result.timed_out,
+                cancelled=process_result.cancelled,
+                stdout_lines=process_result.stdout_lines,
+                stderr_lines=process_result.stderr_lines,
+                output_truncated=process_result.output_truncated,
+                process_tree_killed=process_result.process_tree_killed,
+                pid=process_result.pid,
+                raw_output=raw_output or "",
+                result_json=parsed_json,
+                parse_error=parse_error,
+            )
+        finally:
+            try:
+                output_last_message_path.unlink()
+            except FileNotFoundError:
+                pass
 
-    def build_command(self, prompt: str) -> list[str]:
-        normalized_prompt = _validate_non_empty_text("prompt", prompt)
+    def build_command(self, *, output_last_message_path: Path | str) -> list[str]:
+        output_path = Path(output_last_message_path)
         executable = resolve_codex_cli_executable()
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
@@ -222,7 +243,13 @@ class CodexAdapter:
             "--ignore-user-config",
             "--ignore-rules",
             "--ephemeral",
-            normalized_prompt,
+            "--sandbox",
+            "workspace-write",
+            "--color",
+            "never",
+            "--output-last-message",
+            str(output_path),
+            "-",
         ]
 
 
@@ -299,6 +326,24 @@ def _existing_executable(value: str | os.PathLike[str] | None) -> str | None:
     if path.is_file():
         return str(path)
     return None
+
+
+def _create_output_last_message_path() -> Path:
+    fd, raw_path = tempfile.mkstemp(prefix="autopilot-codex-", suffix=".txt")
+    os.close(fd)
+    return Path(raw_path)
+
+
+def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
+    if not path.is_file():
+        return None, "AUTOPILOT_RESULT_JSON block not found (codex did not write output-last-message)"
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"AUTOPILOT_RESULT_JSON block not found (failed to read codex output-last-message: {exc})"
+    if not content.strip():
+        return None, "AUTOPILOT_RESULT_JSON block not found (codex output-last-message is empty)"
+    return content, None
 
 
 def _missing_codex_cli_reason() -> str:

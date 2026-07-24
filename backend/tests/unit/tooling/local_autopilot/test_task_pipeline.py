@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,7 +135,23 @@ class ScenarioRunner:
 
         if command[:2] == ("codex", "exec") and "--help" not in command:
             self._codex_attempts += 1
-            payload = self.codex_json or {"status": "PASS", "attempt": self._codex_attempts}
+            prompt = kwargs.get("stdin_text", "")
+            match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
+            payload = self.codex_json or {"status": "PASS", "attempt": self._codex_attempts, "task_id": match.group(1) if match else None}
+            output_path = None
+            if "--output-last-message" in command:
+                output_path = Path(command[command.index("--output-last-message") + 1])
+            if output_path is not None:
+                output_path.write_text(
+                    "\n".join(
+                        [
+                            "Codex working",
+                            "AUTOPILOT_RESULT_JSON",
+                            json.dumps(payload, indent=2),
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
             stdout = (
                 "Codex working",
                 "AUTOPILOT_RESULT_JSON",

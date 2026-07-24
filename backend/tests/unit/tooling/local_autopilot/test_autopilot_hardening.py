@@ -149,9 +149,12 @@ class SimulatedShell:
 
         if command[:2] == ("codex", "exec") and "--help" not in command:
             self.state.codex_attempts += 1
-            prompt = command[-1]
+            prompt = kwargs.get("stdin_text", "")
             match = re.search(r"Selected task:\s*(T\d{3}[A-Z]?)", prompt)
             self.state.codex_prompt_task = match.group(1) if match else None
+            output_path = None
+            if "--output-last-message" in command:
+                output_path = Path(command[command.index("--output-last-message") + 1])
             if self.state.timeout_during_codex:
                 return self._result(command, status="TIMEOUT", exit_code=None)
             if self.state.cancel_during_codex:
@@ -160,8 +163,21 @@ class SimulatedShell:
                     cancel_event.set()
                 return self._result(command, status="CANCELLED", exit_code=None, timed_out=False, cancelled=True)
             if self.state.invalid_codex_json:
+                if output_path is not None:
+                    output_path.write_text("noise\nAUTOPILOT_RESULT_JSON\n{bad-json", encoding="utf-8")
                 return self._result(command, stdout=("noise", "AUTOPILOT_RESULT_JSON", "{bad-json"), status="PASS")
             payload = {"status": "PASS", "task_id": self.state.codex_prompt_task}
+            if output_path is not None:
+                output_path.write_text(
+                    "\n".join(
+                        [
+                            "working",
+                            "AUTOPILOT_RESULT_JSON",
+                            json.dumps(payload, indent=2),
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
             return self._result(command, stdout=("working", "AUTOPILOT_RESULT_JSON", json.dumps(payload)))
 
         if command == ("gh", "auth", "status"):
