@@ -16,6 +16,7 @@ from app.tooling.local_autopilot.github_adapter import (
     open_pr_in_browser,
     validate_auth,
 )
+from app.tooling.local_autopilot import github_adapter as github_module
 from app.tooling.local_autopilot.models import PullRequestInfo
 
 
@@ -31,6 +32,14 @@ class FakeProcessResult:
     output_truncated: bool = False
     process_tree_killed: bool = False
     pid: int | None = 1234
+
+
+REAL_RESOLVE_GITHUB_CLI_EXECUTABLE = github_module.resolve_github_cli_executable
+
+
+@pytest.fixture(autouse=True)
+def _default_github_executable(monkeypatch):
+    monkeypatch.setattr(github_module, "resolve_github_cli_executable", lambda: "gh")
 
 
 def test_validate_auth_reports_missing_cli(tmp_path):
@@ -229,3 +238,19 @@ def test_open_pr_in_browser_uses_web_flag(tmp_path):
 
     assert result is True
     assert calls == [("gh", "pr", "view", "22", "--web")]
+
+
+def test_resolve_github_cli_executable_uses_shutil_which(monkeypatch, tmp_path):
+    executable = tmp_path / "GitHub CLI" / "gh.exe"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text("binary", encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_which(candidate):
+        calls.append(candidate)
+        return str(executable) if candidate == "gh.exe" else None
+
+    monkeypatch.setattr(github_module.shutil, "which", fake_which)
+
+    assert REAL_RESOLVE_GITHUB_CLI_EXECUTABLE() == str(executable)
+    assert calls == ["gh.exe"]
