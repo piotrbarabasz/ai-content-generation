@@ -19,6 +19,7 @@ class FakeProcess:
         self.returncode: int | None = None
         self.wait_calls = 0
         self.kill_calls = 0
+        self.stdin = None
 
     def poll(self) -> int | None:
         if self._poll_values:
@@ -39,6 +40,26 @@ class FakeProcess:
         self.returncode = -9
 
 
+class FakeStdin:
+    def __init__(self, *, broken_pipe: bool = False) -> None:
+        self._broken_pipe = broken_pipe
+        self.buffer = bytearray()
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        if self._broken_pipe:
+            raise BrokenPipeError()
+        self.buffer.extend(data)
+        return len(data)
+
+    def flush(self) -> None:
+        if self._broken_pipe:
+            raise BrokenPipeError()
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _fake_popen_factory(
     calls: list[tuple[tuple[str, ...], dict[str, object]]],
     *,
@@ -50,6 +71,8 @@ def _fake_popen_factory(
         calls.append((tuple(argv), kwargs))
         stdout_handle = kwargs["stdout"]
         stderr_handle = kwargs["stderr"]
+        if kwargs.get("stdin") == subprocess.PIPE:
+            process.stdin = FakeStdin()
         if stdout_text:
             stdout_handle.write(stdout_text.encode("utf-8"))
         if stderr_text:
@@ -146,12 +169,21 @@ def test_run_process_cancels_during_poll(monkeypatch):
     _patch_perf_counter(monkeypatch, [20.0, 20.050])
     _patch_monotonic(monkeypatch, [2.0, 2.1, 2.1, 2.1, 2.1])
 
-    result = runner.run_process(["tool"], cwd=runner.ROOT, timeout_seconds=5, cancel_event=cancel_event, heartbeat_seconds=0)
+    result = runner.run_process(
+        ["tool"],
+        cwd=runner.ROOT,
+        timeout_seconds=5,
+        cancel_event=cancel_event,
+        heartbeat_seconds=0,
+        stdin_text="line1\nline2",
+    )
 
     assert result.status == "CANCELLED"
     assert result.cancelled is True
     assert result.process_tree_killed is True
     assert len(calls) == 1
+    assert isinstance(process.stdin, FakeStdin)
+    assert process.stdin.closed is True
 
 
 def test_run_process_timeout_terminates_tree(monkeypatch):
@@ -163,13 +195,78 @@ def test_run_process_timeout_terminates_tree(monkeypatch):
     _patch_perf_counter(monkeypatch, [30.0, 30.100])
     _patch_monotonic(monkeypatch, [3.0, 3.2, 3.4, 3.6, 4.1, 4.1])
 
-    result = runner.run_process(["tool"], cwd=runner.ROOT, timeout_seconds=1, heartbeat_seconds=0)
+    result = runner.run_process(
+        ["tool"],
+        cwd=runner.ROOT,
+        timeout_seconds=1,
+        heartbeat_seconds=0,
+        stdin_text="line1\nline2",
+    )
 
     assert result.status == "TIMEOUT"
     assert result.timed_out is True
     assert result.process_tree_killed is True
     assert terminate_calls == [4321]
     assert len(calls) == 1
+    assert isinstance(process.stdin, FakeStdin)
+    assert process.stdin.closed is True
+
+
+def test_run_process_streams_multiline_stdin_text(monkeypatch):
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    process = FakeProcess(poll_values=[0], final_returncode=0)
+
+    def fake_popen(argv, **kwargs):
+        calls.append((tuple(argv), kwargs))
+        process.stdin = FakeStdin()
+        return process
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    _patch_perf_counter(monkeypatch, [40.0, 40.050])
+    _patch_monotonic(monkeypatch, [4.0, 4.0])
+
+    result = runner.run_process(
+        ["codex.cmd", "exec", "-"],
+        cwd=runner.ROOT,
+        timeout_seconds=5,
+        heartbeat_seconds=0,
+        stdin_text="first line\nsecond line\n",
+    )
+
+    assert result.status == "PASS"
+    assert calls[0][0] == ("codex.cmd", "exec", "-")
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["stdin"] == subprocess.PIPE
+    assert isinstance(process.stdin, FakeStdin)
+    assert process.stdin.buffer.decode("utf-8") == "first line\nsecond line\n"
+    assert process.stdin.closed is True
+
+
+def test_run_process_ignores_broken_pipe_when_streaming_stdin(monkeypatch):
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    process = FakeProcess(poll_values=[0], final_returncode=0)
+
+    def fake_popen(argv, **kwargs):
+        calls.append((tuple(argv), kwargs))
+        process.stdin = FakeStdin(broken_pipe=True)
+        return process
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    _patch_perf_counter(monkeypatch, [50.0, 50.050])
+    _patch_monotonic(monkeypatch, [5.0, 5.0])
+
+    result = runner.run_process(
+        ["codex.cmd", "exec", "-"],
+        cwd=runner.ROOT,
+        timeout_seconds=5,
+        heartbeat_seconds=0,
+        stdin_text="first line\nsecond line\n",
+    )
+
+    assert result.status == "PASS"
+    assert len(calls) == 1
+    assert isinstance(process.stdin, FakeStdin)
+    assert process.stdin.closed is True
 
 
 def test_windows_tree_kill_uses_taskkill(monkeypatch):
