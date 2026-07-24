@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from app.tooling import agent_task_preflight as preflight
 from app.tooling.local_autopilot.config import AutopilotConfig
 from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, RunMode, RunStatus, ScopeType
 from app.tooling.local_autopilot.process_runner import ProcessResult
 from app.tooling.local_autopilot.state_store import load_run_state
-from app.tooling.local_autopilot.task_pipeline import TaskPipeline
+from app.tooling.local_autopilot.task_pipeline import TaskPipeline, TaskPipelineError, _parse_preflight_json_document
 
 
 @dataclass
@@ -80,16 +81,48 @@ class ScenarioRunner:
             raise AssertionError("preflight should be invoked with pinned python, not literal python")
 
         if command[:3] == (self.python_executable, "-m", "backend.app.tooling.agent_task_preflight"):
+            selector = "T045"
+            if "--selector" in command:
+                selector = command[command.index("--selector") + 1]
             payload = {
                 "status": self.preflight_status,
                 "exit_code": 0 if self.preflight_status == "PASS" else 1,
-                "task_id": "T045",
-                "epic_id": "E001",
+                "task": selector,
+                "epic": "E001",
                 "branch": "feat/local-autopilot-ui",
-                "baseline_path": str(self.root / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json"),
+                "baseline_path": str(self.root / ".specify" / "runtime" / "task-runs" / selector / "baseline.json"),
                 "duration_ms": 1,
+                "checks": [
+                    {
+                        "name": "selected_task_metadata",
+                        "status": "PASS",
+                        "details": {
+                            "task": selector,
+                            "nested": [
+                                {"name": "first", "details": {"value": 1}},
+                                {"name": "second", "details": {"value": 2}},
+                            ],
+                        },
+                    },
+                    {
+                        "name": "baseline_capture",
+                        "status": "PASS",
+                        "details": {
+                            "baseline_path": str(self.root / ".specify" / "runtime" / "task-runs" / selector / "baseline.json"),
+                            "nested": [
+                                {"name": "outer", "details": {"value": 3}},
+                                {"name": "inner", "details": {"value": 4}},
+                            ],
+                        },
+                    },
+                ],
             }
-            return self._result(command, stdout=(json.dumps(payload),), status=self.preflight_status, exit_code=0 if self.preflight_status == "PASS" else 1)
+            return self._result(
+                command,
+                stdout=tuple(json.dumps(payload, indent=2).splitlines()),
+                status=self.preflight_status,
+                exit_code=0 if self.preflight_status == "PASS" else 1,
+            )
 
         if command[:2] == (self.python_executable, "-m") and "pytest" in command:
             if self._validation_index < len(self.validation_results):
@@ -436,3 +469,58 @@ def test_run_task_honors_repair_limit(tmp_path):
     assert result.attempts == 2
     assert "validation failed" in (result.reason or "")
     assert sum(1 for command in runner.calls if command[:2] == ("codex", "exec") and "--help" not in command) == 2
+
+
+def test_parse_preflight_json_document_uses_root_payload(tmp_path):
+    baseline_path = tmp_path / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json"
+    payload = preflight._payload(
+        preflight.PreflightResult(
+            status="PASS",
+            exit_code=0,
+            selector="T045",
+            task_id="T045",
+            epic_id="E001",
+            branch="feat/local-autopilot-ui",
+            head_sha="a" * 40,
+            duration_ms=12,
+            checks=(
+                preflight.CheckResult(
+                    name="selected_task_metadata",
+                    status="PASS",
+                    details={
+                        "task": "T045",
+                        "nested": [
+                            {"name": "first", "details": {"value": 1}},
+                            {"name": "second", "details": {"value": 2}},
+                        ],
+                    },
+                ),
+                preflight.CheckResult(
+                    name="baseline_capture",
+                    status="PASS",
+                    details={
+                        "baseline_path": str(baseline_path),
+                        "nested": [
+                            {"name": "outer", "details": {"value": 3}},
+                            {"name": "inner", "details": {"value": 4}},
+                        ],
+                    },
+                ),
+            ),
+            baseline_path=str(baseline_path),
+        )
+    )
+    text = json.dumps(payload, indent=2)
+
+    parsed = _parse_preflight_json_document(text)
+    assert parsed["task"] == "T045"
+    assert parsed["epic"] == "E001"
+    assert parsed["baseline_path"] == str(baseline_path)
+    assert parsed["checks"][-1]["details"]["nested"][-1]["name"] == "inner"
+    assert "baseline_path" not in parsed["checks"][-1]
+
+    with pytest.raises(TaskPipelineError, match="preflight output is not valid JSON"):
+        _parse_preflight_json_document(f"{text}\ntrailing garbage")
+
+    with pytest.raises(TaskPipelineError, match="preflight JSON must be an object"):
+        _parse_preflight_json_document(json.dumps(["not", "an", "object"]))
