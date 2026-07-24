@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -38,8 +40,18 @@ class GitHubAdapter:
         self._run = process_runner_fn
 
     def validate_auth(self, *, timeout_seconds: int = 20) -> GitHubAuthResult:
+        executable = resolve_github_cli_executable()
+        if executable is None:
+            return GitHubAuthResult(
+                available=False,
+                authenticated=False,
+                command=("gh", "auth", "status"),
+                status="MISSING",
+                exit_code=None,
+                reason="gh CLI is missing",
+            )
         result = self._run(
-            ["gh", "auth", "status"],
+            [executable, "auth", "status"],
             cwd=self.root,
             timeout_seconds=timeout_seconds,
             heartbeat_seconds=0,
@@ -100,12 +112,15 @@ class GitHubAdapter:
         *,
         timeout_seconds: int = 120,
     ) -> PullRequestInfo:
+        executable = resolve_github_cli_executable()
+        if executable is None:
+            raise RuntimeError("gh CLI is missing")
         existing = self.find_pr(base, head, timeout_seconds=min(timeout_seconds, 30))
         if existing is not None:
             return existing
         result = self._run(
             [
-                "gh",
+                executable,
                 "pr",
                 "create",
                 "--draft",
@@ -131,8 +146,11 @@ class GitHubAdapter:
     def get_pr_status(self, number: int, *, timeout_seconds: int = 30) -> PullRequestInfo | None:
         if number <= 0:
             raise ValueError("pull request number must be positive")
+        executable = resolve_github_cli_executable()
+        if executable is None:
+            return None
         result = self._run(
-            ["gh", "pr", "view", str(number), "--json", GITHUB_PR_FIELDS],
+            [executable, "pr", "view", str(number), "--json", GITHUB_PR_FIELDS],
             cwd=self.root,
             timeout_seconds=timeout_seconds,
             heartbeat_seconds=0,
@@ -149,8 +167,11 @@ class GitHubAdapter:
     def open_pr_in_browser(self, number: int, *, timeout_seconds: int = 30) -> bool:
         if number <= 0:
             raise ValueError("pull request number must be positive")
+        executable = resolve_github_cli_executable()
+        if executable is None:
+            return False
         result = self._run(
-            ["gh", "pr", "view", str(number), "--web"],
+            [executable, "pr", "view", str(number), "--web"],
             cwd=self.root,
             timeout_seconds=timeout_seconds,
             heartbeat_seconds=0,
@@ -158,9 +179,12 @@ class GitHubAdapter:
         return result.status == "PASS"
 
     def _pr_list_json(self, base: str, head: str, *, timeout_seconds: int) -> Any:
+        executable = resolve_github_cli_executable()
+        if executable is None:
+            return None
         result = self._run(
             [
-                "gh",
+                executable,
                 "pr",
                 "list",
                 "--base",
@@ -268,6 +292,14 @@ def _parse_json_object(text: str) -> Any:
     return json.loads(text)
 
 
+def resolve_github_cli_executable() -> str | None:
+    for candidate in ("gh.exe", "gh.cmd", "gh"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
 def _pull_request_from_json(payload: Any) -> PullRequestInfo | None:
     if not isinstance(payload, dict):
         return None
@@ -303,5 +335,6 @@ __all__ = [
     "get_pr_status",
     "is_pr_merged",
     "open_pr_in_browser",
+    "resolve_github_cli_executable",
     "validate_auth",
 ]

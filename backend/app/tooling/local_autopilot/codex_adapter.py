@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,14 +54,17 @@ class CodexAdapter:
         self._run = process_runner_fn
 
     def detect_availability(self, *, timeout_seconds: int = 20) -> CodexAvailability:
+        executable = resolve_codex_cli_executable()
+        if executable is None:
+            return CodexAvailability(False, False, False, reason=_missing_codex_cli_reason())
         cli_help = self._run(
-            ["codex", "--help"],
+            [executable, "--help"],
             cwd=self.root,
             timeout_seconds=timeout_seconds,
             heartbeat_seconds=0,
         )
         exec_help = self._run(
-            ["codex", "exec", "--help"],
+            [executable, "exec", "--help"],
             cwd=self.root,
             timeout_seconds=timeout_seconds,
             heartbeat_seconds=0,
@@ -206,8 +211,11 @@ class CodexAdapter:
 
     def build_command(self, prompt: str) -> list[str]:
         normalized_prompt = _validate_non_empty_text("prompt", prompt)
+        executable = resolve_codex_cli_executable()
+        if executable is None:
+            raise RuntimeError(_missing_codex_cli_reason())
         return [
-            "codex",
+            executable,
             "exec",
             "-C",
             str(self.root),
@@ -229,6 +237,30 @@ def _validate_task_id(task_id: str) -> str:
     if not TASK_ID_PATTERN.fullmatch(normalized):
         raise ValueError("task_id must match T### or T###A")
     return normalized
+
+
+def resolve_codex_cli_executable() -> str | None:
+    configured = _existing_executable(os.environ.get("CODEX_CLI_PATH"))
+    if configured is not None:
+        return configured
+
+    for candidate in ("codex.exe", "codex.cmd", "codex"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            fallback = _existing_executable(Path(appdata) / "npm" / "codex.cmd")
+            if fallback is not None:
+                return fallback
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            fallback = _existing_executable(Path(localappdata) / "npm" / "codex.cmd")
+            if fallback is not None:
+                return fallback
+    return None
 
 
 def parse_autopilot_result(text: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -257,10 +289,29 @@ def parse_autopilot_result(text: str) -> tuple[dict[str, Any] | None, str | None
     return last_valid, None
 
 
+def _existing_executable(value: str | os.PathLike[str] | None) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip().strip('"')
+    if not candidate:
+        return None
+    path = Path(candidate)
+    if path.is_file():
+        return str(path)
+    return None
+
+
+def _missing_codex_cli_reason() -> str:
+    if os.name == "nt":
+        return "Codex CLI was not found.\nChecked PATH, CODEX_CLI_PATH and %APPDATA%\\npm\\codex.cmd."
+    return "Codex CLI was not found. Checked PATH and CODEX_CLI_PATH."
+
+
 __all__ = [
     "AUTOPILOT_RESULT_MARKER",
     "CodexAdapter",
     "CodexAvailability",
     "CodexRunResult",
     "parse_autopilot_result",
+    "resolve_codex_cli_executable",
 ]
