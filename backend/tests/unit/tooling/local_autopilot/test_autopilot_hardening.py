@@ -180,20 +180,24 @@ class SimulatedShell:
                         encoding="utf-8",
                     )
                 return self._result(command, stdout=(self.state.sandbox_banner, "noise", "AUTOPILOT_RESULT_JSON", "{bad-json"), status="PASS")
-            payload = {"status": "PASS", "task_id": self.state.codex_prompt_task}
+            payload = {
+                "task_id": self.state.codex_prompt_task,
+                "final_status": "COMPLETED",
+                "review_verdict": "PASS",
+                "reason": None,
+                "files_changed": ["backend/app/tooling/local_autopilot/task_pipeline.py"],
+                "validation": [],
+                "tasks_md_change": f"- [X] {self.state.codex_prompt_task} Implement epic task",
+                "repair_cycles_used": 0,
+                "safe_to_commit": True,
+                "next_task_started": False,
+                "retryable": False,
+            }
             if output_path is not None:
-                output_path.write_text(
-                    "\n".join(
-                        [
-                            self.state.sandbox_banner,
-                            "working",
-                            "AUTOPILOT_RESULT_JSON",
-                            json.dumps(payload, indent=2),
-                        ]
-                    ),
-                    encoding="utf-8",
-                )
-            return self._result(command, stdout=(self.state.sandbox_banner, "working", "AUTOPILOT_RESULT_JSON", json.dumps(payload)))
+                output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            if self.state.codex_prompt_task is not None:
+                self._mark_task_complete(self.state.codex_prompt_task)
+            return self._result(command, stdout=(self.state.sandbox_banner, "working", json.dumps(payload)))
 
         if command == ("gh", "auth", "status"):
             if not self.state.gh_ok:
@@ -298,6 +302,8 @@ class SimulatedShell:
                 "epic": "E002",
                 "branch": self.state.branch,
                 "baseline_path": str(baseline_path),
+                "feature_dir": str(self.root / "specs" / "001-ai-content-studio"),
+                "tasks_path": str(self.root / "specs" / "001-ai-content-studio" / "tasks.md"),
                 "duration_ms": 1,
                 "checks": [
                     {
@@ -335,7 +341,7 @@ class SimulatedShell:
         lines = [f"## {self.state.branch}"]
         if self.state.clean:
             if self.state.codex_attempts and self.state.scope_drift_after_codex:
-                lines.extend(f" M {path}" for path in self.state.dirty_paths or ("backend/other.py",))
+                lines.extend(f" M {path}" for path in self.state.dirty_paths or ("specs/001-ai-content-studio/tasks.md",))
         else:
             lines.extend(f" M {path}" for path in self.state.dirty_paths or ("backend/dirty.py",))
         return self._result(command, stdout=tuple(lines))
@@ -370,6 +376,12 @@ class SimulatedShell:
             process_tree_killed=timed_out or cancelled,
             pid=4321,
         )
+
+    def _mark_task_complete(self, task_id: str) -> None:
+        tasks_path = self.root / "specs" / "001-ai-content-studio" / "tasks.md"
+        text = tasks_path.read_text(encoding="utf-8")
+        text = text.replace(f"- [ ] {task_id}", f"- [X] {task_id}", 1)
+        tasks_path.write_text(text, encoding="utf-8")
 
 
 def _write(path: Path, text: str, *, newline: bool = True) -> None:

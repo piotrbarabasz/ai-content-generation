@@ -184,6 +184,18 @@ class MilestonePipeline:
         epic_run = self._prepare_epic_run(run, milestone_id=milestone_id, epic_id=epic_id)
         epic_pipeline = self.epic_pipeline_factory(self.root, self.config, self.repository, self.github, self._run)
         epic_result = epic_pipeline.run_epic(epic_run, human_authorized=human_authorized, cancel_event=cancel_event)
+        if epic_result.status == RunStatus.BLOCKED:
+            save_run_state(epic_result.run, root=self.root)
+            return MilestonePipelineResult(
+                status=RunStatus.BLOCKED,
+                run=epic_result.run,
+                milestone_id=milestone_id,
+                epic_id=epic_id,
+                branch_name=epic_result.branch_name,
+                pull_request=epic_result.pull_request,
+                epic_result=epic_result,
+                reason=epic_result.reason,
+            )
         if epic_result.status == RunStatus.FAILED:
             save_run_state(epic_result.run, root=self.root)
             return MilestonePipelineResult(
