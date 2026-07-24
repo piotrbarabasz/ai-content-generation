@@ -96,7 +96,7 @@ Notes: Add artifact reference fields to `WorkflowRun` and `GenerationJob` here s
 
 ## Phase 3: Core workflow engine
 
-- [ ] T007 Define module execution contracts and registry types
+- [X] T007 Define module execution contracts and registry types
 Milestone: M001
 Epic: E002
 Risk: high
