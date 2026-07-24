@@ -239,7 +239,7 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
 
     assert command[:6] == ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
     assert command[6:8] == ["-C", str(tmp_path)]
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert "--ignore-rules" in command
     assert "--ephemeral" in command
     assert "--sandbox" in command

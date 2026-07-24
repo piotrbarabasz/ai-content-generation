@@ -275,7 +275,6 @@ class CodexAdapter:
             "exec",
             "-C",
             str(self.root),
-            "--ignore-user-config",
             "--ignore-rules",
             "--ephemeral",
             "--color",
