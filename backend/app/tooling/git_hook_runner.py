@@ -7,11 +7,23 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
 from . import process_runner
+from .local_autopilot.repository import Repository
+from .local_autopilot.task_state_machine import (
+    TaskLifecycleState,
+    TaskReceiptRecord,
+    TaskStateRecord,
+    load_task_receipt,
+    load_task_state,
+    save_task_receipt,
+    save_task_state,
+)
+from .local_autopilot import workstreams
+from . import task_consistency
 
 ROOT = Path(__file__).resolve().parents[3]
 MAX_OUTPUT_LINES = 20
@@ -20,6 +32,7 @@ ZERO_SHA = "0" * 40
 GLOBAL_TIMEOUTS = {
     "pre-commit": 60,
     "pre-push": 480,
+    "post-commit": 60,
     "ci": 900,
 }
 
@@ -126,6 +139,9 @@ def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str 
             ),
         )
 
+    if mode == "post-commit":
+        return ()
+
     if mode == "ci":
         return (
             HookCommand(
@@ -151,6 +167,153 @@ def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str 
         )
 
     raise ValueError(f"unsupported mode: {mode}")
+
+
+def _task_state_records() -> list[TaskStateRecord]:
+    state_dir = ROOT / ".specify" / "runtime" / "task-state"
+    if not state_dir.is_dir():
+        return []
+    records: list[TaskStateRecord] = []
+    for path in sorted(state_dir.glob("*.json")):
+        record = load_task_state(path.stem, root=ROOT)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def _repo_relative_path(value: str | Path) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            path = path.relative_to(ROOT)
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
+
+
+def _task_checkbox(tasks_path: Path, task_id: str) -> str:
+    for found_task_id, _start_line, lines in task_consistency._iter_task_blocks(tasks_path):
+        if found_task_id != task_id:
+            continue
+        header = lines[0][1]
+        if header.startswith("- [X]"):
+            return "X"
+        if header.startswith("- [x]"):
+            return "x"
+        if header.startswith("- [ ]"):
+            return " "
+        return header[2:3] if header.startswith("- [") else " "
+    raise ValueError(f"task does not exist in tasks.md: {task_id}")
+
+
+def _task_epic(tasks_path: Path, task_id: str) -> str:
+    for found_task_id, _start_line, lines in task_consistency._iter_task_blocks(tasks_path):
+        if found_task_id != task_id:
+            continue
+        epic = task_consistency._field_value(lines, "Epic:")
+        if epic is None:
+            raise ValueError(f"task {task_id} is missing Epic in {tasks_path.name}")
+        return epic[1].strip()
+    raise ValueError(f"task does not exist in tasks.md: {task_id}")
+
+
+def _validate_pre_commit_state(repository: Repository) -> str | None:
+    records = [record for record in _task_state_records() if record.state == TaskLifecycleState.CLOSED]
+    if not records:
+        return None
+    current = repository.status()
+    for record in records:
+        receipt = load_task_receipt(record.task_id, root=ROOT)
+        if receipt is None:
+            return f"missing receipt for closed task {record.task_id}"
+        if receipt.state not in {TaskLifecycleState.CLOSED, TaskLifecycleState.COMMITTED}:
+            return f"receipt for {record.task_id} must be CLOSED before commit"
+        if not record.tasks_path:
+            return f"task {record.task_id} is missing tasks.md path in runtime state"
+        tasks_path = ROOT / Path(record.tasks_path)
+        if not tasks_path.is_file():
+            return f"task {record.task_id} tasks.md is missing"
+        checkbox = _task_checkbox(tasks_path, record.task_id)
+        if checkbox != "X":
+            return f"task {record.task_id} must be closed in tasks.md before commit"
+        allowed = {*(_repo_relative_path(item) for item in (record.allowlist or ())), _repo_relative_path(tasks_path)}
+        observed = {
+            *current.tracked,
+            *current.staged,
+            *current.untracked,
+            *current.deleted,
+            *(old for old, _ in current.renamed),
+            *(new for _, new in current.renamed),
+        }
+        unexpected = [path for path in sorted(observed) if not _path_allowed(path, allowed)]
+        if unexpected:
+            return f"unexpected paths outside allowlist: {', '.join(unexpected)}"
+    return None
+
+
+def _validate_pre_push_state(repository: Repository) -> str | None:
+    committed_records = [record for record in _task_state_records() if record.state == TaskLifecycleState.COMMITTED]
+    if not committed_records:
+        return None
+    current = repository.status()
+    for record in committed_records:
+        receipt = load_task_receipt(record.task_id, root=ROOT)
+        if receipt is None:
+            return f"missing receipt for committed task {record.task_id}"
+        if not record.tasks_path:
+            return f"task {record.task_id} is missing tasks.md path in runtime state"
+        tasks_path = ROOT / Path(record.tasks_path)
+        if not tasks_path.is_file():
+            return f"task {record.task_id} tasks.md is missing"
+        if _task_checkbox(tasks_path, record.task_id) != "X":
+            return f"task {record.task_id} must remain closed before push"
+        if not receipt.commit_sha or receipt.commit_sha != record.head_sha:
+            return f"receipt commit SHA for {record.task_id} does not match runtime state"
+        if current.head_sha and record.head_sha and current.head_sha != record.head_sha:
+            return f"current HEAD {current.head_sha} does not match committed task {record.task_id}"
+        if record.branch and current.branch and record.branch != current.branch:
+            return f"branch {current.branch!r} does not match committed task branch {record.branch!r}"
+        if record.feature_dir:
+            epic_manifest_path = ROOT / ".specify" / "workstreams"
+            try:
+                epic = workstreams.get_epic(_task_epic(tasks_path, record.task_id), epic_manifest_path)
+            except Exception as exc:
+                return str(exc)
+            expected_branch = str(epic.get("branch") or "")
+            if expected_branch and expected_branch != current.branch:
+                return f"epic branch {expected_branch!r} does not match current branch {current.branch!r}"
+    return None
+
+
+def _apply_post_commit_updates() -> None:
+    repository = Repository(ROOT)
+    current = repository.status()
+    current_head = current.head_sha or repository.head_sha()
+    updated_any = False
+    for record in _task_state_records():
+        if record.state != TaskLifecycleState.CLOSED:
+            continue
+        receipt = load_task_receipt(record.task_id, root=ROOT)
+        if receipt is None:
+            raise ValueError(f"missing receipt for closed task {record.task_id}")
+        updated_receipt = replace(
+            receipt,
+            updated_at=_timestamp(),
+            state=TaskLifecycleState.COMMITTED,
+            commit_sha=current_head,
+        )
+        save_task_receipt(updated_receipt, root=ROOT)
+        updated_state = replace(
+            record,
+            state=TaskLifecycleState.COMMITTED,
+            updated_at=_timestamp(),
+            branch=current.branch or record.branch,
+            head_sha=current_head,
+        )
+        save_task_state(updated_state, root=ROOT)
+        updated_any = True
+    if not updated_any:
+        return
 
 
 def _effective_timeout_seconds(command_timeout_seconds: int, remaining_seconds: float) -> int:
@@ -199,6 +362,34 @@ def run_hook(
     results: list[HookCommandResult] = []
     global_timeout = False
     overall_status = "PASS"
+
+    if mode == "post-commit":
+        try:
+            _apply_post_commit_updates()
+        except ValueError:
+            overall_status = "FAIL"
+        return HookRunResult(
+            mode=mode,
+            status=overall_status,
+            global_timeout=False,
+            global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+            commands=tuple(results),
+        )
+
+    repository = Repository(ROOT)
+    state_error: str | None = None
+    if mode == "pre-commit":
+        state_error = _validate_pre_commit_state(repository)
+    elif mode == "pre-push":
+        state_error = _validate_pre_push_state(repository)
+    if state_error is not None:
+        return HookRunResult(
+            mode=mode,
+            status="FAIL",
+            global_timeout=False,
+            global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+            commands=tuple(results),
+        )
 
     for command in commands:
         try:
@@ -282,7 +473,7 @@ def _render_json(result: HookRunResult) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="backend.app.tooling.git_hook_runner")
-    parser.add_argument("mode", choices=["pre-commit", "pre-push", "ci"])
+    parser.add_argument("mode", choices=["pre-commit", "pre-push", "post-commit", "ci"])
     parser.add_argument("--base-sha")
     parser.add_argument("--head-sha")
     parser.add_argument("--json", action="store_true")

@@ -11,19 +11,26 @@ README_PATH = ROOT / "README.md"
 class GitHooksSetupTests(unittest.TestCase):
     def test_hook_files_exist_and_call_runner(self) -> None:
         pre_commit = HOOK_DIR / "pre-commit"
+        post_commit = HOOK_DIR / "post-commit"
         pre_push = HOOK_DIR / "pre-push"
 
         self.assertTrue(pre_commit.is_file())
+        self.assertTrue(post_commit.is_file())
         self.assertTrue(pre_push.is_file())
         pre_commit_text = pre_commit.read_text(encoding="utf-8")
+        post_commit_text = post_commit.read_text(encoding="utf-8")
         pre_push_text = pre_push.read_text(encoding="utf-8")
         self.assertIn("set -eu", pre_commit_text)
+        self.assertIn("set -eu", post_commit_text)
         self.assertIn("set -eu", pre_push_text)
         self.assertIn("git config --local --get agent.python", pre_commit_text)
+        self.assertIn("git config --local --get agent.python", post_commit_text)
         self.assertIn("git config --local --get agent.python", pre_push_text)
         self.assertIn('exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner pre-commit', pre_commit_text)
+        self.assertIn('exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner post-commit', post_commit_text)
         self.assertIn('exec "$PYTHON_BIN" -m backend.app.tooling.git_hook_runner pre-push', pre_push_text)
         self.assertIn('PYTHON_BIN="$(git config --local --get agent.python || true)"', pre_commit_text)
+        self.assertIn('PYTHON_BIN="$(git config --local --get agent.python || true)"', post_commit_text)
         self.assertIn('PYTHON_BIN="$(git config --local --get agent.python || true)"', pre_push_text)
 
     def test_install_scripts_set_hooks_path_without_global(self) -> None:
@@ -51,6 +58,7 @@ class GitHooksSetupTests(unittest.TestCase):
         self.assertNotIn("--global", sh_text)
         self.assertIn("HOOK_INSTALL: PASS", sh_text)
         self.assertIn("chmod +x .githooks/pre-commit", sh_text)
+        self.assertIn("chmod +x .githooks/post-commit", sh_text)
         self.assertIn("chmod +x .githooks/pre-push", sh_text)
 
     def test_setup_scripts_check_python_install_hooks_and_smoke_test_tooling(self) -> None:

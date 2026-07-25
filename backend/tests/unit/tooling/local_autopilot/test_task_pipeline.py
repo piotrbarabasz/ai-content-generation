@@ -53,6 +53,12 @@ class ScenarioRunner:
         if command[:3] == ("codex", "exec", "--help"):
             return self._result(command, stdout=("Run Codex non-interactively",))
 
+        if Path(command[0]).name.lower().startswith("codex") and command[1:2] == ("--help",):
+            return self._result(command, stdout=("Codex CLI",))
+
+        if Path(command[0]).name.lower().startswith("codex") and command[1:3] == ("exec", "--help"):
+            return self._result(command, stdout=("Run Codex non-interactively",))
+
         if command[:3] == ("git", "status", "--porcelain=v1"):
             return self._status_result(command)
 
@@ -137,6 +143,12 @@ class ScenarioRunner:
                 status = "PASS"
             return self._result(command, status=status, exit_code=0 if status == "PASS" else 1)
 
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.agent_task_finalize"):
+            return self._result(command, stdout=("{" , "\"status\": \"PASS\"", "}"))
+
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.git_hook_runner"):
+            return self._result(command, stdout=("{", "\"status\": \"PASS\"", "}"))
+
         if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command:
             self._codex_attempts += 1
             prompt = kwargs.get("stdin_text", "")
@@ -173,7 +185,7 @@ class ScenarioRunner:
                 and bool(payload.get("safe_to_commit", False))
                 and task_id is not None
             ):
-                self._mark_complete(task_id)
+                pass
             if output_path is not None:
                 output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             stdout = (

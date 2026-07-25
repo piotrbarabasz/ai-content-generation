@@ -24,35 +24,26 @@ AUTOPILOT_RESULT_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "additionalProperties": True,
-    "required": ["task_id", "final_status", "review_verdict", "reason", "files_changed", "validation", "tasks_md_change", "repair_cycles_used", "safe_to_commit", "next_task_started", "retryable"],
+    "required": ["task_id", "agent_outcome", "summary", "files_touched", "notes"],
     "properties": {
         "task_id": {"type": "string", "pattern": "^T\\d{3}[A-Z]?$"},
-        "final_status": {"type": "string", "enum": ["COMPLETED", "BLOCKED", "FAILED"]},
-        "review_verdict": {"anyOf": [{"type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"]}, {"type": "null"}]},
-        "reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-        "files_changed": {"type": "array", "items": {"type": "string"}},
-        "validation": {"type": "array"},
-        "tasks_md_change": {"type": "string"},
-        "repair_cycles_used": {"type": "integer", "minimum": 0},
-        "safe_to_commit": {"type": "boolean"},
-        "next_task_started": {"type": "boolean"},
-        "retryable": {"type": "boolean"},
+        "agent_outcome": {"type": "string", "enum": ["finished", "blocked", "failed"]},
+        "summary": {"type": "string"},
+        "files_touched": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "array", "items": {"type": "string"}},
     },
 }
 AUTOPILOT_RESULT_KEY_ALIASES = {
-    "status": "final_status",
-    "final_status": "final_status",
+    "status": "agent_outcome",
+    "final_status": "agent_outcome",
     "task_id": "task_id",
-    "review_verdict": "review_verdict",
-    "blocked_reason": "reason",
-    "reason": "reason",
-    "files_changed": "files_changed",
-    "validation": "validation",
-    "tasks_md_change": "tasks_md_change",
-    "repair_cycles_used": "repair_cycles_used",
-    "safe_to_commit": "safe_to_commit",
-    "next_task_started": "next_task_started",
-    "retryable": "retryable",
+    "agent_outcome": "agent_outcome",
+    "summary": "summary",
+    "files_touched": "files_touched",
+    "files_changed": "files_touched",
+    "notes": "notes",
+    "blocked_reason": "notes",
+    "reason": "summary",
 }
 
 
@@ -138,6 +129,16 @@ class CodexAdapter:
         canonical_result_example = json.dumps(
             {
                 "task_id": normalized_task_id,
+                "agent_outcome": "finished",
+                "summary": "Implementation complete.",
+                "files_touched": [],
+                "notes": [],
+            },
+            indent=2,
+        )
+        legacy_result_example = json.dumps(
+            {
+                "task_id": normalized_task_id,
                 "final_status": "COMPLETED",
                 "review_verdict": "PASS",
                 "reason": None,
@@ -172,9 +173,12 @@ class CodexAdapter:
                 "Return exactly one JSON object and nothing else.",
                 "Do not wrap the JSON in markers, fences, markdown, or explanatory text.",
                 "Use the canonical lowercase keys task_id, final_status, review_verdict, reason, files_changed, validation, tasks_md_change, repair_cycles_used, safe_to_commit, next_task_started and retryable.",
+                "Use the canonical lowercase keys task_id, agent_outcome, summary, files_touched and notes.",
                 "The final response must follow this example shape exactly:",
                 canonical_result_example,
-                "If the task cannot be completed, set final_status to BLOCKED or FAILED and include a reason.",
+                "Legacy-compatible example:",
+                legacy_result_example,
+                "If the task cannot be completed, set agent_outcome to blocked or failed and explain it in notes.",
                 "Do not emit any trailing text after the JSON object.",
             ]
         )
@@ -408,6 +412,22 @@ def validate_autopilot_result_contract(
     if not isinstance(payload, dict):
         return None, None, False, "AUTOPILOT_RESULT_JSON block must decode to a JSON object"
 
+    original_keys = {str(key).strip().lower() for key in payload.keys() if isinstance(key, str)}
+    original_payload = {str(key).strip().lower(): value for key, value in payload.items() if isinstance(key, str)}
+    legacy_contract = bool(
+        original_keys
+        & {
+            "final_status",
+            "review_verdict",
+            "reason",
+            "files_changed",
+            "validation",
+            "tasks_md_change",
+            "repair_cycles_used",
+            "safe_to_commit",
+            "next_task_started",
+        }
+    )
     normalized_payload, blocked_reason_present, normalize_error = _normalize_autopilot_result_payload(payload)
     if normalize_error is not None:
         return None, None, False, normalize_error
@@ -417,82 +437,164 @@ def validate_autopilot_result_contract(
     if not isinstance(payload_task_id, str) or payload_task_id.strip() != normalized_task_id:
         return None, None, False, f"AUTOPILOT_RESULT_JSON task_id must match {normalized_task_id}"
 
-    status_value = normalized_payload.get("final_status")
-    if not isinstance(status_value, str) or not status_value.strip():
-        return None, None, False, "AUTOPILOT_RESULT_JSON final_status is missing"
-    normalized_status = status_value.strip().upper()
+    if legacy_contract:
+        status_value = original_payload.get("final_status")
+        if not isinstance(status_value, str) or not status_value.strip():
+            return None, None, False, "AUTOPILOT_RESULT_JSON final_status is missing"
+        normalized_outcome = status_value.strip().lower()
+        if normalized_outcome == "completed":
+            normalized_outcome = "finished"
+        elif normalized_outcome not in {"blocked", "failed"}:
+            return None, None, False, f"unknown AUTOPILOT_RESULT_JSON final_status: {status_value!r}"
 
-    reason_value = normalized_payload.get("reason")
-    if normalized_status in FAILURE_RESULT_STATUSES or normalized_status in BLOCKED_RESULT_STATUSES:
-        if not isinstance(reason_value, str) or not reason_value.strip():
-            return None, None, False, "AUTOPILOT_RESULT_JSON reason is missing"
+        reason_value = original_payload.get("reason")
+        blocked_reason_value = original_payload.get("blocked_reason")
+        if normalized_outcome in {"blocked", "failed"} and (not isinstance(reason_value, str) or not reason_value.strip()):
+            if isinstance(blocked_reason_value, str) and blocked_reason_value.strip():
+                reason_value = blocked_reason_value
+            else:
+                return None, None, False, "AUTOPILOT_RESULT_JSON reason is missing"
 
-    review_verdict = normalized_payload.get("review_verdict")
-    if review_verdict is not None and (not isinstance(review_verdict, str) or not review_verdict.strip()):
-        return None, None, False, "AUTOPILOT_RESULT_JSON review_verdict must be a string or null"
+        review_verdict = original_payload.get("review_verdict")
+        if review_verdict is not None and (not isinstance(review_verdict, str) or not review_verdict.strip()):
+            return None, None, False, "AUTOPILOT_RESULT_JSON review_verdict must be a string or null"
 
-    files_changed = normalized_payload.get("files_changed")
-    if not isinstance(files_changed, list):
-        return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must be an array"
-    if any(not isinstance(item, str) for item in files_changed):
-        return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must contain strings"
+        files_changed = original_payload.get("files_changed")
+        if not isinstance(files_changed, list):
+            return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must be an array"
+        if any(not isinstance(item, str) for item in files_changed):
+            return None, None, False, "AUTOPILOT_RESULT_JSON files_changed must contain strings"
 
-    validation = normalized_payload.get("validation")
-    if not isinstance(validation, list):
-        return None, None, False, "AUTOPILOT_RESULT_JSON validation must be an array"
+        validation = original_payload.get("validation")
+        if not isinstance(validation, list):
+            return None, None, False, "AUTOPILOT_RESULT_JSON validation must be an array"
 
-    tasks_md_change = normalized_payload.get("tasks_md_change")
-    if not isinstance(tasks_md_change, str):
-        return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must be a string"
+        tasks_md_change = original_payload.get("tasks_md_change")
+        if not isinstance(tasks_md_change, str):
+            return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must be a string"
 
-    repair_cycles_used = normalized_payload.get("repair_cycles_used")
-    if not isinstance(repair_cycles_used, int) or repair_cycles_used < 0:
-        return None, None, False, "AUTOPILOT_RESULT_JSON repair_cycles_used must be a non-negative integer"
+        repair_cycles_used = original_payload.get("repair_cycles_used")
+        if not isinstance(repair_cycles_used, int) or repair_cycles_used < 0:
+            return None, None, False, "AUTOPILOT_RESULT_JSON repair_cycles_used must be a non-negative integer"
 
-    safe_to_commit = normalized_payload.get("safe_to_commit")
-    if not isinstance(safe_to_commit, bool):
-        return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be a boolean"
+        safe_to_commit = original_payload.get("safe_to_commit")
+        if not isinstance(safe_to_commit, bool):
+            return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be a boolean"
 
-    next_task_started = normalized_payload.get("next_task_started")
-    if not isinstance(next_task_started, bool):
-        return None, None, False, "AUTOPILOT_RESULT_JSON next_task_started must be a boolean"
+        next_task_started = original_payload.get("next_task_started")
+        if not isinstance(next_task_started, bool):
+            return None, None, False, "AUTOPILOT_RESULT_JSON next_task_started must be a boolean"
 
-    retryable = normalized_payload.get("retryable")
-    if not isinstance(retryable, bool):
-        return None, None, False, "AUTOPILOT_RESULT_JSON retryable must be a boolean"
+        retryable = original_payload.get("retryable")
+        if not isinstance(retryable, bool):
+            return None, None, False, "AUTOPILOT_RESULT_JSON retryable must be a boolean"
 
-    if normalized_status in SUCCESS_RESULT_STATUSES:
-        if not safe_to_commit:
-            return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be true for completed results"
-        if not tasks_md_change.strip():
-            return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must describe the completed task.md change"
-        semantic_status = "PASS"
-    elif normalized_status in BLOCKED_RESULT_STATUSES or blocked_reason_present:
-        semantic_status = "BLOCKED"
-    elif normalized_status in FAILURE_RESULT_STATUSES:
-        semantic_status = "FAIL"
+        if normalized_outcome == "finished":
+            if not safe_to_commit:
+                return None, None, False, "AUTOPILOT_RESULT_JSON safe_to_commit must be true for completed results"
+            if not tasks_md_change.strip():
+                return None, None, False, "AUTOPILOT_RESULT_JSON tasks_md_change must describe the completed task.md change"
+            semantic_status = "PASS"
+        elif normalized_outcome == "blocked" or blocked_reason_present:
+            semantic_status = "BLOCKED"
+        else:
+            semantic_status = "FAIL"
+        summary = reason_value if isinstance(reason_value, str) and reason_value.strip() else tasks_md_change
+        files_touched = files_changed
+        notes = [note for note in [reason_value, blocked_reason_value] if isinstance(note, str) and note.strip()]
     else:
-        return None, None, False, f"unknown AUTOPILOT_RESULT_JSON final_status: {status_value!r}"
+        outcome_value = normalized_payload.get("agent_outcome")
+        if not isinstance(outcome_value, str) or not outcome_value.strip():
+            return None, None, False, "AUTOPILOT_RESULT_JSON agent_outcome is missing"
+        normalized_outcome = outcome_value.strip().lower()
+        if normalized_outcome not in {"finished", "blocked", "failed"}:
+            alias = outcome_value.strip().upper()
+            if alias == "COMPLETED":
+                normalized_outcome = "finished"
+            elif alias == "BLOCKED":
+                normalized_outcome = "blocked"
+            elif alias == "FAILED":
+                normalized_outcome = "failed"
+            else:
+                return None, None, False, f"unknown AUTOPILOT_RESULT_JSON agent_outcome: {outcome_value!r}"
 
-    canonical_payload = {
-        **normalized_payload,
-        "task_id": normalized_task_id,
-        "final_status": normalized_status,
-        "review_verdict": review_verdict.strip() if isinstance(review_verdict, str) else None,
-        "reason": reason_value.strip() if isinstance(reason_value, str) else None,
-        "files_changed": [item.strip() for item in files_changed],
-        "validation": list(validation),
-        "tasks_md_change": tasks_md_change,
-        "repair_cycles_used": repair_cycles_used,
-        "safe_to_commit": safe_to_commit,
-        "next_task_started": next_task_started,
-        "retryable": retryable,
-    }
-    if semantic_status == "PASS":
-        return canonical_payload, semantic_status, retryable, None
-    if semantic_status == "BLOCKED":
-        return canonical_payload, semantic_status, False, None
-    return canonical_payload, semantic_status, retryable, None
+        summary = normalized_payload.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            reason_value = normalized_payload.get("reason")
+            if isinstance(reason_value, str) and reason_value.strip():
+                summary = reason_value
+            else:
+                return None, None, False, "AUTOPILOT_RESULT_JSON summary must be a string"
+
+        files_touched = normalized_payload.get("files_touched")
+        if not isinstance(files_touched, list):
+            files_touched = normalized_payload.get("files_changed")
+        if not isinstance(files_touched, list):
+            return None, None, False, "AUTOPILOT_RESULT_JSON files_touched must be an array"
+        if any(not isinstance(item, str) for item in files_touched):
+            return None, None, False, "AUTOPILOT_RESULT_JSON files_touched must contain strings"
+
+        notes = normalized_payload.get("notes")
+        if not isinstance(notes, list):
+            notes = []
+            reason_value = normalized_payload.get("reason")
+            if isinstance(reason_value, str) and reason_value.strip():
+                notes.append(reason_value.strip())
+            blocked_reason_value = normalized_payload.get("blocked_reason")
+            if isinstance(blocked_reason_value, str) and blocked_reason_value.strip():
+                notes.append(blocked_reason_value.strip())
+            if not notes:
+                return None, None, False, "AUTOPILOT_RESULT_JSON notes must be an array"
+        if any(not isinstance(item, str) for item in notes):
+            return None, None, False, "AUTOPILOT_RESULT_JSON notes must contain strings"
+
+    normalized_payload.setdefault("review_verdict", None)
+    normalized_payload.setdefault("reason", None)
+    normalized_payload.setdefault("validation", [])
+    normalized_payload.setdefault("tasks_md_change", "")
+    normalized_payload.setdefault("repair_cycles_used", 0)
+    normalized_payload.setdefault("safe_to_commit", False)
+    normalized_payload.setdefault("next_task_started", False)
+    normalized_payload.setdefault("retryable", False)
+
+    if legacy_contract:
+        canonical_payload = {
+            "task_id": normalized_task_id,
+            "final_status": "COMPLETED" if normalized_outcome == "finished" else normalized_outcome.upper(),
+            "review_verdict": normalized_payload.get("review_verdict"),
+            "reason": reason_value,
+            "files_changed": [item.strip() for item in files_touched],
+            "validation": list(normalized_payload.get("validation", [])),
+            "tasks_md_change": str(normalized_payload.get("tasks_md_change", "")),
+            "repair_cycles_used": int(normalized_payload.get("repair_cycles_used", 0)),
+            "safe_to_commit": bool(normalized_payload.get("safe_to_commit", False)),
+            "next_task_started": bool(normalized_payload.get("next_task_started", False)),
+            "retryable": bool(normalized_payload.get("retryable", False)),
+        }
+    else:
+        canonical_payload = {
+            **normalized_payload,
+            "task_id": normalized_task_id,
+            "agent_outcome": normalized_outcome,
+            "summary": summary.strip(),
+            "files_touched": [item.strip() for item in files_touched],
+            "notes": [item.strip() for item in notes],
+            "final_status": "COMPLETED" if normalized_outcome == "finished" else normalized_outcome.upper(),
+            "files_changed": [item.strip() for item in files_touched],
+            "reason": summary.strip() if normalized_outcome != "finished" else normalized_payload.get("reason"),
+            "review_verdict": normalized_payload.get("review_verdict"),
+            "validation": list(normalized_payload.get("validation", [])),
+            "tasks_md_change": str(normalized_payload.get("tasks_md_change", "")),
+            "repair_cycles_used": int(normalized_payload.get("repair_cycles_used", 0)),
+            "safe_to_commit": bool(normalized_payload.get("safe_to_commit", False)),
+            "next_task_started": bool(normalized_payload.get("next_task_started", False)),
+            "retryable": bool(normalized_payload.get("retryable", False)),
+        }
+    if normalized_outcome == "finished":
+        return canonical_payload, "PASS", bool(normalized_payload.get("retryable", False)), None
+    if normalized_outcome == "blocked" or blocked_reason_present:
+        return canonical_payload, "BLOCKED", False, None
+    return canonical_payload, "FAIL", bool(normalized_payload.get("retryable", False)), None
 
 
 def _existing_executable(value: str | os.PathLike[str] | None) -> str | None:
@@ -567,12 +669,12 @@ def _normalize_autopilot_result_payload(payload: dict[str, Any]) -> tuple[dict[s
 
     if "task_id" not in normalized:
         return None, False, "AUTOPILOT_RESULT_JSON task_id is missing"
-    if "final_status" not in normalized:
-        return None, False, "AUTOPILOT_RESULT_JSON final_status is missing"
+    if "agent_outcome" not in normalized and "final_status" not in normalized:
+        return None, False, "AUTOPILOT_RESULT_JSON agent_outcome is missing"
 
-    normalized.setdefault("review_verdict", None)
-    normalized.setdefault("reason", None)
-    normalized.setdefault("files_changed", [])
+    normalized.setdefault("summary", "")
+    normalized.setdefault("files_touched", [])
+    normalized.setdefault("notes", [])
     normalized.setdefault("validation", [])
     normalized.setdefault("tasks_md_change", "")
     normalized.setdefault("repair_cycles_used", 0)

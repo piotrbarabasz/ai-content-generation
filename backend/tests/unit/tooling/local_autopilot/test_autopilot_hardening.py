@@ -158,6 +158,16 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command, stdout=("Run Codex non-interactively",))
 
+        if Path(command[0]).name.lower().startswith("codex") and command[1:2] == ("--help",):
+            if not self.state.codex_cli_ok:
+                return self._result(command, status="MISSING", exit_code=None)
+            return self._result(command, stdout=("Codex CLI",))
+
+        if Path(command[0]).name.lower().startswith("codex") and command[1:3] == ("exec", "--help"):
+            if not self.state.codex_exec_ok:
+                return self._result(command, status="FAIL", exit_code=1)
+            return self._result(command, stdout=("Run Codex non-interactively",))
+
         if Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command:
             self.state.codex_attempts += 1
             prompt = kwargs.get("stdin_text", "")
@@ -195,8 +205,6 @@ class SimulatedShell:
             }
             if output_path is not None:
                 output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            if self.state.codex_prompt_task is not None:
-                self._mark_task_complete(self.state.codex_prompt_task)
             return self._result(command, stdout=(self.state.sandbox_banner, "working", json.dumps(payload)))
 
         if command == ("gh", "auth", "status"):
@@ -334,6 +342,12 @@ class SimulatedShell:
 
         if command[:2] == (self.python_executable, "-m") and "pytest" in command:
             return self._result(command, stdout=("ok",))
+
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.agent_task_finalize"):
+            return self._result(command, stdout=("status: PASS",))
+
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.git_hook_runner"):
+            return self._result(command, stdout=("status: PASS",))
 
         raise AssertionError(f"unexpected command: {command}")
 

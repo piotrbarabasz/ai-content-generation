@@ -22,6 +22,10 @@ if [ ! -f .githooks/pre-push ]; then
   fail "missing hook file .githooks/pre-push"
 fi
 
+if [ ! -f .githooks/post-commit ]; then
+  fail "missing hook file .githooks/post-commit"
+fi
+
 python_bin=$(python -c 'import sys; print(sys.executable)')
 git config --local agent.python "$python_bin"
 stored_python=$(git config --local --get agent.python || true)
@@ -37,6 +41,7 @@ fi
 
 chmod +x .githooks/pre-commit
 chmod +x .githooks/pre-push
+chmod +x .githooks/post-commit
 
 printf '%s\n' "HOOK_INSTALL: PASS"
 printf '%s\n' "HOOKS_PATH: .githooks"
