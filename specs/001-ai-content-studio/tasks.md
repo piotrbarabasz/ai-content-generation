@@ -354,7 +354,7 @@ Test requirements: Add ProviderRegistry registration and resolution tests.
 Parallelizable: no
 Notes: Provider types are LLMProvider, TTSProvider, TranscriptionProvider, CaptionProvider, AssetProvider, VideoRendererProvider, StorageProvider and PublishingProvider.
 
-- [ ] T023 Implement ProviderConfig validation before workflow execution
+- [X] T023 Implement ProviderConfig validation before workflow execution
 Milestone: M001
 Epic: E003
 Risk: high

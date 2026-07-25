@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from app.domain.base import DomainValidationError
+from app.domain.workflow_config import WorkflowConfig
 from app.domain.types import JsonDict
+from app.providers.registry import ProviderRegistry
+from app.providers.validation import validate_provider_availability
 from app.workflow.execution import (
     ExecutionStatus,
     ModuleExecutionContext,
@@ -71,10 +75,29 @@ class CoreWorkflowEngine:
         *,
         workflow_run_id: str,
         workflow_config_id: str,
+        workflow_config: WorkflowConfig | None = None,
+        provider_registry: ProviderRegistry | None = None,
         inputs: JsonDict | None = None,
         modules: Mapping[str, WorkflowModule] | None = None,
     ) -> WorkflowExecutionResult:
         """Execute a plan and return the captured module outcomes."""
+
+        if workflow_config is not None:
+            if workflow_config.id != workflow_config_id:
+                raise DomainValidationError(
+                    "WorkflowConfig id does not match the supplied workflow_config_id."
+                )
+            if provider_registry is None:
+                raise DomainValidationError(
+                    "Provider registry is required when workflow_config is supplied."
+                )
+            workflow_config.validate(
+                provider_validator=lambda config: validate_provider_availability(
+                    workflow_config=config,
+                    plan=plan,
+                    provider_registry=provider_registry,
+                )
+            )
 
         return self.run_plan(
             plan,
