@@ -329,7 +329,7 @@ Milestone: M001
 Epic: E003
 Risk: high
 Implementation files: `backend/app/domain/workflow_config.py`, `backend/app/domain/enums.py`
-Test files: `backend/tests/unit/test_t021.py`
+Test files: `backend/tests/unit/test_workflow_config_validation.py`
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Freeze the WorkflowConfig schema and reject invalid enum values, enabled/disabled module conflicts and invalid preset/content-type combinations.

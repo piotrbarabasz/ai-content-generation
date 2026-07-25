@@ -22,6 +22,7 @@ from app.tooling.local_autopilot.models import (
 )
 from app.tooling.local_autopilot.process_runner import ProcessResult
 from app.tooling.local_autopilot.task_state_machine import (
+    _load_task_snapshot,
     TaskLifecycleState,
     TaskReceiptRecord,
     TaskReceiptStage,
@@ -583,8 +584,17 @@ def _record_task_evidence(
     task_id: str,
     sha: str,
     title: str,
+    files: tuple[str, ...] | None = None,
 ) -> None:
-    repo.record_commit(sha, f"feat({task_id}): {title}")
+    if files is None:
+        tasks_path = repo.root / "specs" / "001-ai-content-studio" / "tasks.md"
+        try:
+            snapshot = _load_task_snapshot(task_id, tasks_path)
+        except Exception:
+            files = ()
+        else:
+            files = snapshot.allowlist
+    repo.record_commit(sha, f"feat({task_id}): {title}", files=files or ())
 
 
 def _write_committed_task_state(
@@ -692,7 +702,7 @@ def _write_e003_fixture(tmp_path: Path) -> tuple[Path, Path]:
             "T021",
             "Implement canonical WorkflowConfig schema and enum validation",
             "backend/app/domain/workflow_config.py, backend/app/domain/enums.py",
-            "backend/tests/unit/test_t021.py",
+            "backend/tests/unit/test_workflow_config_validation.py",
         ),
         (
             "T022",
@@ -709,7 +719,7 @@ def _write_e003_fixture(tmp_path: Path) -> tuple[Path, Path]:
         (
             "T024",
             "Add security and secret hygiene foundation",
-            "docs/.env.example, README.md, .gitignore",
+            ".gitignore, .env.example, README.md",
             "backend/tests/static/test_secret_hygiene.py",
         ),
     ]
@@ -733,11 +743,47 @@ def _write_e003_fixture(tmp_path: Path) -> tuple[Path, Path]:
                 "Notes: regression fixture.",
                 "",
             ]
-        )
+    )
     _write(feature_dir / "tasks.md", "\n".join(lines))
-    _write(tmp_path / "backend" / "tests" / "unit" / "test_t021.py", "def test_t021():\n    assert True\n")
+    _write(tmp_path / "backend" / "app" / "domain" / "workflow_config.py", "WORKFLOW_CONFIG = True\n")
+    _write(tmp_path / "backend" / "app" / "domain" / "enums.py", "ENUMS = True\n")
+    _write(tmp_path / "backend" / "tests" / "unit" / "test_workflow_config_validation.py", "def test_workflow_config_validation():\n    assert True\n")
     _write(tmp_path / "backend" / "tests" / "static" / "test_secret_hygiene.py", "def test_secret_hygiene():\n    assert True\n")
+    _write(tmp_path / ".gitignore", "*.env\n")
+    _write(tmp_path / ".env.example", "API_KEY=placeholder\n")
+    _write(tmp_path / "README.md", "# AI Content Studio\n")
     return workstreams / "E003.yml", feature_dir / "tasks.md"
+
+
+def _seed_e003_supporting_task_evidence(tmp_path: Path, repo: FakeRepository) -> None:
+    _write_committed_task_state(tmp_path, task_id="T009", sha="9" * 40, run_id="run-epic-003", branch="feature/E003")
+    _write_committed_task_state(tmp_path, task_id="T010", sha="a" * 40, run_id="run-epic-003", branch="feature/E003")
+    _write_committed_task_state(tmp_path, task_id="T022", sha="b" * 40, run_id="run-epic-003", branch="feature/E003")
+    _write_committed_task_state(tmp_path, task_id="T023", sha="c" * 40, run_id="run-epic-003", branch="feature/E003")
+    _record_task_evidence(repo, task_id="T009", sha="9" * 40, title="artifact storage follow-up")
+    _record_task_evidence(repo, task_id="T010", sha="a" * 40, title="state machine follow-up")
+    _record_task_evidence(repo, task_id="T022", sha="b" * 40, title="registry follow-up")
+    _record_task_evidence(repo, task_id="T023", sha="c" * 40, title="provider config follow-up")
+
+
+def _seed_e003_legacy_bundle(
+    repo: FakeRepository,
+    *,
+    activation_sha: str,
+    bundle_sha: str,
+    tail_sha: str,
+    bundle_subject: str,
+    bundle_files: tuple[str, ...],
+    activation_before_bundle: bool = False,
+) -> None:
+    if activation_before_bundle:
+        repo.record_commit(activation_sha, "feat(E003): activate epic")
+        repo.record_commit(bundle_sha, bundle_subject, files=bundle_files)
+    else:
+        repo.record_commit(bundle_sha, bundle_subject, files=bundle_files)
+        repo.record_commit(activation_sha, "feat(E003): activate epic")
+    repo.record_commit(tail_sha, "fix(autopilot): tooling follow-up")
+    repo.head_sha_value = tail_sha
 
 
 def test_run_epic_happy_path_stop_before_push_activates_branch_and_completes(tmp_path):
@@ -979,23 +1025,29 @@ def test_verify_task_evidence_rejects_duplicate_task_sha(tmp_path):
     assert any("shared with" in error for error in errors)
 
 
-def test_verify_task_evidence_accepts_legacy_file_addition_for_e003_tasks(tmp_path):
+def test_verify_task_evidence_accepts_legacy_bundle_with_disjoint_evidence_paths(tmp_path):
     _write_e003_fixture(tmp_path)
     repo = FakeRepository(tmp_path, current_branch="feature/E003", head_sha_value="f" * 40)
     github = FakeGitHubAdapter()
     receipt = FakeReviewReceipt(tmp_path)
     pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
-    _write_committed_task_state(tmp_path, task_id="T009", sha="9" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T010", sha="a" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T022", sha="b" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T023", sha="c" * 40, run_id="run-epic-003", branch="feature/E003")
-    _record_task_evidence(repo, task_id="T009", sha="9" * 40, title="artifact storage follow-up")
-    _record_task_evidence(repo, task_id="T010", sha="a" * 40, title="state machine follow-up")
-    _record_task_evidence(repo, task_id="T022", sha="b" * 40, title="registry follow-up")
-    _record_task_evidence(repo, task_id="T023", sha="c" * 40, title="provider config follow-up")
-    repo.record_commit("1" * 40, "docs: add workflow config test", files=("backend/tests/unit/test_t021.py",))
-    repo.record_commit("2" * 40, "docs: add secret hygiene test", files=("backend/tests/static/test_secret_hygiene.py",))
-    repo.record_commit("f" * 40, "fix(autopilot): tooling follow-up")
+    _seed_e003_supporting_task_evidence(tmp_path, repo)
+    _seed_e003_legacy_bundle(
+        repo,
+        activation_sha="1" * 40,
+        bundle_sha="2" * 40,
+        tail_sha="f" * 40,
+        bundle_subject="docs: add shared legacy evidence",
+        bundle_files=(
+            "backend/app/domain/workflow_config.py",
+            "backend/app/domain/enums.py",
+            "backend/tests/unit/test_workflow_config_validation.py",
+            ".gitignore",
+            ".env.example",
+            "README.md",
+            "backend/tests/static/test_secret_hygiene.py",
+        ),
+    )
 
     epic_manifest = epic_module.get_epic("E003", tmp_path / ".specify" / "workstreams")
 
@@ -1003,29 +1055,107 @@ def test_verify_task_evidence_accepts_legacy_file_addition_for_e003_tasks(tmp_pa
     assert [call[0] for call in repo.calls].count("find_commits_adding_path") >= 2
 
 
-def test_verify_task_evidence_rejects_ambiguous_legacy_file_additions(tmp_path):
+def test_verify_task_evidence_rejects_overlapping_legacy_bundle_paths(tmp_path):
     _write_e003_fixture(tmp_path)
     repo = FakeRepository(tmp_path, current_branch="feature/E003", head_sha_value="f" * 40)
     github = FakeGitHubAdapter()
     receipt = FakeReviewReceipt(tmp_path)
     pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
-    _write_committed_task_state(tmp_path, task_id="T009", sha="9" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T010", sha="a" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T022", sha="b" * 40, run_id="run-epic-003", branch="feature/E003")
-    _write_committed_task_state(tmp_path, task_id="T023", sha="c" * 40, run_id="run-epic-003", branch="feature/E003")
-    _record_task_evidence(repo, task_id="T009", sha="9" * 40, title="artifact storage follow-up")
-    _record_task_evidence(repo, task_id="T010", sha="a" * 40, title="state machine follow-up")
-    _record_task_evidence(repo, task_id="T022", sha="b" * 40, title="registry follow-up")
-    _record_task_evidence(repo, task_id="T023", sha="c" * 40, title="provider config follow-up")
-    repo.record_commit("1" * 40, "docs: add workflow config test", files=("backend/tests/unit/test_t021.py",))
-    repo.record_commit("2" * 40, "docs: add workflow config test again", files=("backend/tests/unit/test_t021.py",))
-    repo.record_commit("f" * 40, "fix(autopilot): tooling follow-up")
+    _seed_e003_supporting_task_evidence(tmp_path, repo)
+    tasks_path = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+    tasks_text = tasks_path.read_text(encoding="utf-8").replace(
+        "backend/tests/static/test_secret_hygiene.py",
+        "backend/tests/unit/test_workflow_config_validation.py",
+        1,
+    )
+    tasks_path.write_text(tasks_text, encoding="utf-8")
+    _seed_e003_legacy_bundle(
+        repo,
+        activation_sha="1" * 40,
+        bundle_sha="2" * 40,
+        tail_sha="f" * 40,
+        bundle_subject="docs: add shared legacy evidence",
+        bundle_files=(
+            "backend/app/domain/workflow_config.py",
+            "backend/app/domain/enums.py",
+            "backend/tests/unit/test_workflow_config_validation.py",
+            ".gitignore",
+            ".env.example",
+            "README.md",
+        ),
+    )
 
     epic_manifest = epic_module.get_epic("E003", tmp_path / ".specify" / "workstreams")
     errors = pipeline._verify_task_evidence("E003", epic_manifest, [])
 
-    assert any("T021" in error for error in errors)
-    assert any("ambiguous legacy task evidence" in error for error in errors)
+    assert any("T024" in error for error in errors)
+    assert any("legacy evidence paths overlap" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_shared_persisted_sha(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="1" * 40)
+    repo.record_commit("1" * 40, "fix: shared persisted evidence", files=("specs/001-ai-content-studio/main.py",))
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("shared with" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_shared_task_id_subject_sha(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T008", sha="1" * 40)
+    repo.record_commit("1" * 40, "feat(T007): Implement epic task 1", files=("specs/001-ai-content-studio/main.py",))
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("shared with" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_legacy_bundle_after_e003_activation(tmp_path):
+    _write_e003_fixture(tmp_path)
+    repo = FakeRepository(tmp_path, current_branch="feature/E003", head_sha_value="f" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _seed_e003_supporting_task_evidence(tmp_path, repo)
+    _seed_e003_legacy_bundle(
+        repo,
+        activation_sha="1" * 40,
+        bundle_sha="2" * 40,
+        tail_sha="f" * 40,
+        bundle_subject="docs: add shared legacy evidence",
+        bundle_files=(
+            "backend/app/domain/workflow_config.py",
+            "backend/app/domain/enums.py",
+            "backend/tests/unit/test_workflow_config_validation.py",
+            ".gitignore",
+            ".env.example",
+            "README.md",
+            "backend/tests/static/test_secret_hygiene.py",
+        ),
+        activation_before_bundle=True,
+    )
+    repo.record_commit("0" * 40, "docs: post-activation follow-up")
+    repo.head_sha_value = "0" * 40
+
+    epic_manifest = epic_module.get_epic("E003", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E003", epic_manifest, [])
+
+    assert any("not older than the E003 activation commit" in error for error in errors)
 
 
 def test_run_epic_e003_completed_from_persisted_and_legacy_evidence_without_task_pipeline(tmp_path, monkeypatch):
@@ -1049,9 +1179,22 @@ def test_run_epic_e003_completed_from_persisted_and_legacy_evidence_without_task
     _record_task_evidence(repo, task_id="T010", sha="a" * 40, title="state machine follow-up")
     _record_task_evidence(repo, task_id="T022", sha="b" * 40, title="registry follow-up")
     _record_task_evidence(repo, task_id="T023", sha="c" * 40, title="provider config follow-up")
-    repo.record_commit("1" * 40, "docs: add workflow config test", files=("backend/tests/unit/test_t021.py",))
-    repo.record_commit("2" * 40, "docs: add secret hygiene test", files=("backend/tests/static/test_secret_hygiene.py",))
-    repo.record_commit("f" * 40, "fix(autopilot): tooling follow-up")
+    _seed_e003_legacy_bundle(
+        repo,
+        activation_sha="1" * 40,
+        bundle_sha="2" * 40,
+        tail_sha="f" * 40,
+        bundle_subject="docs: add shared legacy evidence",
+        bundle_files=(
+            "backend/app/domain/workflow_config.py",
+            "backend/app/domain/enums.py",
+            "backend/tests/unit/test_workflow_config_validation.py",
+            ".gitignore",
+            ".env.example",
+            "README.md",
+            "backend/tests/static/test_secret_hygiene.py",
+        ),
+    )
 
     monkeypatch.setattr(repo, "switch_to_master_and_pull", lambda base_branch="master", remote="origin": repo.calls.append(("switch_to_master_and_pull", base_branch, remote)))
     monkeypatch.setattr(repo, "create_branch", lambda branch, *, base_branch="master": repo.calls.append(("create_branch", branch, base_branch)) or setattr(repo, "current_branch", branch))
