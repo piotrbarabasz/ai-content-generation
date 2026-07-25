@@ -109,6 +109,8 @@ def _write_task_entries_fixture(tmp_path: Path, entries: list[dict[str, object]]
         branch = str(entry.get("branch", "feature/E003"))
         head_sha = str(entry.get("head_sha", "a" * 40))
         feature_dir = str(entry.get("feature_dir", ""))
+        epic = str(entry.get("epic", "E003"))
+        milestone = str(entry.get("milestone", "M001"))
         state = entry.get("state", TaskLifecycleState.CLOSED)
         receipt_state = entry.get("receipt_state", state)
         run_id = str(entry.get("run_id", "run-001"))
@@ -117,8 +119,8 @@ def _write_task_entries_fixture(tmp_path: Path, entries: list[dict[str, object]]
         rows.extend(
             [
                 f"- [{checkbox}] {task_id} {title}",
-                "Milestone: M001",
-                "Epic: E003",
+                f"Milestone: {milestone}",
+                f"Epic: {epic}",
                 "Implementation files: backend/app/storage/artifact_store.py",
                 "Test files: backend/tests/unit/tooling/test_git_hook_runner.py",
                 "Validation commands: python -m pytest backend/tests/unit/tooling/test_git_hook_runner.py",
@@ -175,6 +177,52 @@ def _write_task_entries_fixture(tmp_path: Path, entries: list[dict[str, object]]
             root=tmp_path,
         )
     tasks_path.write_text("\n".join(rows), encoding="utf-8")
+
+
+def _write_epic_manifest_fixture(
+    tmp_path: Path,
+    *,
+    status: str = "completed",
+    branch: str = "epic/E003-artifact-storage",
+) -> None:
+    workstreams_path = tmp_path / ".specify" / "workstreams"
+    workstreams_path.mkdir(parents=True, exist_ok=True)
+    (workstreams_path / "E003-artifact-storage.yml").write_text(
+        "\n".join(
+            [
+                "id: E003",
+                "title: Artifact Storage",
+                "milestone: M001",
+                "feature: specs/001-ai-content-studio",
+                "base_branch: master",
+                f"branch: {branch}",
+                f"status: {status}",
+                "risk: high",
+                "depends_on:",
+                "  - E001",
+                "  - E002",
+                "tasks:",
+                "  - T009",
+                "  - T010",
+                "  - T021",
+                "  - T022",
+                "  - T023",
+                "  - T024",
+                "required_checks:",
+                "  - python -m pytest",
+                "  - git --no-pager diff --check",
+                "pr_policy:",
+                "  one_pr_per_epic: true",
+                "  merge_requires_human: true",
+                "  auto_merge: false",
+                "commit_policy:",
+                "  one_commit_per_task: true",
+                "  commit_requires_human: true",
+                "  auto_commit: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _task_checkbox_diff_lines(
@@ -984,6 +1032,162 @@ def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch, 
     assert [call[1]["timeout_seconds"] for call in calls] == [20, 20, 300, 20]
 
 
+def test_pre_push_accepts_matching_committed_records_on_epic_branch(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="epic/E003-artifact-storage", head_sha="3" * 40),
+            ancestors={("2" * 40, "3" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([300.0, 300.01, 301.0, 301.01, 302.0, 302.01, 303.0, 303.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+
+
+def test_pre_push_rejects_matching_committed_record_outside_history_on_epic_branch(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="epic/E003-artifact-storage", head_sha="3" * 40)),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "ancestor" in result.reason
+
+
+def test_pre_push_accepts_fix_branch_with_only_unrelated_committed_records(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="fix/pre-push-epic-closure", head_sha="3" * 40)),
+    )
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([110.0, 111.0, 112.0, 113.0, 114.0, 115.0, 116.0, 117.0, 118.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([320.0, 320.01, 321.0, 321.01, 322.0, 322.01, 323.0, 323.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+
+
+def test_pre_push_accepts_closure_branch_for_completed_epic(monkeypatch, tmp_path):
+    _write_epic_manifest_fixture(tmp_path, status="completed", branch="epic/E003-artifact-storage")
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "6" * 40,
+                "commit_sha": "6" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="chore/close-E003", head_sha="7" * 40),
+            ancestors={("6" * 40, "7" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "6" * 40)
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([120.0, 121.0, 122.0, 123.0, 124.0, 125.0, 126.0, 127.0, 128.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([330.0, 330.01, 331.0, 331.01, 332.0, 332.01, 333.0, 333.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+
+
 def test_pre_push_accepts_ancestor_task_commit(monkeypatch, tmp_path):
     _write_task_entries_fixture(
         tmp_path,
@@ -1065,6 +1269,187 @@ def test_pre_push_rejects_commit_outside_history(monkeypatch, tmp_path):
     assert result.status == "FAIL"
     assert result.reason is not None
     assert "ancestor" in result.reason
+
+
+def test_pre_push_rejects_closure_branch_when_epic_is_active(monkeypatch, tmp_path):
+    _write_epic_manifest_fixture(tmp_path, status="active", branch="epic/E003-artifact-storage")
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "6" * 40,
+                "commit_sha": "6" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus(branch="chore/close-E003", head_sha="7" * 40)))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "completed" in result.reason
+
+
+def test_pre_push_rejects_closure_branch_when_record_branch_differs_from_manifest(monkeypatch, tmp_path):
+    _write_epic_manifest_fixture(tmp_path, status="completed", branch="epic/E003-artifact-storage")
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-elsewhere",
+                "head_sha": "6" * 40,
+                "commit_sha": "6" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="chore/close-E003", head_sha="7" * 40),
+            ancestors={("6" * 40, "7" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "6" * 40)
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "committed task branch" in result.reason
+
+
+def test_pre_push_rejects_closure_branch_when_task_commit_is_not_in_history(monkeypatch, tmp_path):
+    _write_epic_manifest_fixture(tmp_path, status="completed", branch="epic/E003-artifact-storage")
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "6" * 40,
+                "commit_sha": "6" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus(branch="chore/close-E003", head_sha="7" * 40)))
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "6" * 40)
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "ancestor" in result.reason
+
+
+def test_pre_push_closure_branch_ignores_committed_records_from_e002(monkeypatch, tmp_path):
+    _write_epic_manifest_fixture(tmp_path, status="completed", branch="epic/E003-artifact-storage")
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "6" * 40,
+                "commit_sha": "6" * 40,
+            },
+            {
+                "task_id": "T031",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E002-artifact-queue",
+                "head_sha": "5" * 40,
+                "commit_sha": "5" * 40,
+                "epic": "E002",
+                "milestone": "M001",
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="chore/close-E003", head_sha="7" * 40),
+            ancestors={("6" * 40, "7" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha in {"6" * 40, "5" * 40})
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([130.0, 131.0, 132.0, 133.0, 134.0, 135.0, 136.0, 137.0, 138.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([340.0, 340.01, 341.0, 341.01, 342.0, 342.01, 343.0, 343.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+
+
+def test_pre_push_similarity_branch_is_not_closure_branch(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="chore/close-E003-extra", head_sha="3" * 40)),
+    )
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([140.0, 141.0, 142.0, 143.0, 144.0, 145.0, 146.0, 147.0, 148.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([350.0, 350.01, 351.0, 351.01, 352.0, 352.01, 353.0, 353.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
 
 
 def test_ci_uses_commit_range_and_full_pytest_once(monkeypatch):

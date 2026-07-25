@@ -32,6 +32,7 @@ MAX_OUTPUT_LINES = 20
 MAX_LINE_LENGTH = 300
 ZERO_SHA = "0" * 40
 TASK_COMMIT_MESSAGE_PATTERN = re.compile(r"^feat\((T\d{3}[A-Z]?)\):")
+CLOSURE_BRANCH_PATTERN = re.compile(r"^chore/close-(E\d{3})$")
 GLOBAL_TIMEOUTS = {
     "pre-commit": 60,
     "pre-push": 480,
@@ -325,6 +326,15 @@ def _task_commit_task_id_from_message(message: str) -> str | None:
     return None
 
 
+def _closure_branch_epic_id(branch_name: str | None) -> str | None:
+    if not branch_name:
+        return None
+    match = CLOSURE_BRANCH_PATTERN.fullmatch(branch_name)
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def _staged_paths(status: Any) -> set[str]:
     return {
         *(_repo_relative_path(item) for item in getattr(status, "staged", ())),
@@ -450,7 +460,32 @@ def _validate_pre_push_state(repository: Repository) -> str | None:
     if not committed_records:
         return None
     current = repository.status()
+    closure_epic_id = _closure_branch_epic_id(current.branch)
+    epic_manifest: dict[str, Any] | None = None
+    epic_branch = ""
+    if closure_epic_id is not None:
+        epic_manifest_path = ROOT / ".specify" / "workstreams"
+        try:
+            epic_manifest = workstreams.get_epic(closure_epic_id, epic_manifest_path)
+        except Exception as exc:
+            return str(exc)
+        if str(epic_manifest.get("status") or "") != "completed":
+            return f"epic {closure_epic_id} must be completed before closure branch push"
+        epic_branch = str(epic_manifest.get("branch") or "")
+        if not epic_branch:
+            return f"epic {closure_epic_id} is missing an implementation branch"
     for record in committed_records:
+        if closure_epic_id is None:
+            if current.branch and record.branch != current.branch:
+                continue
+        else:
+            if not record.tasks_path:
+                return f"task {record.task_id} is missing tasks.md path in runtime state"
+            tasks_path = ROOT / Path(record.tasks_path)
+            if not tasks_path.is_file():
+                return f"task {record.task_id} tasks.md is missing"
+            if _task_epic(tasks_path, record.task_id) != closure_epic_id:
+                continue
         receipt = load_task_receipt(record.task_id, root=ROOT)
         if receipt is None:
             return f"missing receipt for committed task {record.task_id}"
@@ -467,17 +502,21 @@ def _validate_pre_push_state(repository: Repository) -> str | None:
             return f"commit {record.head_sha} does not exist for task {record.task_id}"
         if not _is_task_commit_in_history(repository, record.head_sha, current.head_sha):
             return f"commit {record.head_sha} is not an ancestor of current HEAD {current.head_sha}"
-        if record.branch and current.branch and record.branch != current.branch:
-            return f"branch {current.branch!r} does not match committed task branch {record.branch!r}"
-        if record.feature_dir:
-            epic_manifest_path = ROOT / ".specify" / "workstreams"
-            try:
-                epic = workstreams.get_epic(_task_epic(tasks_path, record.task_id), epic_manifest_path)
-            except Exception as exc:
-                return str(exc)
-            expected_branch = str(epic.get("branch") or "")
-            if expected_branch and expected_branch != current.branch:
-                return f"epic branch {expected_branch!r} does not match current branch {current.branch!r}"
+        if closure_epic_id is None:
+            if record.branch and current.branch and record.branch != current.branch:
+                return f"branch {current.branch!r} does not match committed task branch {record.branch!r}"
+            if record.feature_dir:
+                epic_manifest_path = ROOT / ".specify" / "workstreams"
+                try:
+                    epic = workstreams.get_epic(_task_epic(tasks_path, record.task_id), epic_manifest_path)
+                except Exception as exc:
+                    return str(exc)
+                expected_branch = str(epic.get("branch") or "")
+                if expected_branch and expected_branch != current.branch:
+                    return f"epic branch {expected_branch!r} does not match current branch {current.branch!r}"
+            continue
+        if record.branch != epic_branch:
+            return f"committed task branch {record.branch!r} does not match epic branch {epic_branch!r}"
     return None
 
 
