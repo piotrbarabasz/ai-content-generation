@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.tooling import git_hook_runner as runner
 from app.tooling.local_autopilot.task_state_machine import (
     TaskLifecycleState,
+    TaskReceiptStage,
     TaskReceiptRecord,
     TaskStateRecord,
     save_task_receipt,
@@ -45,11 +48,15 @@ class FakeGitStatus:
 
 
 class FakeRepository:
-    def __init__(self, status: FakeGitStatus) -> None:
+    def __init__(self, status: FakeGitStatus, ancestors: set[tuple[str, str]] | None = None) -> None:
         self._status = status
+        self._ancestors = ancestors or set()
 
     def status(self) -> FakeGitStatus:
         return self._status
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        return (ancestor, descendant) in self._ancestors
 
 
 def _clock(values: list[float]) -> callable:
@@ -70,12 +77,46 @@ def _patch_run_process(monkeypatch, responses: list[FakeProcessResult], calls: l
 def _write_closed_task_fixture(
     tmp_path: Path,
 ) -> None:
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T009",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+            }
+        ],
+    )
+    (tmp_path / ".specify" / "runtime" / "active-epic").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".specify" / "runtime" / "active-epic").write_text("E003\n", encoding="utf-8")
+
+
+def _write_task_entries_fixture(tmp_path: Path, entries: list[dict[str, object]]) -> None:
     tasks_path = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
     tasks_path.parent.mkdir(parents=True, exist_ok=True)
-    tasks_path.write_text(
-        "\n".join(
+    rows: list[str] = []
+    for entry in entries:
+        task_id = str(entry["task_id"])
+        checkbox = str(entry.get("checkbox", " "))
+        title = str(entry.get("title", "Implement artifact storage abstraction and local store"))
+        allowlist = tuple(str(item) for item in entry.get("allowlist", ()))
+        branch = str(entry.get("branch", "feature/E003"))
+        head_sha = str(entry.get("head_sha", "a" * 40))
+        feature_dir = str(entry.get("feature_dir", ""))
+        state = entry.get("state", TaskLifecycleState.CLOSED)
+        receipt_state = entry.get("receipt_state", state)
+        run_id = str(entry.get("run_id", "run-001"))
+        updated_at = str(entry.get("updated_at", "2026-07-25T00:00:00Z"))
+        validation_commands = tuple(str(item) for item in entry.get("validation_commands", ("python -m pytest backend/tests/unit/tooling/test_git_hook_runner.py",)))
+        rows.extend(
             [
-                "- [X] T009 Implement artifact storage abstraction and local store",
+                f"- [{checkbox}] {task_id} {title}",
                 "Milestone: M001",
                 "Epic: E003",
                 "Implementation files: backend/app/storage/artifact_store.py",
@@ -85,44 +126,96 @@ def _write_closed_task_fixture(
                 "Dependencies: None",
                 "",
             ]
-        ),
-        encoding="utf-8",
-    )
-    save_task_state(
-        TaskStateRecord(
-            schema_version=1,
-            run_id="run-001",
-            task_id="T009",
-            state=TaskLifecycleState.CLOSED,
-            updated_at="2026-07-25T00:00:00Z",
-            branch="feature/E003",
-            head_sha="a" * 40,
-            tasks_path=tasks_path.as_posix(),
-            feature_dir=str(tasks_path.parent),
-            allowlist=(
-                "backend/app/storage/artifact_store.py",
-                "backend/app/storage/local_store.py",
-                "backend/app/storage/manifest.py",
-                "backend/tests/unit/test_t009.py",
+        )
+        save_task_state(
+            TaskStateRecord(
+                schema_version=1,
+                run_id=run_id,
+                task_id=task_id,
+                state=state,
+                updated_at=updated_at,
+                branch=branch,
+                head_sha=head_sha,
+                tasks_path=tasks_path.as_posix(),
+                feature_dir=feature_dir,
+                allowlist=allowlist,
+                validation_commands=validation_commands,
+                task_line=1,
             ),
-            validation_commands=("python -m pytest backend/tests/unit/tooling/test_git_hook_runner.py",),
-            task_line=1,
-        ),
-        root=tmp_path,
+            root=tmp_path,
+        )
+        save_task_receipt(
+            TaskReceiptRecord(
+                schema_version=1,
+                run_id=run_id,
+                task_id=task_id,
+                updated_at=updated_at,
+                state=receipt_state if isinstance(receipt_state, TaskLifecycleState) else TaskLifecycleState(str(receipt_state)),
+                summary=str(entry.get("summary", "closed")),
+                files_touched=tuple(str(item) for item in entry.get("files_touched", ())),
+                notes=tuple(str(item) for item in entry.get("notes", ())),
+                validation=tuple(dict(item) for item in entry.get("validation", ()) if isinstance(item, dict)),
+                commit_sha=str(entry.get("commit_sha", "")),
+                stages=tuple(
+                    TaskReceiptStage(
+                        name=str(stage.get("name", "")),
+                        status=str(stage.get("status", "")),
+                        updated_at=str(stage.get("updated_at", updated_at)),
+                        details=dict(stage.get("details", {})),
+                    )
+                    for stage in entry.get("stages", ())
+                    if isinstance(stage, dict)
+                ),
+                review_verdict=str(entry.get("review_verdict", "")),
+                safe_to_close=bool(entry.get("safe_to_close", False)),
+                closure_checkbox_before=str(entry.get("closure_checkbox_before", "")),
+                closure_checkbox_after=str(entry.get("closure_checkbox_after", "")),
+                closure_task_line=int(entry.get("closure_task_line", 0)),
+            ),
+            root=tmp_path,
+        )
+    tasks_path.write_text("\n".join(rows), encoding="utf-8")
+
+
+def _task_checkbox_diff_lines(task_id: str = "T009") -> tuple[str, ...]:
+    return (
+        "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
+        "@@ -1,1 +1,1 @@",
+        f"-- [ ] {task_id} Implement artifact storage abstraction and local store",
+        f"+- [X] {task_id} Implement artifact storage abstraction and local store",
     )
-    save_task_receipt(
-        TaskReceiptRecord(
-            schema_version=1,
-            run_id="run-001",
-            task_id="T009",
-            updated_at="2026-07-25T00:00:00Z",
-            state=TaskLifecycleState.CLOSED,
-            summary="closed",
-        ),
-        root=tmp_path,
+
+
+def _bookkeeping_diff_lines() -> tuple[str, ...]:
+    return (
+        "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
+        "@@ -1,1 +1,1 @@",
+        "-- bookkeeping note",
+        "++ bookkeeping note",
     )
-    (tmp_path / ".specify" / "runtime" / "active-epic").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".specify" / "runtime" / "active-epic").write_text("E003\n", encoding="utf-8")
+
+
+def _two_task_checkbox_diff_lines() -> tuple[str, ...]:
+    return (
+        "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
+        "@@ -1,2 +1,2 @@",
+        "-- [ ] T010 Implement artifact storage abstraction and local store",
+        "+- [X] T010 Implement artifact storage abstraction and local store",
+        "-- [ ] T022 Implement artifact storage abstraction and local store",
+        "+- [X] T022 Implement artifact storage abstraction and local store",
+    )
+
+
+def _load_task_state_record(task_id: str, root: Path) -> TaskStateRecord:
+    record = runner.load_task_state(task_id, root=root)
+    assert record is not None
+    return record
+
+
+def _load_task_receipt_record(task_id: str, root: Path) -> TaskReceiptRecord:
+    receipt = runner.load_task_receipt(task_id, root=root)
+    assert receipt is not None
+    return receipt
 
 
 def test_pre_commit_uses_process_runner_and_disables_heartbeat(monkeypatch, capsys, tmp_path):
@@ -171,6 +264,14 @@ def test_path_allowed_rejects_similar_prefix_without_separator():
     assert not runner._path_allowed("backend/app/storage_evil/file.py", {"backend/app/storage"})
 
 
+def test_timestamp_is_utc_without_microseconds():
+    value = runner._timestamp()
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value)
+    parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert parsed.tzinfo == timezone.utc
+
+
 def test_pre_commit_validation_allows_bookkeeping_tasks_md_and_allowlist(monkeypatch, tmp_path):
     _write_closed_task_fixture(
         tmp_path,
@@ -178,7 +279,7 @@ def test_pre_commit_validation_allows_bookkeeping_tasks_md_and_allowlist(monkeyp
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     repo = FakeRepository(
         FakeGitStatus(
-            tracked=(
+            staged=(
                 "backend/app/storage/artifact_store.py",
                 "backend/app/storage/local_store.py",
                 "backend/app/storage/manifest.py",
@@ -187,14 +288,175 @@ def test_pre_commit_validation_allows_bookkeeping_tasks_md_and_allowlist(monkeyp
             )
         )
     )
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_bookkeeping_diff_lines() if "diff" in argv else ()),
+    )
 
     assert runner._validate_pre_commit_state(repo) is None
+
+
+def test_pre_commit_selects_current_closed_task_not_old_committed_task(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T010",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "allowlist": ("backend/app/storage/legacy.py",),
+                "head_sha": "1" * 40,
+                "commit_sha": "1" * 40,
+            },
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(
+                staged=(
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                    "specs/001-ai-content-studio/tasks.md",
+                )
+            )
+        ),
+    )
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines("T022")),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+
+    result = runner.run_hook("pre-commit", heartbeat_seconds=0)
+
+    assert result.status == "PASS"
+
+
+def test_pre_commit_rejects_stale_closed_task_allowlist_for_current_task(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T010",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+                "head_sha": "1" * 40,
+                "commit_sha": "1" * 40,
+            },
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/storage/local_store.py",),
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(
+                staged=("backend/app/storage/artifact_store.py", "specs/001-ai-content-studio/tasks.md")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines("T022") if "diff" in argv else ()),
+    )
+
+    error = runner._validate_pre_commit_state(runner.Repository(tmp_path))
+
+    assert error is not None
+    assert "backend/app/storage/artifact_store.py" in error
+
+
+def test_pre_commit_rejects_two_task_checkbox_changes(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T010",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/storage/artifact_store.py",),
+            },
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/storage/local_store.py",),
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(
+                staged=("backend/app/storage/artifact_store.py", "backend/app/storage/local_store.py", "specs/001-ai-content-studio/tasks.md")
+            )
+        ),
+    )
+    _patch_run_process(
+        monkeypatch,
+        [FakeProcessResult(status="PASS", stdout_lines=_two_task_checkbox_diff_lines())],
+        [],
+    )
+
+    result = runner.run_hook("pre-commit", heartbeat_seconds=0)
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "exactly one checkbox" in result.reason
 
 
 def test_pre_commit_validation_rejects_path_outside_allowlist(monkeypatch, tmp_path):
     _write_closed_task_fixture(tmp_path)
     monkeypatch.setattr(runner, "ROOT", tmp_path)
-    repo = FakeRepository(FakeGitStatus(tracked=("backend/app/storage/artifact_store.py", "backend/app/storage_evil/file.py")))
+    repo = FakeRepository(
+        FakeGitStatus(
+            staged=("backend/app/storage/artifact_store.py", "backend/app/storage_evil/file.py", "specs/001-ai-content-studio/tasks.md")
+        )
+    )
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines() if "diff" in argv else ()),
+    )
 
     error = runner._validate_pre_commit_state(repo)
 
@@ -202,10 +464,40 @@ def test_pre_commit_validation_rejects_path_outside_allowlist(monkeypatch, tmp_p
     assert "backend/app/storage_evil/file.py" in error
 
 
+def test_pre_commit_json_failure_includes_reason(monkeypatch, capsys, tmp_path):
+    _write_closed_task_fixture(tmp_path)
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(staged=("specs/001-ai-content-studio/tasks.md",))),
+    )
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines() if "diff" in argv else ()),
+    )
+    (tmp_path / ".specify" / "runtime" / "task-state" / "T009.json").unlink()
+    (tmp_path / ".specify" / "runtime" / "task-receipts" / "T009.json").unlink()
+
+    exit_code = runner.main(["pre-commit", "--json"])
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "FAIL"
+    assert payload["reason"]
+    assert payload["commands"] == []
+
+
 def test_pre_commit_validation_rejects_similar_prefix_directory(monkeypatch, tmp_path):
     _write_closed_task_fixture(tmp_path)
     monkeypatch.setattr(runner, "ROOT", tmp_path)
-    repo = FakeRepository(FakeGitStatus(tracked=("backend/app/storage_evil/file.py",)))
+    repo = FakeRepository(FakeGitStatus(staged=("backend/app/storage_evil/file.py", "specs/001-ai-content-studio/tasks.md")))
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines() if "diff" in argv else ()),
+    )
 
     error = runner._validate_pre_commit_state(repo)
 
@@ -216,7 +508,14 @@ def test_pre_commit_validation_rejects_similar_prefix_directory(monkeypatch, tmp
 def test_pre_commit_validation_normalizes_windows_backslashes(monkeypatch, tmp_path):
     _write_closed_task_fixture(tmp_path)
     monkeypatch.setattr(runner, "ROOT", tmp_path)
-    repo = FakeRepository(FakeGitStatus(tracked=(r"backend\app\storage\local_store.py",)))
+    repo = FakeRepository(
+        FakeGitStatus(staged=(r"backend\app\storage\local_store.py", "specs/001-ai-content-studio/tasks.md"))
+    )
+    monkeypatch.setattr(
+        runner.process_runner,
+        "run_process",
+        lambda argv, **kwargs: FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines() if "diff" in argv else ()),
+    )
 
     assert runner._validate_pre_commit_state(repo) is None
 
@@ -227,7 +526,7 @@ def test_pre_commit_hook_runs_closed_task_without_name_error(monkeypatch, tmp_pa
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(
         FakeGitStatus(
-            tracked=(
+            staged=(
                 "backend/app/storage/artifact_store.py",
                 "backend/app/storage/local_store.py",
                 "backend/app/storage/manifest.py",
@@ -239,6 +538,7 @@ def test_pre_commit_hook_runs_closed_task_without_name_error(monkeypatch, tmp_pa
     _patch_run_process(
         monkeypatch,
         [
+            FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines()),
             FakeProcessResult(status="PASS"),
             FakeProcessResult(status="PASS"),
             FakeProcessResult(status="PASS"),
@@ -251,11 +551,172 @@ def test_pre_commit_hook_runs_closed_task_without_name_error(monkeypatch, tmp_pa
     result = runner.run_hook("pre-commit", heartbeat_seconds=0)
 
     assert result.status == "PASS"
-    assert len(calls) == 3
+    assert len(calls) == 4
 
 
-def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch):
+def test_post_commit_promotes_only_task_in_commit_and_preserves_receipt_evidence(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T010",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/storage/legacy.py",),
+                "head_sha": "1" * 40,
+            },
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+                "head_sha": "2" * 40,
+                "summary": "closed",
+                "files_touched": ("backend/app/storage/artifact_store.py", "backend/tests/unit/test_t009.py"),
+                "notes": ("evidence note",),
+                "validation": ({"name": "pytest", "status": "PASS"},),
+                "review_verdict": "PASS",
+                "safe_to_close": True,
+                "closure_checkbox_before": " ",
+                "closure_checkbox_after": "X",
+                "closure_task_line": 1,
+                "stages": (
+                    {
+                        "name": "validated",
+                        "status": "PASS",
+                        "updated_at": "2026-07-25T00:00:00Z",
+                        "details": {"checks": ["pytest"]},
+                    },
+                ),
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)),
+    )
+    monkeypatch.setattr(runner, "_current_commit_message", lambda: "feat(T022): Implement artifact storage abstraction and local store")
+    monkeypatch.setattr(
+        runner,
+        "_commit_paths",
+        lambda _commit_ref: {
+            "backend/app/storage/artifact_store.py",
+            "backend/app/storage/local_store.py",
+            "backend/app/storage/manifest.py",
+            "backend/tests/unit/test_t009.py",
+            "specs/001-ai-content-studio/tasks.md",
+        },
+    )
+    monkeypatch.setattr(runner, "_task_commit_task_ids_in_commit", lambda _commit_ref, tasks_path=None: ["T022"])
+
+    result = runner.run_hook("post-commit")
+
+    assert result.status == "PASS"
+    state_t022 = _load_task_state_record("T022", tmp_path)
+    receipt_t022 = _load_task_receipt_record("T022", tmp_path)
+    state_t010 = _load_task_state_record("T010", tmp_path)
+    receipt_t010 = _load_task_receipt_record("T010", tmp_path)
+    assert state_t022.state == TaskLifecycleState.COMMITTED
+    assert state_t022.head_sha == "3" * 40
+    assert receipt_t022.state == TaskLifecycleState.COMMITTED
+    assert receipt_t022.commit_sha == "3" * 40
+    assert receipt_t022.review_verdict == "PASS"
+    assert receipt_t022.safe_to_close is True
+    assert receipt_t022.files_touched == ("backend/app/storage/artifact_store.py", "backend/tests/unit/test_t009.py")
+    assert receipt_t022.notes == ("evidence note",)
+    assert len(receipt_t022.validation) == 1
+    assert receipt_t022.stages[0].name == "validated"
+    assert receipt_t010.state == TaskLifecycleState.CLOSED
+    assert receipt_t010.commit_sha == ""
+    assert receipt_t010.review_verdict == ""
+
+
+def test_post_commit_idempotent_for_same_task_and_sha(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+                "head_sha": "2" * 40,
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)),
+    )
+    monkeypatch.setattr(runner, "_current_commit_message", lambda: "feat(T022): Implement artifact storage abstraction and local store")
+    monkeypatch.setattr(
+        runner,
+        "_commit_paths",
+        lambda _commit_ref: {
+            "backend/app/storage/artifact_store.py",
+            "backend/app/storage/local_store.py",
+            "backend/app/storage/manifest.py",
+            "backend/tests/unit/test_t009.py",
+            "specs/001-ai-content-studio/tasks.md",
+        },
+    )
+    monkeypatch.setattr(runner, "_task_commit_task_ids_in_commit", lambda _commit_ref, tasks_path=None: ["T022"])
+
+    first = runner.run_hook("post-commit")
+    second = runner.run_hook("post-commit")
+
+    assert first.status == "PASS"
+    assert second.status == "PASS"
+    assert _load_task_state_record("T022", tmp_path).state == TaskLifecycleState.COMMITTED
+    assert _load_task_receipt_record("T022", tmp_path).state == TaskLifecycleState.COMMITTED
+
+
+def test_post_commit_tooling_commit_does_not_promote_tasks(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)))
+    monkeypatch.setattr(runner, "_current_commit_message", lambda: "chore: tooling")
+
+    result = runner.run_hook("post-commit")
+
+    assert result.status == "PASS"
+    assert _load_task_state_record("T022", tmp_path).state == TaskLifecycleState.CLOSED
+    assert _load_task_receipt_record("T022", tmp_path).state == TaskLifecycleState.CLOSED
+
+
+def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch, tmp_path):
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus()))
     _patch_run_process(
         monkeypatch,
         [
@@ -281,6 +742,89 @@ def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch):
     assert all("backend/tests/unit/tooling" not in call[0] for call in calls)
     assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 1
     assert [call[1]["timeout_seconds"] for call in calls] == [20, 20, 300, 20]
+
+
+def test_pre_push_accepts_ancestor_task_commit(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    current_head = "3" * 40
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="feature/E003", head_sha=current_head),
+            ancestors={("2" * 40, current_head)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        [],
+    )
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+
+
+def test_pre_push_rejects_commit_outside_history(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "allowlist": (
+                    "backend/app/storage/artifact_store.py",
+                    "backend/app/storage/local_store.py",
+                    "backend/app/storage/manifest.py",
+                    "backend/tests/unit/test_t009.py",
+                ),
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    current_head = "3" * 40
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha=current_head)),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "ancestor" in result.reason
 
 
 def test_ci_uses_commit_range_and_full_pytest_once(monkeypatch):
@@ -328,8 +872,10 @@ def test_global_timeout_pre_commit_prints_global_timeout_and_stops(monkeypatch, 
     assert "status: TIMEOUT" in output
 
 
-def test_global_timeout_pre_push(monkeypatch):
+def test_global_timeout_pre_push(monkeypatch, tmp_path):
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus()))
     _patch_run_process(monkeypatch, [FakeProcessResult(status="PASS")], calls)
     monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 481.0]))
     monkeypatch.setattr(runner.time, "perf_counter", _clock([800.0, 800.01, 800.02, 800.03]))
@@ -354,8 +900,10 @@ def test_global_timeout_ci(monkeypatch):
     assert len(calls) == 1
 
 
-def test_timeout_stops_following_commands(monkeypatch):
+def test_timeout_stops_following_commands(monkeypatch, tmp_path):
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus()))
     _patch_run_process(monkeypatch, [FakeProcessResult(status="PASS")], calls)
     monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 481.0]))
     monkeypatch.setattr(runner.time, "perf_counter", _clock([1000.0, 1000.01, 1000.02, 1000.03]))
