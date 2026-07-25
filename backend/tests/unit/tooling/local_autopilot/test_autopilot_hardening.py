@@ -46,6 +46,7 @@ class SimState:
     codex_prompt_task: str | None = None
     codex_attempts: int = 0
     commit_index: int = 0
+    commit_history: list[tuple[str, str]] | None = None
     diff_checks: list[str] | None = None
     prs_by_branch: dict[tuple[str, str], PullRequestInfo] | None = None
     prs_by_number: dict[int, dict[str, object]] | None = None
@@ -54,6 +55,7 @@ class SimState:
 
     def __post_init__(self) -> None:
         self.branch_exists = set(self.branch_exists or ())
+        self.commit_history = list(self.commit_history or [])
         self.diff_checks = list(self.diff_checks or [])
         self.prs_by_branch = dict(self.prs_by_branch or {})
         self.prs_by_number = dict(self.prs_by_number or {})
@@ -80,6 +82,10 @@ class SimulatedShell:
 
         if command == ("git", "rev-parse", "HEAD"):
             return self._result(command, stdout=(self.state.head_sha,))
+
+        if command[:2] == ("git", "log") and "HEAD" in command:
+            lines = [f"{sha}\x1f{subject}" for sha, subject in reversed(self.state.commit_history)]
+            return self._result(command, stdout=tuple(lines))
 
         if command[:2] == ("git", "rev-parse") and command != ("git", "rev-parse", "HEAD"):
             ref = command[2] if len(command) > 2 else "HEAD"
@@ -108,11 +114,18 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command)
 
-        if command == ("git", "merge-base", "--is-ancestor", self.state.head_sha, self.state.base_sha):
-            return self._result(command)
-
-        if command == ("git", "merge-base", "--is-ancestor", self.state.base_sha, self.state.head_sha):
-            return self._result(command)
+        if len(command) == 5 and command[:3] == ("git", "merge-base", "--is-ancestor"):
+            ancestor, descendant = command[3], command[4]
+            history_index = {sha: index for index, (sha, _subject) in enumerate(self.state.commit_history)}
+            if ancestor in history_index and descendant in history_index:
+                status = "PASS" if history_index[ancestor] <= history_index[descendant] else "FAIL"
+                return self._result(command, status=status, exit_code=0 if status == "PASS" else 1)
+            if ancestor == descendant:
+                return self._result(command)
+            if ancestor == self.state.head_sha and descendant == self.state.base_sha:
+                return self._result(command)
+            if ancestor == self.state.base_sha and descendant == self.state.head_sha:
+                return self._result(command)
 
         if command == ("git", "merge", "--ff-only", "master"):
             self.state.head_sha = self.state.base_sha
@@ -132,9 +145,14 @@ class SimulatedShell:
         if command[:2] == ("git", "commit"):
             if self.state.commit_fail:
                 return self._result(command, status="FAIL", exit_code=1)
+            message = ""
+            if "-m" in command:
+                message = command[command.index("-m") + 1]
             self.state.clean = True
             self.state.commit_index += 1
             self.state.head_sha = f"{self.state.commit_index:040x}"[-40:]
+            if message:
+                self.state.commit_history.append((self.state.head_sha, message))
             return self._result(command)
 
         if command[:2] == ("git", "push"):

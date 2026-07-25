@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.tooling import task_consistency
 from app.tooling.local_autopilot import epic_pipeline as epic_module
 from app.tooling.local_autopilot.epic_pipeline import EpicPipeline, EpicPipelineResult, run_epic_pipeline
 from app.tooling.local_autopilot.github_adapter import GitHubAuthResult
@@ -20,6 +21,14 @@ from app.tooling.local_autopilot.models import (
     TaskResult,
 )
 from app.tooling.local_autopilot.process_runner import ProcessResult
+from app.tooling.local_autopilot.task_state_machine import (
+    TaskLifecycleState,
+    TaskReceiptRecord,
+    TaskReceiptStage,
+    TaskStateRecord,
+    save_task_receipt,
+    save_task_state,
+)
 from app.tooling.local_autopilot.task_pipeline import TaskPipelineResult
 
 
@@ -39,6 +48,8 @@ class FakeRepository:
             self.master_head_sha_value = self.head_sha_value
         self.calls: list[tuple[str, ...]] = []
         self.commit_messages: list[str] = []
+        self.commit_history: list[tuple[str, str]] = []
+        self.commit_subjects: dict[str, str] = {}
         self.pushed_branches: list[str] = []
         self.created_branches: list[tuple[str, str]] = []
         self.staged_paths: list[tuple[str, ...]] = []
@@ -63,6 +74,9 @@ class FakeRepository:
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         self.calls.append(("is_ancestor", ancestor, descendant))
+        history_index = {sha: index for index, (sha, _subject) in enumerate(self.commit_history)}
+        if ancestor in history_index and descendant in history_index:
+            return history_index[ancestor] <= history_index[descendant]
         if self.diverged:
             return False
         if ancestor == descendant:
@@ -104,6 +118,7 @@ class FakeRepository:
             return self._result(("git", "commit", "-m", message), status="FAIL", exit_code=1)
         self._commit_index += 1
         self.head_sha_value = f"{self._commit_index:040x}"[-40:]
+        self.record_commit(self.head_sha_value, message)
         self.clean = True
         return self._result(("git", "commit", "-m", message))
 
@@ -122,6 +137,19 @@ class FakeRepository:
     def head_sha(self) -> str:
         self.calls.append(("head_sha",))
         return self.head_sha_value
+
+    def find_commit_shas_by_subject(self, subject: str, ref: str = "HEAD") -> tuple[str, ...]:
+        self.calls.append(("find_commit_shas_by_subject", subject, ref))
+        normalized = subject.strip()
+        return tuple(sha for sha, commit_subject in self.commit_history if commit_subject.strip() == normalized)
+
+    def record_commit(self, sha: str, subject: str) -> None:
+        sha = str(sha).strip()
+        subject = str(subject).strip()
+        if not sha or not subject:
+            return
+        self.commit_subjects[sha] = subject
+        self.commit_history.append((sha, subject))
 
     def status(self):
         return type(
@@ -222,12 +250,13 @@ class FakeTaskPipeline:
         outcome = self.outcomes[task_id]
         status = outcome.get("status", RunStatus.COMPLETED)
         commit_sha = str(outcome.get("commit_sha") or f"{len(self.calls):040x}"[-40:])
-        title = str(outcome.get("title") or f"Task {task_id}")
+        title = self._task_title(task_id) or str(outcome.get("title") or f"Task {task_id}")
         allowlist = tuple(outcome.get("allowlist") or ("backend/app/tooling/local_autopilot/epic_pipeline.py",))
         validation_commands = tuple(outcome.get("validation_commands") or ("python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",))
         if status == RunStatus.COMPLETED:
             self._mark_complete(task_id)
             self.repo.head_sha_value = commit_sha
+            self.repo.record_commit(commit_sha, f"feat({task_id}): {title}")
             self.repo.clean = True
         else:
             self.repo.clean = True
@@ -278,6 +307,15 @@ class FakeTaskPipeline:
         text = tasks_path.read_text(encoding="utf-8")
         text = text.replace(f"- [ ] {task_id}", f"- [X] {task_id}", 1)
         tasks_path.write_text(text, encoding="utf-8")
+
+    def _task_title(self, task_id: str) -> str:
+        tasks_path = self.root / "specs" / "001-ai-content-studio" / "tasks.md"
+        for found_task_id, _start_line, lines in task_consistency._iter_task_blocks(tasks_path):
+            if found_task_id != task_id:
+                continue
+            header = lines[0][1]
+            return header[header.index(task_id) + len(task_id) :].strip()
+        return ""
 
 
 class FakeReviewReceipt:
@@ -513,6 +551,70 @@ def _build_pipeline(
     return pipeline, task_pipeline, process
 
 
+def _record_task_evidence(
+    repo: FakeRepository,
+    *,
+    task_id: str,
+    sha: str,
+    title: str,
+) -> None:
+    repo.record_commit(sha, f"feat({task_id}): {title}")
+
+
+def _write_committed_task_state(
+    tmp_path: Path,
+    *,
+    task_id: str,
+    sha: str,
+    run_id: str = "run-epic-002",
+    branch: str = "feature/E002",
+) -> None:
+    state = TaskStateRecord(
+        schema_version=1,
+        run_id=run_id,
+        task_id=task_id,
+        state=TaskLifecycleState.COMMITTED,
+        updated_at="2026-07-23T12:00:00Z",
+        branch=branch,
+        head_sha=sha,
+        tasks_path=str(tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"),
+        feature_dir=str(tmp_path / "specs" / "001-ai-content-studio"),
+        allowlist=("backend/app/tooling/local_autopilot/epic_pipeline.py",),
+        validation_commands=("python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",),
+        task_line=1,
+    )
+    receipt = TaskReceiptRecord(
+        schema_version=1,
+        run_id=run_id,
+        task_id=task_id,
+        updated_at="2026-07-23T12:00:00Z",
+        state=TaskLifecycleState.COMMITTED,
+        commit_sha=sha,
+        summary="done",
+        files_touched=("backend/app/tooling/local_autopilot/epic_pipeline.py",),
+        notes=("done",),
+        validation=(
+            {
+                "command": "python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",
+                "status": "PASS",
+            },
+        ),
+        stages=(
+            TaskReceiptStage(name="validated", status="PASS", updated_at="2026-07-23T12:00:00Z"),
+            TaskReceiptStage(name="reviewed", status="PASS", updated_at="2026-07-23T12:00:00Z"),
+            TaskReceiptStage(name="closed", status="PASS", updated_at="2026-07-23T12:00:00Z"),
+            TaskReceiptStage(name="committed", status="PASS", updated_at="2026-07-23T12:00:00Z"),
+        ),
+        review_verdict="PASS",
+        safe_to_close=True,
+        closure_checkbox_before=" ",
+        closure_checkbox_after="X",
+        closure_task_line=1,
+    )
+    save_task_state(state, root=tmp_path)
+    save_task_receipt(receipt, root=tmp_path)
+
+
 def test_run_epic_happy_path_stop_before_push_activates_branch_and_completes(tmp_path):
     manifest_path, tasks_file = _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
     repo = FakeRepository(tmp_path)
@@ -551,7 +653,7 @@ def test_run_epic_happy_path_stop_before_push_activates_branch_and_completes(tmp
 
 def test_run_epic_resumes_from_next_ready_task(tmp_path):
     _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True)
-    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="a" * 40)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="b" * 40, master_head_sha_value="b" * 40)
     github = FakeGitHubAdapter()
     receipt = FakeReviewReceipt(tmp_path)
     pipeline, task_pipeline, _ = _build_pipeline(
@@ -561,6 +663,8 @@ def test_run_epic_resumes_from_next_ready_task(tmp_path):
         receipt,
         {"T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"}},
     )
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
 
     result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
 
@@ -638,6 +742,170 @@ def test_run_epic_reloads_manifest_after_branch_switch_and_skips_activation_when
     assert get_epic_calls[0] == "master"
     assert "feature/E002" in get_epic_calls
     assert result.task_ids == ("T007", "T008")
+    assert task_pipeline.calls == []
+
+
+def test_verify_task_evidence_passes_for_persisted_commits_without_current_run_results(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="2" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    _record_task_evidence(repo, task_id="T008", sha="2" * 40, title="Implement epic task 2")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+
+    assert pipeline._verify_task_evidence("E002", epic_manifest, []) == []
+
+
+def test_verify_task_evidence_accepts_legacy_commit_history_without_runtime_state(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    _record_task_evidence(repo, task_id="T008", sha="2" * 40, title="Implement epic task 2")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+
+    assert pipeline._verify_task_evidence("E002", epic_manifest, []) == []
+
+
+def test_verify_task_evidence_rejects_missing_task_commit(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("T008" in error for error in errors)
+    assert any("no task commit found" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_commit_outside_head_history(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="9" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("T008" in error for error in errors)
+    assert any("no task commit found" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_state_and_receipt_sha_mismatch(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="2" * 40)
+    receipt_path = tmp_path / ".specify" / "runtime" / "task-receipts" / "T008.json"
+    receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt_payload["commit_sha"] = "3" * 40
+    receipt_path.write_text(json.dumps(receipt_payload, indent=2), encoding="utf-8")
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    _record_task_evidence(repo, task_id="T008", sha="2" * 40, title="Implement epic task 2")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("T008" in error for error in errors)
+    assert any("state.head_sha and receipt.commit_sha differ" in error for error in errors)
+
+
+def test_verify_task_evidence_rejects_duplicate_task_sha(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, _, _ = _build_pipeline(tmp_path, repo, github, receipt, {})
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="1" * 40)
+    repo.commit_history = [
+        ("1" * 40, "feat(T007): Implement epic task 1"),
+        ("1" * 40, "feat(T008): Implement epic task 2"),
+        ("c" * 40, "fix(autopilot): tooling follow-up"),
+    ]
+    repo.commit_subjects = {"1" * 40: "feat(T008): Implement epic task 2", "c" * 40: "fix(autopilot): tooling follow-up"}
+
+    epic_manifest = epic_module.get_epic("E002", tmp_path / ".specify" / "workstreams")
+    errors = pipeline._verify_task_evidence("E002", epic_manifest, [])
+
+    assert any("shared with" in error for error in errors)
+
+
+def test_run_epic_completed_epic_with_persisted_evidence_skips_task_pipeline_and_completes(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=True)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="c" * 40, master_head_sha_value="c" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {},
+        base_sha="b" * 40,
+    )
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _write_committed_task_state(tmp_path, task_id="T008", sha="2" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    _record_task_evidence(repo, task_id="T008", sha="2" * 40, title="Implement epic task 2")
+    repo.record_commit("c" * 40, "fix(autopilot): tooling follow-up")
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.task_ids == ()
+    assert task_pipeline.calls == []
+    assert receipt.writes and receipt.validations
+
+
+def test_run_epic_mixed_persisted_and_current_run_evidence_passes(tmp_path):
+    _setup_repo(tmp_path, epic_status="active", dependency_status="completed", task7_checked=True, task8_checked=False)
+    repo = FakeRepository(tmp_path, current_branch="feature/E002", head_sha_value="a" * 40, master_head_sha_value="b" * 40)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+        base_sha="b" * 40,
+    )
+    _write_committed_task_state(tmp_path, task_id="T007", sha="1" * 40)
+    _record_task_evidence(repo, task_id="T007", sha="1" * 40, title="Implement epic task 1")
+    repo.record_commit("b" * 40, "base: master sync")
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.task_ids == ("T008",)
     assert task_pipeline.calls == []
 
 

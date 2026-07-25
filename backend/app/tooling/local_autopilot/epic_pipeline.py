@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from app.tooling import epic_review_receipt
+from app.tooling import task_consistency
 from app.tooling import workstream_validation
 
 from . import process_runner, repository as repository_module
@@ -26,6 +27,7 @@ from .workstreams import (
     next_dependency_ready_task,
     validate_dependencies,
 )
+from .task_state_machine import load_task_receipt, load_task_state, _load_task_snapshot
 
 ROOT = Path(__file__).resolve().parents[4]
 ACTIVE_EPIC_FILE = ROOT / ".specify" / "runtime" / "active-epic"
@@ -198,7 +200,7 @@ class EpicPipeline:
                     activation_commit_sha=activation_commit_sha,
                 )
 
-            evidence_errors = self._verify_task_evidence(task_results)
+            evidence_errors = self._verify_task_evidence(epic_id, epic_manifest, task_results)
             if evidence_errors:
                 return self._finalize_failure(
                     current_run,
@@ -452,23 +454,104 @@ class EpicPipeline:
                 break
         return tuple(results)
 
-    def _verify_task_evidence(self, task_results: Sequence[TaskResult]) -> list[str]:
+    def _verify_task_evidence(
+        self,
+        epic_id: str,
+        epic_manifest: dict[str, Any],
+        task_results: Sequence[TaskResult],
+    ) -> list[str]:
         errors: list[str] = []
-        if not task_results:
-            return ["no task commits were recorded"]
         try:
             self.repository.require_clean_tree()
         except Exception as exc:
-            errors.append(str(exc))
-        commit_shas = [str(result.commit_sha or "").strip() for result in task_results]
-        if any(not sha for sha in commit_shas):
-            errors.append("one or more task commits are missing commit SHAs")
-        if len(commit_shas) != len(set(commit_shas)):
-            errors.append("task commit SHAs must be unique")
+            errors.append(f"{epic_id}: {exc}")
         current_head = self.repository.head_sha()
-        if commit_shas and commit_shas[-1] != current_head:
-            errors.append("current HEAD does not match the final task commit")
+        manifest_task_ids = tuple(
+            str(task_id).strip()
+            for task_id in (epic_manifest.get("tasks") or [])
+            if isinstance(task_id, str) and str(task_id).strip()
+        )
+        tasks_md_task_ids = self._epic_tasks_from_tasks_file(epic_id)
+        manifest_set = set(manifest_task_ids)
+        tasks_md_set = set(tasks_md_task_ids)
+        if manifest_set != tasks_md_set:
+            missing = sorted(manifest_set - tasks_md_set)
+            extra = sorted(tasks_md_set - manifest_set)
+            details: list[str] = []
+            if missing:
+                details.append(f"missing={missing}")
+            if extra:
+                details.append(f"extra={extra}")
+            errors.append(f"{epic_id}: tasks.md task IDs do not match the manifest ({'; '.join(details)})")
+        task_results_by_id = {str(result.task_id): result for result in task_results if str(result.task_id).strip()}
+        resolved_shas: dict[str, str] = {}
+        for task_id in manifest_task_ids:
+            try:
+                snapshot = _load_task_snapshot(task_id, self.tasks_file)
+            except Exception as exc:
+                errors.append(f"{task_id}: {exc}")
+                continue
+            if snapshot.epic_id != epic_id:
+                errors.append(f"{task_id}: tasks.md belongs to epic {snapshot.epic_id!r}, expected {epic_id!r}")
+                continue
+            if snapshot.checkbox.upper() != "X":
+                errors.append(f"{task_id}: tasks.md checkbox is [{snapshot.checkbox}]")
+                continue
+            exact_subject = f"feat({task_id}): {snapshot.title}".strip()
+            history_shas = self.repository.find_commit_shas_by_subject(exact_subject, ref="HEAD")
+            if not history_shas:
+                errors.append(f"{task_id}: no task commit found in HEAD history for {exact_subject!r}")
+                continue
+            if len(history_shas) > 1:
+                errors.append(f"{task_id}: ambiguous task commit in HEAD history for {exact_subject!r}: {', '.join(history_shas)}")
+                continue
+            history_sha = history_shas[0]
+            state_record = load_task_state(task_id, root=self.root)
+            receipt_record = load_task_receipt(task_id, root=self.root)
+            persisted_sha = ""
+            if state_record is not None or receipt_record is not None:
+                if state_record is None or receipt_record is None:
+                    errors.append(f"{task_id}: committed task state and receipt must both exist")
+                    continue
+                if state_record.state.value != "COMMITTED" or receipt_record.state.value != "COMMITTED":
+                    errors.append(f"{task_id}: committed task state and receipt must both be COMMITTED")
+                    continue
+                if not state_record.head_sha or not receipt_record.commit_sha:
+                    errors.append(f"{task_id}: committed task state and receipt must both record a SHA")
+                    continue
+                if state_record.head_sha != receipt_record.commit_sha:
+                    errors.append(
+                        f"{task_id}: state.head_sha and receipt.commit_sha differ "
+                        f"({state_record.head_sha} != {receipt_record.commit_sha})"
+                    )
+                    continue
+                persisted_sha = state_record.head_sha
+            current_result = task_results_by_id.get(task_id)
+            current_sha = str(current_result.commit_sha or "").strip() if current_result is not None else ""
+            if persisted_sha and current_sha and persisted_sha != current_sha:
+                errors.append(f"{task_id}: current run commit SHA {current_sha} does not match persisted SHA {persisted_sha}")
+                continue
+            candidate_sha = persisted_sha or current_sha or history_sha
+            if candidate_sha != history_sha:
+                errors.append(f"{task_id}: evidence SHA {candidate_sha} does not match HEAD history SHA {history_sha}")
+                continue
+            if candidate_sha in resolved_shas and resolved_shas[candidate_sha] != task_id:
+                errors.append(f"{task_id}: commit SHA {candidate_sha} is shared with {resolved_shas[candidate_sha]}")
+                continue
+            if not self.repository.is_ancestor(candidate_sha, current_head):
+                errors.append(f"{task_id}: commit {candidate_sha} is not an ancestor of HEAD {current_head}")
+                continue
+            resolved_shas[candidate_sha] = task_id
         return errors
+
+    def _epic_tasks_from_tasks_file(self, epic_id: str) -> tuple[str, ...]:
+        task_ids: list[str] = []
+        for task_id, _start_line, lines in task_consistency._iter_task_blocks(self.tasks_file):
+            epic = task_consistency._field_value(lines, "Epic:")
+            if epic is None or epic[1].strip() != epic_id:
+                continue
+            task_ids.append(task_id)
+        return tuple(task_ids)
 
     def _write_review_receipt(
         self,

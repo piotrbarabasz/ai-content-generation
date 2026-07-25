@@ -99,6 +99,22 @@ class Repository:
         result = self._git("git", "merge-base", "--is-ancestor", ancestor, descendant)
         return result.status == "PASS"
 
+    def find_commit_shas_by_subject(self, subject: str, ref: str = "HEAD") -> tuple[str, ...]:
+        subject = subject.strip()
+        if not subject:
+            raise ValueError("subject must be a non-empty string")
+        result = self._git("git", "log", ref, "--no-merges", "--format=%H%x1f%s")
+        if result.status != "PASS":
+            raise RuntimeError(f"git log {ref} failed")
+        shas: list[str] = []
+        for line in result.stdout_lines:
+            if "\x1f" not in line:
+                continue
+            sha, commit_subject = line.split("\x1f", 1)
+            if commit_subject.strip() == subject:
+                shas.append(sha.strip())
+        return tuple(shas)
+
     def merge_ff_only(self, branch: str) -> None:
         result = self._git("git", "merge", "--ff-only", branch)
         if result.status != "PASS":
