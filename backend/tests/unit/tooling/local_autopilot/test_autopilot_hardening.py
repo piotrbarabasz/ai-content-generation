@@ -46,6 +46,9 @@ class SimState:
     codex_prompt_task: str | None = None
     codex_attempts: int = 0
     commit_index: int = 0
+    commit_history: list[tuple[str, str]] | None = None
+    commit_files: dict[str, tuple[str, ...]] | None = None
+    path_additions: dict[str, list[str]] | None = None
     diff_checks: list[str] | None = None
     prs_by_branch: dict[tuple[str, str], PullRequestInfo] | None = None
     prs_by_number: dict[int, dict[str, object]] | None = None
@@ -54,6 +57,9 @@ class SimState:
 
     def __post_init__(self) -> None:
         self.branch_exists = set(self.branch_exists or ())
+        self.commit_history = list(self.commit_history or [])
+        self.commit_files = dict(self.commit_files or {})
+        self.path_additions = {key.replace("\\", "/").strip(): list(value) for key, value in (self.path_additions or {}).items()}
         self.diff_checks = list(self.diff_checks or [])
         self.prs_by_branch = dict(self.prs_by_branch or {})
         self.prs_by_number = dict(self.prs_by_number or {})
@@ -80,6 +86,20 @@ class SimulatedShell:
 
         if command == ("git", "rev-parse", "HEAD"):
             return self._result(command, stdout=(self.state.head_sha,))
+
+        if command[:2] == ("git", "log") and "--diff-filter=A" in command:
+            path = command[-1].replace("\\", "/").strip()
+            shas = self.state.path_additions.get(path, [])
+            return self._result(command, stdout=tuple(shas))
+
+        if command[:2] == ("git", "log") and "HEAD" in command:
+            lines = [f"{sha}\x1f{subject}" for sha, subject in reversed(self.state.commit_history)]
+            return self._result(command, stdout=tuple(lines))
+
+        if command[:3] == ("git", "diff-tree", "--no-commit-id"):
+            commit_sha = command[-1].strip()
+            files = self.state.commit_files.get(commit_sha, ())
+            return self._result(command, stdout=tuple(files))
 
         if command[:2] == ("git", "rev-parse") and command != ("git", "rev-parse", "HEAD"):
             ref = command[2] if len(command) > 2 else "HEAD"
@@ -108,11 +128,18 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command)
 
-        if command == ("git", "merge-base", "--is-ancestor", self.state.head_sha, self.state.base_sha):
-            return self._result(command)
-
-        if command == ("git", "merge-base", "--is-ancestor", self.state.base_sha, self.state.head_sha):
-            return self._result(command)
+        if len(command) == 5 and command[:3] == ("git", "merge-base", "--is-ancestor"):
+            ancestor, descendant = command[3], command[4]
+            history_index = {sha: index for index, (sha, _subject) in enumerate(self.state.commit_history)}
+            if ancestor in history_index and descendant in history_index:
+                status = "PASS" if history_index[ancestor] <= history_index[descendant] else "FAIL"
+                return self._result(command, status=status, exit_code=0 if status == "PASS" else 1)
+            if ancestor == descendant:
+                return self._result(command)
+            if ancestor == self.state.head_sha and descendant == self.state.base_sha:
+                return self._result(command)
+            if ancestor == self.state.base_sha and descendant == self.state.head_sha:
+                return self._result(command)
 
         if command == ("git", "merge", "--ff-only", "master"):
             self.state.head_sha = self.state.base_sha
@@ -132,9 +159,14 @@ class SimulatedShell:
         if command[:2] == ("git", "commit"):
             if self.state.commit_fail:
                 return self._result(command, status="FAIL", exit_code=1)
+            message = ""
+            if "-m" in command:
+                message = command[command.index("-m") + 1]
             self.state.clean = True
             self.state.commit_index += 1
             self.state.head_sha = f"{self.state.commit_index:040x}"[-40:]
+            if message:
+                self.state.commit_history.append((self.state.head_sha, message))
             return self._result(command)
 
         if command[:2] == ("git", "push"):
@@ -154,6 +186,16 @@ class SimulatedShell:
             return self._result(command, stdout=("Codex CLI",))
 
         if command == ("codex", "exec", "--help"):
+            if not self.state.codex_exec_ok:
+                return self._result(command, status="FAIL", exit_code=1)
+            return self._result(command, stdout=("Run Codex non-interactively",))
+
+        if Path(command[0]).name.lower().startswith("codex") and command[1:2] == ("--help",):
+            if not self.state.codex_cli_ok:
+                return self._result(command, status="MISSING", exit_code=None)
+            return self._result(command, stdout=("Codex CLI",))
+
+        if Path(command[0]).name.lower().startswith("codex") and command[1:3] == ("exec", "--help"):
             if not self.state.codex_exec_ok:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command, stdout=("Run Codex non-interactively",))
@@ -195,8 +237,6 @@ class SimulatedShell:
             }
             if output_path is not None:
                 output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            if self.state.codex_prompt_task is not None:
-                self._mark_task_complete(self.state.codex_prompt_task)
             return self._result(command, stdout=(self.state.sandbox_banner, "working", json.dumps(payload)))
 
         if command == ("gh", "auth", "status"):
@@ -334,6 +374,12 @@ class SimulatedShell:
 
         if command[:2] == (self.python_executable, "-m") and "pytest" in command:
             return self._result(command, stdout=("ok",))
+
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.agent_task_finalize"):
+            return self._result(command, stdout=("status: PASS",))
+
+        if command[:3] == (self.python_executable, "-m", "backend.app.tooling.git_hook_runner"):
+            return self._result(command, stdout=("status: PASS",))
 
         raise AssertionError(f"unexpected command: {command}")
 

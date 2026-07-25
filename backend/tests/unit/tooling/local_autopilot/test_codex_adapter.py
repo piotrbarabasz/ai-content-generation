@@ -90,6 +90,27 @@ def _result_payload(
     }
 
 
+def _new_result_payload(
+    task_id: str = "T007",
+    *,
+    agent_outcome: str = "finished",
+    summary: str = "Implementation complete.",
+    files_touched: list[str] | None = None,
+    notes: list[str] | None = None,
+) -> dict[str, object]:
+    if files_touched is None:
+        files_touched = ["backend/app/tooling/local_autopilot/task_pipeline.py"]
+    if notes is None:
+        notes = ["Implementation complete."]
+    return {
+        "task_id": task_id,
+        "agent_outcome": agent_outcome,
+        "summary": summary,
+        "files_touched": files_touched,
+        "notes": notes,
+    }
+
+
 def test_detect_availability_uses_codex_help_and_exec_help(tmp_path):
     calls: list[tuple[str, ...]] = []
 
@@ -230,12 +251,15 @@ def test_build_command_uses_full_path_and_preserves_spaces(tmp_path, monkeypatch
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
     command = adapter.build_command(
         output_last_message_path=tmp_path / "Program Files" / "output-last-message.txt",
+        output_schema_path=tmp_path / "Program Files" / "output-schema.json",
     )
 
     assert command[0] == str(executable)
     assert command[0].endswith("codex.cmd")
     assert "Program Files" in command[0]
     assert command[1:6] == ["--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
+    assert command[-5] == "--output-schema"
+    assert command[-4].endswith("output-schema.json")
     assert command[-3] == "--output-last-message"
     assert command[-2].endswith("output-last-message.txt")
     assert command[-1] == "-"
@@ -275,24 +299,21 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
     assert "Do not create commits, pushes, pull requests, merges, or deployments." in prompt
     assert "Return exactly one JSON object and nothing else." in prompt
     assert "Do not wrap the JSON in markers, fences, markdown, or explanatory text." in prompt
-    assert "Use the canonical lowercase keys task_id, final_status, review_verdict, reason, files_changed, validation, tasks_md_change, repair_cycles_used, safe_to_commit, next_task_started and retryable." in prompt
+    assert "Do not include legacy keys." in prompt
+    assert "Do not include final_status, review_verdict, files_changed, reason, validation, tasks_md_change, safe_to_commit, next_task_started or retryable." in prompt
     assert "The final response must follow this example shape exactly:" in prompt
     assert json.dumps(
         {
             "task_id": "T007",
-            "final_status": "COMPLETED",
-            "review_verdict": "PASS",
-            "reason": None,
-            "files_changed": [],
-            "validation": [],
-            "tasks_md_change": "- [X] T007 ...",
-            "repair_cycles_used": 0,
-            "safe_to_commit": True,
-            "next_task_started": False,
-            "retryable": False,
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [],
+            "notes": [],
         },
         indent=2,
     ) in prompt
+    assert "Legacy-compatible example" not in prompt
+    assert "Use the canonical lowercase keys task_id, final_status" not in prompt
     assert "Do not emit any trailing text after the JSON object." in prompt
 
     with pytest.raises(ValueError):
@@ -303,6 +324,7 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     adapter = CodexAdapter(tmp_path, process_runner_fn=lambda *args, **kwargs: _help_result(tuple(args[0])))
     command = adapter.build_command(
         output_last_message_path=tmp_path / "output-last-message.txt",
+        output_schema_path=tmp_path / "output-schema.json",
     )
 
     assert command[:6] == ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never", "exec"]
@@ -314,8 +336,10 @@ def test_build_command_uses_supported_codex_exec_flags(tmp_path):
     assert "workspace-write" in command
     assert "--color" in command
     assert "never" in command
+    assert "--output-schema" in command
     assert "--output-last-message" in command
-    assert "--output-schema" not in command
+    assert command[-5] == "--output-schema"
+    assert command[-4] == str(tmp_path / "output-schema.json")
     assert command[-3] == "--output-last-message"
     assert command[-2] == str(tmp_path / "output-last-message.txt")
     assert command[-1] == "-"
@@ -357,6 +381,132 @@ def test_validate_autopilot_result_contract_requires_reason_for_blocked_and_fail
     assert "reason is missing" in (blocked[3] or "")
     assert failed[0] is None
     assert "reason is missing" in (failed[3] or "")
+
+
+def test_autopilot_result_schema_requires_new_contract_only():
+    schema = codex_module.AUTOPILOT_RESULT_SCHEMA
+
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["task_id", "agent_outcome", "summary", "files_touched", "notes"]
+
+
+def test_validate_autopilot_result_contract_accepts_new_payload():
+    payload = _new_result_payload()
+
+    validated, status, retryable, error = validate_autopilot_result_contract(payload, task_id="T007")
+
+    assert error is None
+    assert status == "PASS"
+    assert retryable is False
+    assert validated is not None
+    assert validated["agent_outcome"] == "finished"
+    assert validated["summary"] == "Implementation complete."
+
+
+def test_validate_autopilot_result_contract_accepts_legacy_only_payload():
+    payload = _result_payload("T007", final_status="COMPLETED", review_verdict="PASS", reason=None, safe_to_commit=True)
+
+    validated, status, retryable, error = validate_autopilot_result_contract(payload, task_id="T007")
+
+    assert error is None
+    assert status == "PASS"
+    assert retryable is False
+    assert validated is not None
+    assert validated["final_status"] == "COMPLETED"
+
+
+def test_validate_autopilot_result_contract_rejects_mixed_payload():
+    payload = {
+        **_new_result_payload(),
+        "final_status": "COMPLETED",
+        "review_verdict": "PASS",
+    }
+
+    validated, status, retryable, error = validate_autopilot_result_contract(payload, task_id="T007")
+
+    assert validated is None
+    assert status is None
+    assert retryable is False
+    assert "both legacy and new contract keys" in (error or "")
+
+
+def test_run_task_removes_output_schema_tempfile_on_success(tmp_path, monkeypatch):
+    created_paths: list[Path] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def fake_mkstemp(*args, **kwargs):
+        fd, raw_path = real_mkstemp(*args, **kwargs)
+        created_paths.append(Path(raw_path))
+        return fd, raw_path
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        assert "--output-schema" in command
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        assert schema_path.is_file()
+        _write_output_last_message(
+            command,
+            json.dumps(
+                _new_result_payload(),
+                indent=2,
+            ),
+        )
+        return FakeProcessResult(command=command, status="PASS", exit_code=0, stdout_lines=("sandbox: workspace-write",))
+
+    monkeypatch.setattr(codex_module.tempfile, "mkstemp", fake_mkstemp)
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "PASS"
+    assert len(created_paths) == 2
+    assert all(not path.exists() for path in created_paths)
+
+
+def test_run_task_removes_output_schema_tempfile_on_error(tmp_path, monkeypatch):
+    created_paths: list[Path] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def fake_mkstemp(*args, **kwargs):
+        fd, raw_path = real_mkstemp(*args, **kwargs)
+        created_paths.append(Path(raw_path))
+        return fd, raw_path
+
+    def fake_run(argv, **kwargs):
+        command = tuple(argv)
+        if command == ("codex", "--help"):
+            return _help_result(command, stdout=("Codex CLI",))
+        if command == ("codex", "exec", "--help"):
+            return _help_result(command, stdout=("Run Codex non-interactively",))
+        assert "--output-schema" in command
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        assert schema_path.is_file()
+        return FakeProcessResult(command=command, status="FAIL", exit_code=1, stdout_lines=("sandbox: workspace-write",))
+
+    monkeypatch.setattr(codex_module.tempfile, "mkstemp", fake_mkstemp)
+
+    adapter = CodexAdapter(tmp_path, process_runner_fn=fake_run)
+    result = adapter.run_task(
+        task_id="T007",
+        task_text="Implement one task",
+        agent_python="python.exe",
+        speckit_selector="T007",
+        timeout_seconds=60,
+    )
+
+    assert result.status == "FAIL"
+    assert len(created_paths) == 2
+    assert all(not path.exists() for path in created_paths)
 
 
 def test_run_task_parses_last_valid_result_json_and_ignores_invalid_blocks(tmp_path):
@@ -613,9 +763,11 @@ def test_run_task_removes_output_last_message_tempfile(tmp_path, monkeypatch):
     )
 
     assert result.status == "PASS"
-    assert len(created_paths) == 1
+    assert len(created_paths) == 2
     assert created_paths[0].suffix == ".txt"
+    assert created_paths[1].suffix == ".json"
     assert not created_paths[0].exists()
+    assert not created_paths[1].exists()
 
 
 def test_run_task_accepts_final_status_and_retryable_flag(tmp_path):

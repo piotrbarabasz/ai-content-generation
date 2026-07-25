@@ -1,6 +1,6 @@
 """Canonical WorkflowConfig schema and validation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -154,3 +154,15 @@ class WorkflowConfig(DomainEntity):
 
         if provider_validator is not None:
             provider_validator(self)
+
+    def provider_config_items(self) -> tuple[tuple[str, JsonDict], ...]:
+        """Return provider configuration entries in deterministic order."""
+
+        items: list[tuple[str, JsonDict]] = []
+        for provider_type, provider_config in sorted(self.provider_config.items()):
+            if not isinstance(provider_config, Mapping):
+                raise DomainValidationError(
+                    f"ProviderConfig entry for {provider_type} must be an object."
+                )
+            items.append((str(provider_type), dict(provider_config)))
+        return tuple(items)

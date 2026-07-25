@@ -99,6 +99,55 @@ class Repository:
         result = self._git("git", "merge-base", "--is-ancestor", ancestor, descendant)
         return result.status == "PASS"
 
+    def find_commit_shas_by_subject(self, subject: str, ref: str = "HEAD") -> tuple[str, ...]:
+        subject = subject.strip()
+        if not subject:
+            raise ValueError("subject must be a non-empty string")
+        result = self._git("git", "log", ref, "--no-merges", "--format=%H%x1f%s")
+        if result.status != "PASS":
+            raise RuntimeError(f"git log {ref} failed")
+        shas: list[str] = []
+        for line in result.stdout_lines:
+            if "\x1f" not in line:
+                continue
+            sha, commit_subject = line.split("\x1f", 1)
+            if commit_subject.strip() == subject:
+                shas.append(sha.strip())
+        return tuple(shas)
+
+    def list_commit_history(self, ref: str = "HEAD") -> tuple[tuple[str, str], ...]:
+        result = self._git("git", "log", ref, "--no-merges", "--format=%H%x1f%s")
+        if result.status != "PASS":
+            raise RuntimeError(f"git log {ref} failed")
+        entries: list[tuple[str, str]] = []
+        for line in result.stdout_lines:
+            if "\x1f" not in line:
+                continue
+            sha, subject = line.split("\x1f", 1)
+            sha = sha.strip()
+            subject = subject.strip()
+            if sha and subject:
+                entries.append((sha, subject))
+        return tuple(entries)
+
+    def find_commits_adding_path(self, path: Path | str, ref: str = "HEAD") -> tuple[str, ...]:
+        normalized = str(path).replace("\\", "/").strip()
+        if not normalized:
+            raise ValueError("path must be a non-empty string")
+        result = self._git("git", "log", ref, "--diff-filter=A", "--format=%H", "--", normalized)
+        if result.status != "PASS":
+            raise RuntimeError(f"git log {ref} -- {normalized} failed")
+        return tuple(line.strip() for line in result.stdout_lines if line.strip())
+
+    def list_commit_files(self, commit_sha: str) -> tuple[str, ...]:
+        commit_sha = commit_sha.strip()
+        if not commit_sha:
+            raise ValueError("commit_sha must be a non-empty string")
+        result = self._git("git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha)
+        if result.status != "PASS":
+            raise RuntimeError(f"git diff-tree {commit_sha} failed")
+        return tuple(line.replace("\\", "/").strip() for line in result.stdout_lines if line.strip())
+
     def merge_ff_only(self, branch: str) -> None:
         result = self._git("git", "merge", "--ff-only", branch)
         if result.status != "PASS":

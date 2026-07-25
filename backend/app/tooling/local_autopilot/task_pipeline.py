@@ -16,6 +16,20 @@ from . import process_runner, repository as repository_module
 from .codex_adapter import CodexAdapter
 from .config import AutopilotConfig, DEFAULT_AUTOPILOT_CONFIG_PATH, load_autopilot_config
 from .models import AutopilotRun, CommandResult, RunStatus, TaskResult
+from .task_state_machine import (
+    TASK_RECEIPT_DIR,
+    TASK_STATE_DIR,
+    TaskLifecycleState,
+    TaskReceiptRecord,
+    TaskReceiptStage,
+    TaskStateMachine,
+    TaskStateMachineError,
+    load_task_receipt,
+    save_task_receipt,
+    save_task_state,
+    task_receipt_path,
+    task_state_path,
+)
 from .state_store import save_run_state
 from .workstreams import get_epic
 
@@ -75,6 +89,7 @@ class TaskPipeline:
         self.config = config or load_autopilot_config(config_path)
         self.repository = repository or repository_module.Repository(self.root, process_runner_fn=process_runner_fn)
         self.codex = codex_adapter or CodexAdapter(self.root, process_runner_fn=process_runner_fn)
+        self.state_machine = TaskStateMachine(self.root, repository=self.repository)
 
     def run_task(
         self,
@@ -86,26 +101,20 @@ class TaskPipeline:
         command_results: list[CommandResult] = []
         try:
             self._require_not_cancelled(cancel_event)
-            self._require_clean_tree()
             epic_id, branch_name = self._active_epic_and_branch(run)
             self._require_active_epic(epic_id, branch_name)
             python_executable = self._resolve_agent_python()
-            preflight_payload, preflight_command = self._run_preflight(task_id, python_executable, cancel_event)
-            command_results.append(preflight_command)
-            if preflight_payload.get("status") != "PASS":
-                raise TaskPipelineError(f"preflight status is {preflight_payload.get('status')!r}, expected 'PASS'")
-            if preflight_payload.get("task") != task_id:
-                raise TaskPipelineError(f"preflight selected {preflight_payload.get('task')!r}, expected {task_id!r}")
-            if preflight_payload.get("epic") != epic_id:
-                raise TaskPipelineError(f"preflight epic is {preflight_payload.get('epic')!r}, expected {epic_id!r}")
-            if preflight_payload.get("branch") != branch_name:
-                raise TaskPipelineError(f"preflight branch is {preflight_payload.get('branch')!r}, expected {branch_name!r}")
-            baseline_path = _require_text(preflight_payload, "baseline_path")
-            feature_dir = _resolve_path(self.root, _require_text(preflight_payload, "feature_dir"))
-            tasks_path = _resolve_path(self.root, _require_text(preflight_payload, "tasks_path"))
+            epic_manifest = get_epic(epic_id, self.root / ".specify" / "workstreams")
+            if not isinstance(epic_manifest, dict):
+                raise TaskPipelineError(f"epic {epic_id} manifest is invalid")
+            feature_dir = _resolve_path(self.root, _require_text(epic_manifest, "feature"))
+            if not feature_dir.is_dir():
+                raise TaskPipelineError(f"epic {epic_id} does not declare a feature directory")
+            tasks_path = feature_dir / "tasks.md"
             task_context = self._load_task_context(task_id, tasks_path=tasks_path, feature_dir=feature_dir)
-            if task_context.checkbox != " ":
+            if task_context.checkbox == "X":
                 raise TaskPipelineError(f"{task_context.tasks_path.name}:{task_context.task_line}: task {task_id} must be unchecked before running")
+
             checklist_blocker = self._check_required_checklists(task_context.feature_dir)
             if checklist_blocker is not None:
                 return self._blocked_result(
@@ -117,166 +126,521 @@ class TaskPipeline:
                     attempts=0,
                 )
 
-            baseline_file = _resolve_path(self.root, baseline_path)
-            if not _path_exists(baseline_file):
-                raise TaskPipelineError(f"baseline does not exist: {baseline_path}")
-            baseline = _load_json_mapping(baseline_file)
-            original_tasks_text = task_context.tasks_text
-            codex_result = self.codex.run_task(
+            baseline_file = self._default_baseline_path(task_id)
+            reconcile = self.state_machine.reconcile(
                 task_id=task_id,
-                task_text=task_context.task_title,
-                agent_python=python_executable,
-                speckit_selector=task_id,
-                timeout_seconds=self.config.codex_timeout_seconds,
-                cancel_event=cancel_event,
+                run_id=run.run_id,
+                tasks_path=task_context.tasks_path,
+                baseline_path=baseline_file if baseline_file.is_file() else None,
             )
-            attempts = 1
-            command_results.extend(self._command_results_from_codex(codex_result))
-            if codex_result.cancelled:
-                return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=attempts)
-            if codex_result.status == "BLOCKED":
-                return self._blocked_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason=codex_result.parse_error or self._blocked_reason_from_codex(codex_result) or "codex returned BLOCKED",
-                    attempts=attempts,
-                )
-            if codex_result.status != "PASS" or codex_result.result_json is None:
-                last_reason = codex_result.parse_error or f"codex exited with {codex_result.status}"
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason=last_reason,
-                    attempts=attempts,
-                )
-            if not codex_result.result_json.get("safe_to_commit", False):
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason="codex result is not marked safe_to_commit",
-                    attempts=attempts,
-                )
+            current_state = reconcile.inferred_state
+            state_record = reconcile.task_state
+            receipt = reconcile.receipt
 
-            bookkeeping_path = task_context.tasks_path.relative_to(self.root).as_posix()
-            scope_check = self._check_scope_drift(baseline, [*task_context.allowlist, bookkeeping_path])
-            if scope_check is not None:
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason=str(scope_check),
-                    attempts=attempts,
+            if current_state in {TaskLifecycleState.PENDING, TaskLifecycleState.READY}:
+                self._require_clean_tree()
+                preflight_payload, preflight_command = self._run_preflight(task_id, python_executable, cancel_event)
+                command_results.append(preflight_command)
+                if preflight_payload.get("status") != "PASS":
+                    raise TaskPipelineError(f"preflight status is {preflight_payload.get('status')!r}, expected 'PASS'")
+                if preflight_payload.get("task") != task_id:
+                    raise TaskPipelineError(f"preflight selected {preflight_payload.get('task')!r}, expected {task_id!r}")
+                if preflight_payload.get("epic") != epic_id:
+                    raise TaskPipelineError(f"preflight epic is {preflight_payload.get('epic')!r}, expected {epic_id!r}")
+                if preflight_payload.get("branch") != branch_name:
+                    raise TaskPipelineError(f"preflight branch is {preflight_payload.get('branch')!r}, expected {branch_name!r}")
+                baseline_file = _resolve_path(self.root, _require_text(preflight_payload, "baseline_path"))
+                if not _path_exists(baseline_file):
+                    raise TaskPipelineError(f"baseline does not exist: {baseline_file}")
+                state_record = self.state_machine.transition(
+                    task_id=task_id,
+                    run_id=run.run_id,
+                    state=TaskLifecycleState.READY,
+                    tasks_path=task_context.tasks_path,
+                    baseline_path=baseline_file,
+                    reason="preflight completed",
                 )
+                current_state = TaskLifecycleState.READY
+            elif state_record is not None and state_record.baseline_path:
+                baseline_file = _resolve_path(self.root, state_record.baseline_path)
 
-            validation_results = self._run_validation_commands(task_context.validation_commands, python_executable, cancel_event)
-            command_results.extend(validation_results)
-            if any(result.status != "PASS" for result in validation_results):
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason="validation failed",
-                    attempts=attempts,
+            if current_state in {TaskLifecycleState.PENDING, TaskLifecycleState.READY}:
+                codex_result = self.codex.run_task(
+                    task_id=task_id,
+                    task_text=task_context.task_title,
+                    agent_python=python_executable,
+                    speckit_selector=task_id,
+                    timeout_seconds=self.config.codex_timeout_seconds,
+                    cancel_event=cancel_event,
                 )
-
-            diff_result = self._diff_check()
-            command_results.append(diff_result)
-            if diff_result.status != "PASS":
-                repaired = self._repair_whitespace(task_context.allowlist)
-                if repaired:
-                    command_results.extend(repaired)
-                    diff_result = self._diff_check()
-                    command_results.append(diff_result)
-                if diff_result.status != "PASS":
+                attempts = 1
+                command_results.extend(self._command_results_from_codex(codex_result))
+                if codex_result.cancelled:
+                    return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=attempts)
+                if codex_result.status == "BLOCKED":
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.BLOCKED,
+                        summary=codex_result.parse_error or self._blocked_reason_from_codex(codex_result) or "codex returned BLOCKED",
+                        files_touched=(),
+                        notes=(codex_result.parse_error or self._blocked_reason_from_codex(codex_result) or "codex returned BLOCKED",),
+                        agent_outcome="blocked",
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.BLOCKED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    return self._blocked_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason=receipt.summary,
+                        attempts=attempts,
+                    )
+                if codex_result.status != "PASS" or codex_result.result_json is None:
+                    last_reason = codex_result.parse_error or f"codex exited with {codex_result.status}"
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        summary=last_reason,
+                        files_touched=(),
+                        notes=(last_reason,),
+                        agent_outcome="failed",
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
                     return self._failed_result(
                         run,
                         task_id,
                         task_context=task_context,
                         command_results=command_results,
-                        reason="git diff --check failed",
+                        reason=last_reason,
                         attempts=attempts,
                     )
 
-            current_tasks_text = task_context.tasks_path.read_text(encoding="utf-8")
-            tasks_change = self._verify_task_completion_change(
-                task_context,
-                before_text=original_tasks_text,
-                after_text=current_tasks_text,
-            )
-            if tasks_change is not None:
-                return self._failed_result(
-                    run,
-                    task_id,
+                touched_source = codex_result.result_json.get("files_touched")
+                if not isinstance(touched_source, list):
+                    touched_source = codex_result.result_json.get("files_changed")
+                touched_files = tuple(str(item).replace("\\", "/") for item in (touched_source or ()))
+                outcome = str(codex_result.result_json.get("agent_outcome") or codex_result.result_json.get("final_status") or "").strip().lower()
+                if outcome == "completed":
+                    outcome = "finished"
+                if not touched_files:
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        summary="codex did not touch any files",
+                        files_touched=touched_files,
+                        notes=("codex did not touch any files",),
+                        agent_outcome=outcome or "failed",
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    return self._failed_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason=receipt.summary,
+                        attempts=attempts,
+                    )
+
+                scope_check = self._check_scope_drift(
+                    _load_json_mapping(baseline_file),
+                    [*task_context.allowlist, task_context.tasks_path.relative_to(self.root).as_posix()],
+                )
+                if scope_check is not None:
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        summary=str(scope_check),
+                        files_touched=touched_files,
+                        notes=(str(scope_check),),
+                        agent_outcome=outcome or "failed",
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.FAILED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    return self._failed_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason=receipt.summary,
+                        attempts=attempts,
+                    )
+
+                receipt = self._write_receipt(
                     task_context=task_context,
-                    command_results=command_results,
-                    reason=tasks_change,
+                    run_id=run.run_id,
+                    state=TaskLifecycleState.IMPLEMENTED,
+                    summary=(
+                        str(codex_result.result_json.get("summary") or codex_result.result_json.get("reason") or "").strip()
+                        if isinstance(codex_result.result_json.get("summary") or codex_result.result_json.get("reason") or "", str)
+                        else ""
+                    ),
+                    files_touched=touched_files,
+                    notes=tuple(
+                        str(item)
+                        for item in (
+                            codex_result.result_json.get("notes")
+                            or ([codex_result.result_json.get("reason")] if codex_result.result_json.get("reason") else [])
+                            or ([codex_result.result_json.get("blocked_reason")] if codex_result.result_json.get("blocked_reason") else [])
+                        )
+                        if item is not None
+                    ),
+                    agent_outcome=outcome or "finished",
+                )
+                self.state_machine.transition(
+                    task_id=task_id,
+                    run_id=run.run_id,
+                    state=TaskLifecycleState.IMPLEMENTED,
+                    tasks_path=task_context.tasks_path,
+                    baseline_path=baseline_file,
+                    reason=receipt.summary,
+                    receipt=receipt,
+                )
+                current_state = TaskLifecycleState.IMPLEMENTED
+            else:
+                attempts = 0
+
+            if current_state in {TaskLifecycleState.IMPLEMENTED, TaskLifecycleState.VALIDATED, TaskLifecycleState.REVIEWED, TaskLifecycleState.CLOSED, TaskLifecycleState.COMMITTED}:
+                validation_results = ()
+                diff_result = None
+                finalizer_result = None
+                if current_state == TaskLifecycleState.IMPLEMENTED:
+                    validation_results = self._run_validation_commands(task_context.validation_commands, python_executable, cancel_event)
+                    command_results.extend(validation_results)
+                    if any(result.status != "PASS" for result in validation_results):
+                        receipt = self._write_receipt(
+                            task_context=task_context,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.FAILED,
+                            summary="validation failed",
+                            files_touched=tuple(),
+                            notes=("validation failed",),
+                            agent_outcome="failed",
+                            validation=[self._command_result_to_payload(result) for result in validation_results],
+                        )
+                        self.state_machine.transition(
+                            task_id=task_id,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.FAILED,
+                            tasks_path=task_context.tasks_path,
+                            baseline_path=baseline_file,
+                            reason=receipt.summary,
+                            receipt=receipt,
+                        )
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="validation failed",
+                            attempts=attempts,
+                        )
+                    diff_result = self._diff_check()
+                    command_results.append(diff_result)
+                    if diff_result.status != "PASS":
+                        repaired = self._repair_whitespace(task_context.allowlist)
+                        if repaired:
+                            command_results.extend(repaired)
+                            diff_result = self._diff_check()
+                            command_results.append(diff_result)
+                        if diff_result.status != "PASS":
+                            receipt = self._write_receipt(
+                                task_context=task_context,
+                                run_id=run.run_id,
+                                state=TaskLifecycleState.FAILED,
+                                summary="git diff --check failed",
+                                files_touched=tuple(),
+                                notes=("git diff --check failed",),
+                                agent_outcome="failed",
+                                validation=[self._command_result_to_payload(result) for result in validation_results],
+                            )
+                            self.state_machine.transition(
+                                task_id=task_id,
+                                run_id=run.run_id,
+                                state=TaskLifecycleState.FAILED,
+                                tasks_path=task_context.tasks_path,
+                                baseline_path=baseline_file,
+                                reason=receipt.summary,
+                                receipt=receipt,
+                            )
+                            return self._failed_result(
+                                run,
+                                task_id,
+                                task_context=task_context,
+                                command_results=command_results,
+                                reason="git diff --check failed",
+                                attempts=attempts,
+                            )
+                    finalizer_result = self._run_task_finalizer(task_id, python_executable)
+                    command_results.append(finalizer_result)
+                    if finalizer_result.status != "PASS":
+                        receipt = self._write_receipt(
+                            task_context=task_context,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.FAILED,
+                            summary="task finalizer failed",
+                            files_touched=tuple(),
+                            notes=("task finalizer failed",),
+                            agent_outcome="failed",
+                            validation=[self._command_result_to_payload(result) for result in validation_results],
+                        )
+                        self.state_machine.transition(
+                            task_id=task_id,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.FAILED,
+                            tasks_path=task_context.tasks_path,
+                            baseline_path=baseline_file,
+                            reason=receipt.summary,
+                            receipt=receipt,
+                        )
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="task finalizer failed",
+                            attempts=attempts,
+                        )
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.VALIDATED,
+                        summary="validation and finalizer passed",
+                        files_touched=tuple(),
+                        notes=("git diff --check passed", "agent_task_finalize PASS"),
+                        agent_outcome="finished",
+                        validation=[self._command_result_to_payload(result) for result in validation_results],
+                        review_verdict="PASS",
+                        safe_to_close=True,
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.VALIDATED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    current_state = TaskLifecycleState.VALIDATED
+
+                if current_state in {TaskLifecycleState.VALIDATED, TaskLifecycleState.IMPLEMENTED}:
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.REVIEWED,
+                        summary="review passed",
+                        files_touched=tuple(receipt.files_touched if receipt is not None else ()),
+                        notes=("review verdict PASS", "safe_to_close yes"),
+                        agent_outcome="finished",
+                        review_verdict="PASS",
+                        safe_to_close=True,
+                        stages=(TaskReceiptStage(name="review", status="PASS", updated_at=_timestamp(), details={"scope_drift": []}),),
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.REVIEWED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    current_state = TaskLifecycleState.REVIEWED
+
+            if current_state in {TaskLifecycleState.REVIEWED, TaskLifecycleState.CLOSED, TaskLifecycleState.COMMITTED}:
+                current_text = task_context.tasks_path.read_text(encoding="utf-8")
+                if current_state == TaskLifecycleState.REVIEWED:
+                    updated_text, checkbox_before, checkbox_after = self._close_task_checkbox(task_context, current_text)
+                    if updated_text != current_text:
+                        task_context.tasks_path.write_text(updated_text, encoding="utf-8")
+                    receipt = self._write_receipt(
+                        task_context=task_context,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.CLOSED,
+                        summary="task checkbox closed",
+                        files_touched=tuple(receipt.files_touched if receipt is not None else ()),
+                        notes=("tasks.md checkbox closed",),
+                        agent_outcome="finished",
+                        closure_checkbox_before=checkbox_before,
+                        closure_checkbox_after=checkbox_after,
+                        closure_task_line=task_context.task_line,
+                    )
+                    self.state_machine.transition(
+                        task_id=task_id,
+                        run_id=run.run_id,
+                        state=TaskLifecycleState.CLOSED,
+                        tasks_path=task_context.tasks_path,
+                        baseline_path=baseline_file,
+                        reason=receipt.summary,
+                        receipt=receipt,
+                    )
+                    current_state = TaskLifecycleState.CLOSED
+
+                if current_state == TaskLifecycleState.CLOSED:
+                    self.repository.stage_allowlist(list(task_context.allowlist) + [task_context.tasks_path.relative_to(self.root).as_posix()])
+                    cached_check = self.repository.diff_check(cached=True)
+                    command_results.append(self._command_result_from_process(cached_check))
+                    if cached_check.status != "PASS":
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="git diff --cached --check failed",
+                            attempts=attempts,
+                        )
+                    pre_commit = self._run_hook("pre-commit", cancel_event=cancel_event)
+                    if pre_commit.status != "PASS":
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="pre-commit hook failed",
+                            attempts=attempts,
+                        )
+                    commit_message = f"feat({task_id}): {task_context.task_title}"
+                    commit_result = self.repository.commit(commit_message)
+                    command_results.append(self._command_result_from_process(commit_result))
+                    if commit_result.status != "PASS":
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="git commit failed",
+                            attempts=attempts,
+                        )
+                    commit_sha = self.repository.head_sha()
+                    post_commit = self._run_hook("post-commit", cancel_event=cancel_event)
+                    if post_commit.status != "PASS":
+                        return self._failed_result(
+                            run,
+                            task_id,
+                            task_context=task_context,
+                            command_results=command_results,
+                            reason="post-commit hook failed",
+                            attempts=attempts,
+                        )
+                    receipt = load_task_receipt(task_id, root=self.root)
+                    if receipt is None or receipt.commit_sha != commit_sha or receipt.state != TaskLifecycleState.COMMITTED:
+                        receipt = self._write_receipt(
+                            task_context=task_context,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.COMMITTED,
+                            summary="task committed",
+                            files_touched=tuple(receipt.files_touched if receipt is not None else ()),
+                            notes=("commit recorded",),
+                            agent_outcome="finished",
+                            commit_sha=commit_sha,
+                        )
+                        self.state_machine.transition(
+                            task_id=task_id,
+                            run_id=run.run_id,
+                            state=TaskLifecycleState.COMMITTED,
+                            tasks_path=task_context.tasks_path,
+                            baseline_path=baseline_file,
+                            reason=receipt.summary,
+                            receipt=receipt,
+                            commit_sha=commit_sha,
+                        )
+                    self.repository.require_clean_tree()
+                    task_result = TaskResult(
+                        task_id=task_id,
+                        status=RunStatus.COMPLETED,
+                        command_results=tuple(command_results),
+                        commit_sha=commit_sha,
+                        title=task_context.task_title,
+                    )
+                    updated_run = self._update_run(
+                        run,
+                        status=RunStatus.COMPLETED,
+                        epic_id=epic_id,
+                        branch_name=branch_name,
+                        current_task_id=task_id,
+                        task_result=task_result,
+                        last_error=None,
+                    )
+                    save_run_state(updated_run, root=self.root)
+                    return TaskPipelineResult(
+                        status=RunStatus.COMPLETED,
+                        run=updated_run,
+                        task_result=task_result,
+                        attempts=attempts,
+                        baseline_path=str(baseline_file),
+                        allowlist=task_context.allowlist,
+                        validation_commands=task_context.validation_commands,
+                        command_results=tuple(command_results),
+                        reason=None,
+                    )
+
+            if current_state == TaskLifecycleState.COMMITTED:
+                commit_sha = receipt.commit_sha if receipt is not None and receipt.commit_sha else self.repository.head_sha()
+                task_result = TaskResult(
+                    task_id=task_id,
+                    status=RunStatus.COMPLETED,
+                    command_results=tuple(command_results),
+                    commit_sha=commit_sha,
+                    title=task_context.task_title,
+                )
+                updated_run = self._update_run(
+                    run,
+                    status=RunStatus.COMPLETED,
+                    epic_id=epic_id,
+                    branch_name=branch_name,
+                    current_task_id=task_id,
+                    task_result=task_result,
+                    last_error=None,
+                )
+                save_run_state(updated_run, root=self.root)
+                return TaskPipelineResult(
+                    status=RunStatus.COMPLETED,
+                    run=updated_run,
+                    task_result=task_result,
                     attempts=attempts,
+                    baseline_path=str(baseline_file),
+                    allowlist=task_context.allowlist,
+                    validation_commands=task_context.validation_commands,
+                    command_results=tuple(command_results),
+                    reason=None,
                 )
 
-            self.repository.stage_allowlist(list(task_context.allowlist) + [task_context.tasks_path.relative_to(self.root).as_posix()])
-            cached_check = self.repository.diff_check(cached=True)
-            command_results.append(self._command_result_from_process(cached_check))
-            if cached_check.status != "PASS":
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason="git diff --cached --check failed",
-                    attempts=attempts,
-                )
-
-            commit_message = f"feat({task_id}): {task_context.task_title}"
-            commit_result = self.repository.commit(commit_message)
-            command_results.append(self._command_result_from_process(commit_result))
-            if commit_result.status != "PASS":
-                return self._failed_result(
-                    run,
-                    task_id,
-                    task_context=task_context,
-                    command_results=command_results,
-                    reason="git commit failed",
-                    attempts=attempts,
-                )
-
-            self.repository.require_clean_tree()
-            commit_sha = self.repository.head_sha()
-            task_result = TaskResult(
-                task_id=task_id,
-                status=RunStatus.COMPLETED,
-                command_results=tuple(command_results),
-                commit_sha=commit_sha,
-                title=task_context.task_title,
-            )
-            updated_run = self._update_run(
-                run,
-                status=RunStatus.COMPLETED,
-                epic_id=epic_id,
-                branch_name=branch_name,
-                current_task_id=task_id,
-                task_result=task_result,
-                last_error=None,
-            )
-            save_run_state(updated_run, root=self.root)
-            return TaskPipelineResult(
-                status=RunStatus.COMPLETED,
-                run=updated_run,
-                task_result=task_result,
-                attempts=attempts,
-                baseline_path=str(baseline_file),
-                allowlist=task_context.allowlist,
-                validation_commands=task_context.validation_commands,
-                command_results=tuple(command_results),
-                reason=None,
-            )
+            raise TaskPipelineError(f"unhandled task state: {current_state.value}")
         except (KeyboardInterrupt, TaskPipelineError, RuntimeError, ValueError, FileNotFoundError, OSError) as exc:
             if isinstance(exc, KeyboardInterrupt):
                 return self._cancelled_result(run, task_id, command_results, reason="cancelled", attempts=0)
@@ -440,6 +804,43 @@ class TaskPipeline:
                 break
         return tuple(results)
 
+    def _default_baseline_path(self, task_id: str) -> Path:
+        return self.root / ".specify" / "runtime" / "task-runs" / task_id / "baseline.json"
+
+    def _run_task_finalizer(self, task_id: str, python_executable: str) -> CommandResult:
+        result = self._run(
+            [
+                python_executable,
+                "-m",
+                "backend.app.tooling.agent_task_finalize",
+                "--task",
+                task_id,
+                "--json",
+            ],
+            cwd=self.root,
+            timeout_seconds=self.config.command_timeout_seconds,
+            heartbeat_seconds=0,
+        )
+        return self._command_result_from_process(result)
+
+    def _run_hook(self, mode: str, *, cancel_event: Any | None = None) -> CommandResult:
+        python_executable = self._resolve_agent_python()
+        result = self._run(
+            [
+                python_executable,
+                "-m",
+                "backend.app.tooling.git_hook_runner",
+                mode,
+                "--json",
+                "--no-heartbeat",
+            ],
+            cwd=self.root,
+            timeout_seconds=self.config.command_timeout_seconds,
+            cancel_event=cancel_event,
+            heartbeat_seconds=0,
+        )
+        return self._command_result_from_process(result)
+
     def _diff_check(self) -> CommandResult:
         result = self.repository.diff_check(cached=False)
         return self._command_result_from_process(result)
@@ -597,6 +998,73 @@ class TaskPipeline:
             reason=reason,
         )
 
+    def _write_receipt(
+        self,
+        *,
+        task_context: TaskContext,
+        run_id: str,
+        state: TaskLifecycleState,
+        summary: str,
+        files_touched: Sequence[str],
+        notes: Sequence[str],
+        agent_outcome: str,
+        commit_sha: str = "",
+        validation: Sequence[dict[str, Any]] | None = None,
+        review_verdict: str = "",
+        safe_to_close: bool = False,
+        closure_checkbox_before: str = "",
+        closure_checkbox_after: str = "",
+        closure_task_line: int = 0,
+        stages: Sequence[TaskReceiptStage] = (),
+    ) -> TaskReceiptRecord:
+        record = TaskReceiptRecord(
+            schema_version=1,
+            run_id=run_id,
+            task_id=task_context.task_id,
+            updated_at=_timestamp(),
+            state=state,
+            agent_outcome=agent_outcome,
+            summary=summary,
+            files_touched=tuple(str(item).replace("\\", "/") for item in files_touched),
+            notes=tuple(str(item) for item in notes),
+            validation=tuple(dict(item) for item in (validation or ()) if isinstance(item, dict)),
+            commit_sha=commit_sha,
+            stages=tuple(stages),
+            review_verdict=review_verdict,
+            safe_to_close=safe_to_close,
+            closure_checkbox_before=closure_checkbox_before,
+            closure_checkbox_after=closure_checkbox_after,
+            closure_task_line=closure_task_line,
+        )
+        save_task_receipt(record, root=self.root)
+        return record
+
+    def _close_task_checkbox(self, task_context: TaskContext, text: str) -> tuple[str, str, str]:
+        lines = text.splitlines()
+        before_line = ""
+        after_line = ""
+        updated_lines: list[str] = []
+        replaced = False
+        for line_number, line in enumerate(lines, start=1):
+            if line_number == task_context.task_line:
+                before_line = line
+                if not line.startswith(f"- [ ] {task_context.task_id}") and not line.startswith(f"- [x] {task_context.task_id}") and not line.startswith(f"- [X] {task_context.task_id}"):
+                    raise TaskPipelineError(f"{task_context.tasks_path.name}:{line_number}: selected task mismatch")
+                after_line = line.replace("- [ ]", "- [X]", 1)
+                updated_lines.append(after_line)
+                replaced = True
+            else:
+                updated_lines.append(line)
+        if not replaced:
+            raise TaskPipelineError(f"{task_context.tasks_path.name}: could not locate task line {task_context.task_line}")
+        verification = self._verify_task_completion_change(task_context, before_text=text, after_text="\n".join(updated_lines))
+        if verification is not None:
+            raise TaskPipelineError(verification)
+        updated_text = "\n".join(updated_lines)
+        if text.endswith("\n"):
+            updated_text += "\n"
+        return updated_text, before_line, after_line
+
     def _cancelled_result(
         self,
         run: AutopilotRun,
@@ -644,6 +1112,18 @@ class TaskPipeline:
             stderr_lines=tuple(result.stderr_lines),
             output_truncated=result.output_truncated,
         )
+
+    def _command_result_to_payload(self, result: CommandResult) -> dict[str, Any]:
+        return {
+            "command": list(result.command),
+            "status": result.status,
+            "exit_code": result.exit_code,
+            "duration_ms": result.duration_ms,
+            "timed_out": result.timed_out,
+            "stdout_lines": list(result.stdout_lines),
+            "stderr_lines": list(result.stderr_lines),
+            "output_truncated": result.output_truncated,
+        }
 
     def _command_results_from_codex(self, result: Any) -> tuple[CommandResult, ...]:
         command_result = CommandResult(

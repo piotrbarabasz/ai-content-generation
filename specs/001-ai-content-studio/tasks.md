@@ -128,7 +128,7 @@ Notes: Keep the engine provider-agnostic and free of filesystem assumptions.
 
 ## Phase 4: Artifact storage
 
-- [ ] T009 Implement artifact storage abstraction and local store
+- [X] T009 Implement artifact storage abstraction and local store
 Milestone: M001
 Epic: E003
 Risk: high
@@ -145,7 +145,7 @@ Notes: The local implementation should honor configured storage roots and avoid 
 
 ## Phase 5: Provider abstraction
 
-- [ ] T010 Define provider interfaces and mock implementations
+- [X] T010 Define provider interfaces and mock implementations
 Milestone: M001
 Epic: E003
 Risk: high
@@ -329,7 +329,7 @@ Milestone: M001
 Epic: E003
 Risk: high
 Implementation files: `backend/app/domain/workflow_config.py`, `backend/app/domain/enums.py`
-Test files: `backend/tests/unit/test_t021.py`
+Test files: `backend/tests/unit/test_workflow_config_validation.py`
 Validation commands: `python -m pytest`; `git diff --check`
 Final PR review required: yes
 Goal: Freeze the WorkflowConfig schema and reject invalid enum values, enabled/disabled module conflicts and invalid preset/content-type combinations.
@@ -339,7 +339,7 @@ Test requirements: Add tests for valid short_video config, valid long_form_scrip
 Parallelizable: no
 Notes: Canonical workflowPreset values are short_video and long_form_script_voiceover.
 
-- [ ] T022 Implement ProviderRegistry and mock provider registration
+- [X] T022 Implement ProviderRegistry and mock provider registration
 Milestone: M001
 Epic: E003
 Risk: high
@@ -354,7 +354,7 @@ Test requirements: Add ProviderRegistry registration and resolution tests.
 Parallelizable: no
 Notes: Provider types are LLMProvider, TTSProvider, TranscriptionProvider, CaptionProvider, AssetProvider, VideoRendererProvider, StorageProvider and PublishingProvider.
 
-- [ ] T023 Implement ProviderConfig validation before workflow execution
+- [X] T023 Implement ProviderConfig validation before workflow execution
 Milestone: M001
 Epic: E003
 Risk: high

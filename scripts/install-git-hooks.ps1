@@ -19,7 +19,7 @@ if (-not $root) {
 
 Set-Location $root
 
-$hookPaths = @('.githooks/pre-commit', '.githooks/pre-push')
+$hookPaths = @('.githooks/pre-commit', '.githooks/pre-push', '.githooks/post-commit')
 foreach ($hookPath in $hookPaths) {
     if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) {
         Fail "HOOK_INSTALL: FAIL`nreason: missing hook file $hookPath"
