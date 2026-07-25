@@ -145,7 +145,7 @@ Notes: The local implementation should honor configured storage roots and avoid 
 
 ## Phase 5: Provider abstraction
 
-- [ ] T010 Define provider interfaces and mock implementations
+- [X] T010 Define provider interfaces and mock implementations
 Milestone: M001
 Epic: E003
 Risk: high
