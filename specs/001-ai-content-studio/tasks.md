@@ -339,7 +339,7 @@ Test requirements: Add tests for valid short_video config, valid long_form_scrip
 Parallelizable: no
 Notes: Canonical workflowPreset values are short_video and long_form_script_voiceover.
 
-- [ ] T022 Implement ProviderRegistry and mock provider registration
+- [X] T022 Implement ProviderRegistry and mock provider registration
 Milestone: M001
 Epic: E003
 Risk: high
