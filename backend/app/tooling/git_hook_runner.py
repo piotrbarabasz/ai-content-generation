@@ -191,6 +191,19 @@ def _repo_relative_path(value: str | Path) -> str:
     return path.as_posix()
 
 
+def _path_allowed(path: str, allowlist: Sequence[str]) -> bool:
+    normalized_path = str(path).replace("\\", "/").strip()
+    if not normalized_path:
+        return False
+    for item in allowlist:
+        normalized_item = str(item).replace("\\", "/").strip().rstrip("/")
+        if not normalized_item:
+            continue
+        if normalized_path == normalized_item or normalized_path.startswith(f"{normalized_item}/"):
+            return True
+    return False
+
+
 def _task_checkbox(tasks_path: Path, task_id: str) -> str:
     for found_task_id, _start_line, lines in task_consistency._iter_task_blocks(tasks_path):
         if found_task_id != task_id:
