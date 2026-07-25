@@ -20,10 +20,24 @@ TASK_ID_PATTERN = re.compile(r"^T\d{3}[A-Z]?$")
 SUCCESS_RESULT_STATUSES = {"PASS", "PASSED", "SUCCESS", "COMPLETED"}
 FAILURE_RESULT_STATUSES = {"FAIL", "FAILED", "CANCELLED", "TIMEOUT"}
 BLOCKED_RESULT_STATUSES = {"BLOCKED"}
+NEW_RESULT_KEYS = {"agent_outcome", "summary", "files_touched", "notes"}
+LEGACY_RESULT_KEYS = {
+    "final_status",
+    "review_verdict",
+    "reason",
+    "files_changed",
+    "validation",
+    "tasks_md_change",
+    "repair_cycles_used",
+    "safe_to_commit",
+    "next_task_started",
+    "retryable",
+    "blocked_reason",
+}
 AUTOPILOT_RESULT_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "additionalProperties": True,
+    "additionalProperties": False,
     "required": ["task_id", "agent_outcome", "summary", "files_touched", "notes"],
     "properties": {
         "task_id": {"type": "string", "pattern": "^T\\d{3}[A-Z]?$"},
@@ -136,22 +150,6 @@ class CodexAdapter:
             },
             indent=2,
         )
-        legacy_result_example = json.dumps(
-            {
-                "task_id": normalized_task_id,
-                "final_status": "COMPLETED",
-                "review_verdict": "PASS",
-                "reason": None,
-                "files_changed": [],
-                "validation": [],
-                "tasks_md_change": f"- [X] {normalized_task_id} ...",
-                "repair_cycles_used": 0,
-                "safe_to_commit": True,
-                "next_task_started": False,
-                "retryable": False,
-            },
-            indent=2,
-        )
         return "\n".join(
             [
                 "You are Codex running inside the local AI Content Studio autopilot.",
@@ -172,12 +170,10 @@ class CodexAdapter:
                 "Do not attempt any GitHub or network operations.",
                 "Return exactly one JSON object and nothing else.",
                 "Do not wrap the JSON in markers, fences, markdown, or explanatory text.",
-                "Use the canonical lowercase keys task_id, final_status, review_verdict, reason, files_changed, validation, tasks_md_change, repair_cycles_used, safe_to_commit, next_task_started and retryable.",
-                "Use the canonical lowercase keys task_id, agent_outcome, summary, files_touched and notes.",
+                "Do not include legacy keys.",
+                "Do not include final_status, review_verdict, files_changed, reason, validation, tasks_md_change, safe_to_commit, next_task_started or retryable.",
                 "The final response must follow this example shape exactly:",
                 canonical_result_example,
-                "Legacy-compatible example:",
-                legacy_result_example,
                 "If the task cannot be completed, set agent_outcome to blocked or failed and explain it in notes.",
                 "Do not emit any trailing text after the JSON object.",
             ]
@@ -253,9 +249,15 @@ class CodexAdapter:
         executable = resolve_codex_cli_executable()
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
-        output_last_message_path = _create_output_last_message_path()
+        output_last_message_path: Path | None = None
+        output_schema_path: Path | None = None
         try:
-            command = self.build_command(output_last_message_path=output_last_message_path)
+            output_last_message_path = _create_output_last_message_path()
+            output_schema_path = _create_output_schema_path()
+            command = self.build_command(
+                output_last_message_path=output_last_message_path,
+                output_schema_path=output_schema_path,
+            )
             process_result = self._run(
                 command,
                 cwd=self.root,
@@ -318,13 +320,17 @@ class CodexAdapter:
                 parse_error=parse_error,
             )
         finally:
-            try:
-                output_last_message_path.unlink()
-            except FileNotFoundError:
-                pass
+            for path in (output_last_message_path, output_schema_path):
+                if path is None:
+                    continue
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
 
-    def build_command(self, *, output_last_message_path: Path | str) -> list[str]:
+    def build_command(self, *, output_last_message_path: Path | str, output_schema_path: Path | str) -> list[str]:
         output_path = Path(output_last_message_path)
+        schema_path = Path(output_schema_path)
         executable = resolve_codex_cli_executable()
         if executable is None:
             raise RuntimeError(_missing_codex_cli_reason())
@@ -341,6 +347,8 @@ class CodexAdapter:
             "--ephemeral",
             "--color",
             "never",
+            "--output-schema",
+            str(schema_path),
             "--output-last-message",
             str(output_path),
             "-",
@@ -414,20 +422,11 @@ def validate_autopilot_result_contract(
 
     original_keys = {str(key).strip().lower() for key in payload.keys() if isinstance(key, str)}
     original_payload = {str(key).strip().lower(): value for key, value in payload.items() if isinstance(key, str)}
-    legacy_contract = bool(
-        original_keys
-        & {
-            "final_status",
-            "review_verdict",
-            "reason",
-            "files_changed",
-            "validation",
-            "tasks_md_change",
-            "repair_cycles_used",
-            "safe_to_commit",
-            "next_task_started",
-        }
-    )
+    has_new_contract_keys = bool(original_keys & NEW_RESULT_KEYS)
+    has_legacy_contract_keys = bool(original_keys & LEGACY_RESULT_KEYS)
+    if has_new_contract_keys and has_legacy_contract_keys:
+        return None, None, False, "AUTOPILOT_RESULT_JSON contains both legacy and new contract keys"
+    legacy_contract = has_legacy_contract_keys and not has_new_contract_keys
     normalized_payload, blocked_reason_present, normalize_error = _normalize_autopilot_result_payload(payload)
     if normalize_error is not None:
         return None, None, False, normalize_error
@@ -613,6 +612,14 @@ def _create_output_last_message_path() -> Path:
     fd, raw_path = tempfile.mkstemp(prefix="autopilot-codex-", suffix=".txt")
     os.close(fd)
     return Path(raw_path)
+
+
+def _create_output_schema_path() -> Path:
+    fd, raw_path = tempfile.mkstemp(prefix="autopilot-codex-schema-", suffix=".json")
+    os.close(fd)
+    path = Path(raw_path)
+    path.write_text(json.dumps(AUTOPILOT_RESULT_SCHEMA, indent=2), encoding="utf-8")
+    return path
 
 
 def _read_output_last_message(path: Path) -> tuple[str | None, str | None]:
