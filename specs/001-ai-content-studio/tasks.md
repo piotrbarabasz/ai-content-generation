@@ -128,7 +128,7 @@ Notes: Keep the engine provider-agnostic and free of filesystem assumptions.
 
 ## Phase 4: Artifact storage
 
-- [ ] T009 Implement artifact storage abstraction and local store
+- [X] T009 Implement artifact storage abstraction and local store
 Milestone: M001
 Epic: E003
 Risk: high
