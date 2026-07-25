@@ -27,13 +27,16 @@ from .workstreams import (
     next_dependency_ready_task,
     validate_dependencies,
 )
-from .task_state_machine import load_task_receipt, load_task_state, _load_task_snapshot
+from .task_state_machine import _load_task_snapshot, _path_allowed, load_task_receipt, load_task_state
+from .task_state_machine import TaskLifecycleState
 
 ROOT = Path(__file__).resolve().parents[4]
 ACTIVE_EPIC_FILE = ROOT / ".specify" / "runtime" / "active-epic"
 WORKSTREAMS_DIR = ROOT / ".specify" / "workstreams"
 TASKS_FILE = ROOT / "specs" / "001-ai-content-studio" / "tasks.md"
 EPIC_ID_PATTERN = re.compile(r"^E\d{3}$")
+TASK_ID_SUBJECT_PATTERN = re.compile(r"^(feat|fix|test|chore|refactor)\((T\d{3}[A-Z]?)\):")
+EPIC_MAINTENANCE_SUBJECT_PATTERN = re.compile(r"(activate epic|close epic|epic closure)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -466,6 +469,9 @@ class EpicPipeline:
         except Exception as exc:
             errors.append(f"{epic_id}: {exc}")
         current_head = self.repository.head_sha()
+        commit_history = self.repository.list_commit_history(ref="HEAD")
+        history_by_sha = {sha: subject for sha, subject in commit_history}
+        commit_files_cache: dict[str, tuple[str, ...]] = {}
         manifest_task_ids = tuple(
             str(task_id).strip()
             for task_id in (epic_manifest.get("tasks") or [])
@@ -497,52 +503,205 @@ class EpicPipeline:
             if snapshot.checkbox.upper() != "X":
                 errors.append(f"{task_id}: tasks.md checkbox is [{snapshot.checkbox}]")
                 continue
-            exact_subject = f"feat({task_id}): {snapshot.title}".strip()
-            history_shas = self.repository.find_commit_shas_by_subject(exact_subject, ref="HEAD")
-            if not history_shas:
-                errors.append(f"{task_id}: no task commit found in HEAD history for {exact_subject!r}")
-                continue
-            if len(history_shas) > 1:
-                errors.append(f"{task_id}: ambiguous task commit in HEAD history for {exact_subject!r}: {', '.join(history_shas)}")
-                continue
-            history_sha = history_shas[0]
             state_record = load_task_state(task_id, root=self.root)
             receipt_record = load_task_receipt(task_id, root=self.root)
-            persisted_sha = ""
-            if state_record is not None or receipt_record is not None:
-                if state_record is None or receipt_record is None:
-                    errors.append(f"{task_id}: committed task state and receipt must both exist")
+            sources_checked: list[str] = []
+            try:
+                resolution = self._resolve_task_evidence(
+                    task_id,
+                    snapshot,
+                    state_record=state_record,
+                    receipt_record=receipt_record,
+                    history_by_sha=history_by_sha,
+                    commit_files_cache=commit_files_cache,
+                    sources_checked=sources_checked,
+                )
+                if resolution is None:
+                    errors.append(f"{task_id}: no task evidence found [sources={', '.join(sources_checked) or 'none'}]")
                     continue
-                if state_record.state.value != "COMMITTED" or receipt_record.state.value != "COMMITTED":
-                    errors.append(f"{task_id}: committed task state and receipt must both be COMMITTED")
-                    continue
-                if not state_record.head_sha or not receipt_record.commit_sha:
-                    errors.append(f"{task_id}: committed task state and receipt must both record a SHA")
-                    continue
-                if state_record.head_sha != receipt_record.commit_sha:
+                candidate_sha, source = resolution
+                if candidate_sha in resolved_shas and resolved_shas[candidate_sha] != task_id:
                     errors.append(
-                        f"{task_id}: state.head_sha and receipt.commit_sha differ "
-                        f"({state_record.head_sha} != {receipt_record.commit_sha})"
+                        f"{task_id}: commit SHA {candidate_sha} is shared with {resolved_shas[candidate_sha]} "
+                        f"[source={source}]"
                     )
                     continue
-                persisted_sha = state_record.head_sha
-            current_result = task_results_by_id.get(task_id)
-            current_sha = str(current_result.commit_sha or "").strip() if current_result is not None else ""
-            if persisted_sha and current_sha and persisted_sha != current_sha:
-                errors.append(f"{task_id}: current run commit SHA {current_sha} does not match persisted SHA {persisted_sha}")
-                continue
-            candidate_sha = persisted_sha or current_sha or history_sha
-            if candidate_sha != history_sha:
-                errors.append(f"{task_id}: evidence SHA {candidate_sha} does not match HEAD history SHA {history_sha}")
-                continue
-            if candidate_sha in resolved_shas and resolved_shas[candidate_sha] != task_id:
-                errors.append(f"{task_id}: commit SHA {candidate_sha} is shared with {resolved_shas[candidate_sha]}")
-                continue
-            if not self.repository.is_ancestor(candidate_sha, current_head):
-                errors.append(f"{task_id}: commit {candidate_sha} is not an ancestor of HEAD {current_head}")
-                continue
-            resolved_shas[candidate_sha] = task_id
+                if not self.repository.is_ancestor(candidate_sha, current_head):
+                    errors.append(f"{task_id}: commit {candidate_sha} is not an ancestor of HEAD {current_head} [source={source}]")
+                    continue
+                resolved_shas[candidate_sha] = task_id
+            except EpicPipelineError as exc:
+                errors.append(str(exc))
         return errors
+
+    def _resolve_task_evidence(
+        self,
+        task_id: str,
+        snapshot: TaskSnapshot,
+        *,
+        state_record,
+        receipt_record,
+        history_by_sha: dict[str, str],
+        commit_files_cache: dict[str, tuple[str, ...]],
+        sources_checked: list[str],
+    ) -> tuple[str, str] | None:
+        persisted = self._resolve_persisted_task_evidence(
+            task_id,
+            snapshot,
+            state_record=state_record,
+            receipt_record=receipt_record,
+            history_by_sha=history_by_sha,
+            commit_files_cache=commit_files_cache,
+            sources_checked=sources_checked,
+        )
+        if persisted is not None:
+            return persisted
+
+        task_id_subject_sha = self._resolve_task_id_subject_evidence(
+            task_id,
+            history_by_sha=history_by_sha,
+            sources_checked=sources_checked,
+        )
+        if task_id_subject_sha is not None:
+            return task_id_subject_sha
+
+        legacy_sha = self._resolve_legacy_task_evidence(
+            task_id,
+            snapshot,
+            history_by_sha=history_by_sha,
+            commit_files_cache=commit_files_cache,
+            sources_checked=sources_checked,
+        )
+        return legacy_sha
+
+    def _resolve_persisted_task_evidence(
+        self,
+        task_id: str,
+        snapshot: TaskSnapshot,
+        *,
+        state_record,
+        receipt_record,
+        history_by_sha: dict[str, str],
+        commit_files_cache: dict[str, tuple[str, ...]],
+        sources_checked: list[str],
+    ) -> tuple[str, str] | None:
+        if state_record is None and receipt_record is None:
+            return None
+        sources_checked.append("persisted_state_receipt")
+        if state_record is None or receipt_record is None:
+            raise EpicPipelineError(f"{task_id}: committed task state and receipt must both exist")
+        if state_record.state != TaskLifecycleState.COMMITTED or receipt_record.state != TaskLifecycleState.COMMITTED:
+            raise EpicPipelineError(f"{task_id}: committed task state and receipt must both be COMMITTED")
+        if not state_record.head_sha or not receipt_record.commit_sha:
+            raise EpicPipelineError(f"{task_id}: committed task state and receipt must both record a SHA")
+        if state_record.head_sha != receipt_record.commit_sha:
+            raise EpicPipelineError(
+                f"{task_id}: state.head_sha and receipt.commit_sha differ "
+                f"({state_record.head_sha} != {receipt_record.commit_sha})"
+            )
+        candidate_sha = state_record.head_sha
+        if candidate_sha not in history_by_sha:
+            raise EpicPipelineError(f"{task_id}: persisted SHA {candidate_sha} is missing from HEAD history")
+        if not self._commit_links_task(task_id, snapshot, candidate_sha, history_by_sha, commit_files_cache):
+            raise EpicPipelineError(
+                f"{task_id}: persisted SHA {candidate_sha} is not linked to task evidence "
+                f"[sources=persisted_state_receipt]"
+            )
+        return candidate_sha, "persisted_state_receipt"
+
+    def _resolve_task_id_subject_evidence(
+        self,
+        task_id: str,
+        *,
+        history_by_sha: dict[str, str],
+        sources_checked: list[str],
+    ) -> tuple[str, str] | None:
+        sources_checked.append("task_id_subject")
+        pattern = re.compile(rf"^(feat|fix|test|chore|refactor)\({re.escape(task_id)}\):")
+        candidates = [sha for sha, subject in history_by_sha.items() if pattern.match(subject.strip())]
+        if len(candidates) == 1:
+            sha = candidates[0]
+            subject = history_by_sha.get(sha, "")
+            if EPIC_MAINTENANCE_SUBJECT_PATTERN.search(subject):
+                raise EpicPipelineError(f"{task_id}: task-id subject evidence points to an epic maintenance commit [sources=task_id_subject]")
+            return sha, "task_id_subject"
+        if len(candidates) > 1:
+            raise EpicPipelineError(f"{task_id}: multiple task-id subject commits found [sources=task_id_subject]")
+        return None
+
+    def _resolve_legacy_task_evidence(
+        self,
+        task_id: str,
+        snapshot: TaskSnapshot,
+        *,
+        history_by_sha: dict[str, str],
+        commit_files_cache: dict[str, tuple[str, ...]],
+        sources_checked: list[str],
+    ) -> tuple[str, str] | None:
+        sources_checked.append("legacy_test_file_addition")
+        candidate_shas = self._legacy_addition_candidates(snapshot, history_by_sha, commit_files_cache)
+        if len(candidate_shas) == 1:
+            candidate_sha = next(iter(candidate_shas))
+            subject = history_by_sha.get(candidate_sha, "")
+            if EPIC_MAINTENANCE_SUBJECT_PATTERN.search(subject):
+                raise EpicPipelineError(
+                    f"{task_id}: legacy candidate {candidate_sha} is an epic maintenance commit "
+                    f"[sources=legacy_test_file_addition]"
+                )
+            return candidate_sha, "legacy_test_file_addition"
+        if len(candidate_shas) > 1:
+            raise EpicPipelineError(f"{task_id}: ambiguous legacy task evidence found [sources=legacy_test_file_addition]")
+        return None
+
+    def _legacy_addition_candidates(
+        self,
+        snapshot: TaskSnapshot,
+        history_by_sha: dict[str, str],
+        commit_files_cache: dict[str, tuple[str, ...]],
+    ) -> set[str]:
+        candidate_sets: list[set[str]] = []
+        declared_files = [*snapshot.test_files, *snapshot.implementation_files]
+        existing_test_files = [path for path in snapshot.test_files if (self.root / path).is_file()]
+        existing_implementation_files = [path for path in snapshot.implementation_files if (self.root / path).is_file()]
+        search_files = existing_test_files or existing_implementation_files
+        for path in search_files:
+            shas = set(self.repository.find_commits_adding_path(path, ref="HEAD"))
+            if shas:
+                candidate_sets.append(shas)
+        if not candidate_sets:
+            return set()
+        candidates = set.intersection(*candidate_sets) if candidate_sets else set()
+        valid: set[str] = set()
+        for sha in candidates:
+            files = self._commit_files(sha, commit_files_cache)
+            if any(_path_allowed(file, declared_files) for file in files):
+                subject = history_by_sha.get(sha, "")
+                if EPIC_MAINTENANCE_SUBJECT_PATTERN.search(subject):
+                    continue
+                valid.add(sha)
+        return valid
+
+    def _commit_files(self, commit_sha: str, cache: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+        if commit_sha not in cache:
+            cache[commit_sha] = self.repository.list_commit_files(commit_sha)
+        return cache[commit_sha]
+
+    def _commit_links_task(
+        self,
+        task_id: str,
+        snapshot: TaskSnapshot,
+        commit_sha: str,
+        history_by_sha: dict[str, str],
+        commit_files_cache: dict[str, tuple[str, ...]],
+    ) -> bool:
+        subject = history_by_sha.get(commit_sha, "")
+        if EPIC_MAINTENANCE_SUBJECT_PATTERN.search(subject):
+            return False
+        if f"({task_id})" in subject:
+            return True
+        commit_files = self._commit_files(commit_sha, commit_files_cache)
+        declared_files = [*snapshot.test_files, *snapshot.implementation_files]
+        return any(_path_allowed(path, declared_files) for path in commit_files)
 
     def _epic_tasks_from_tasks_file(self, epic_id: str) -> tuple[str, ...]:
         task_ids: list[str] = []

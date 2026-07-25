@@ -47,6 +47,8 @@ class SimState:
     codex_attempts: int = 0
     commit_index: int = 0
     commit_history: list[tuple[str, str]] | None = None
+    commit_files: dict[str, tuple[str, ...]] | None = None
+    path_additions: dict[str, list[str]] | None = None
     diff_checks: list[str] | None = None
     prs_by_branch: dict[tuple[str, str], PullRequestInfo] | None = None
     prs_by_number: dict[int, dict[str, object]] | None = None
@@ -56,6 +58,8 @@ class SimState:
     def __post_init__(self) -> None:
         self.branch_exists = set(self.branch_exists or ())
         self.commit_history = list(self.commit_history or [])
+        self.commit_files = dict(self.commit_files or {})
+        self.path_additions = {key.replace("\\", "/").strip(): list(value) for key, value in (self.path_additions or {}).items()}
         self.diff_checks = list(self.diff_checks or [])
         self.prs_by_branch = dict(self.prs_by_branch or {})
         self.prs_by_number = dict(self.prs_by_number or {})
@@ -83,9 +87,19 @@ class SimulatedShell:
         if command == ("git", "rev-parse", "HEAD"):
             return self._result(command, stdout=(self.state.head_sha,))
 
+        if command[:2] == ("git", "log") and "--diff-filter=A" in command:
+            path = command[-1].replace("\\", "/").strip()
+            shas = self.state.path_additions.get(path, [])
+            return self._result(command, stdout=tuple(shas))
+
         if command[:2] == ("git", "log") and "HEAD" in command:
             lines = [f"{sha}\x1f{subject}" for sha, subject in reversed(self.state.commit_history)]
             return self._result(command, stdout=tuple(lines))
+
+        if command[:3] == ("git", "diff-tree", "--no-commit-id"):
+            commit_sha = command[-1].strip()
+            files = self.state.commit_files.get(commit_sha, ())
+            return self._result(command, stdout=tuple(files))
 
         if command[:2] == ("git", "rev-parse") and command != ("git", "rev-parse", "HEAD"):
             ref = command[2] if len(command) > 2 else "HEAD"
