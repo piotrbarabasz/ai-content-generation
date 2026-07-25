@@ -348,8 +348,8 @@ def _commit_exists(commit_sha: str) -> bool:
     return result.status == "PASS"
 
 
-def _current_commit_message() -> str:
-    return _git_output_text(("git", "show", "-s", "--format=%B", "HEAD"))
+def _current_commit_subject() -> str:
+    return _git_output_text(("git", "show", "-s", "--format=%s", "HEAD"))
 
 
 def _parent_commit(commit_ref: str = "HEAD") -> str:
@@ -400,6 +400,8 @@ def _task_checkbox_changes_from_diff(diff_lines: Sequence[str]) -> list[tuple[st
     if changes and (len(changes) != 1 or other_changes or len(removed) != 1 or len(added) != 1):
         raise ValueError("staged tasks.md must change exactly one checkbox from [ ] to [X]")
     if removed or added:
+        if len(changes) == 1 and not other_changes and len(removed) == 1 and len(added) == 1:
+            return changes
         raise ValueError("staged tasks.md must change exactly one checkbox from [ ] to [X]")
     return changes
 
@@ -483,7 +485,7 @@ def _apply_post_commit_updates() -> None:
     repository = Repository(ROOT)
     current = repository.status()
     current_head = current.head_sha or repository.head_sha()
-    message = _current_commit_message()
+    message = _current_commit_subject()
     task_id = _task_commit_task_id_from_message(message)
     if task_id is None:
         return

@@ -177,12 +177,15 @@ def _write_task_entries_fixture(tmp_path: Path, entries: list[dict[str, object]]
     tasks_path.write_text("\n".join(rows), encoding="utf-8")
 
 
-def _task_checkbox_diff_lines(task_id: str = "T009") -> tuple[str, ...]:
+def _task_checkbox_diff_lines(
+    task_id: str = "T009",
+    title: str = "Implement artifact storage abstraction and local store",
+) -> tuple[str, ...]:
     return (
         "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
         "@@ -1,1 +1,1 @@",
-        f"-- [ ] {task_id} Implement artifact storage abstraction and local store",
-        f"+- [X] {task_id} Implement artifact storage abstraction and local store",
+        f"-- [ ] {task_id} {title}",
+        f"+- [X] {task_id} {title}",
     )
 
 
@@ -195,6 +198,33 @@ def _bookkeeping_diff_lines() -> tuple[str, ...]:
     )
 
 
+def _post_commit_git_runner_factory(
+    *,
+    task_id: str,
+    title: str,
+    parent_sha: str,
+    head_sha: str,
+    tasks_relpath: str = "specs/001-ai-content-studio/tasks.md",
+    allowlist_paths: tuple[str, ...] = (),
+) -> tuple[list[tuple[tuple[str, ...], dict[str, object]]], Callable[..., FakeProcessResult]]:
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def fake_run_process(argv, **kwargs):
+        command = tuple(argv)
+        calls.append((command, dict(kwargs)))
+        if command == ("git", "show", "-s", "--format=%s", "HEAD"):
+            return FakeProcessResult(status="PASS", stdout_lines=(f"feat({task_id}): {title}",))
+        if command == ("git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"):
+            return FakeProcessResult(status="PASS", stdout_lines=(*allowlist_paths, tasks_relpath))
+        if command == ("git", "rev-parse", "HEAD^"):
+            return FakeProcessResult(status="PASS", stdout_lines=(parent_sha,))
+        if command == ("git", "diff", "--unified=0", parent_sha, "HEAD", "--", tasks_relpath):
+            return FakeProcessResult(status="PASS", stdout_lines=_task_checkbox_diff_lines(task_id, title))
+        raise AssertionError(command)
+
+    return calls, fake_run_process
+
+
 def _two_task_checkbox_diff_lines() -> tuple[str, ...]:
     return (
         "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
@@ -203,6 +233,21 @@ def _two_task_checkbox_diff_lines() -> tuple[str, ...]:
         "+- [X] T010 Implement artifact storage abstraction and local store",
         "-- [ ] T022 Implement artifact storage abstraction and local store",
         "+- [X] T022 Implement artifact storage abstraction and local store",
+    )
+
+
+def _two_task_checkbox_diff_lines_for_post_commit(
+    first_task_id: str = "T023",
+    second_task_id: str = "T024",
+    title: str = "Implement ProviderConfig validation before workflow execution",
+) -> tuple[str, ...]:
+    return (
+        "diff --git a/specs/001-ai-content-studio/tasks.md b/specs/001-ai-content-studio/tasks.md",
+        "@@ -1,2 +1,2 @@",
+        f"-- [ ] {first_task_id} {title}",
+        f"+- [X] {first_task_id} {title}",
+        f"-- [ ] {second_task_id} {title}",
+        f"+- [X] {second_task_id} {title}",
     )
 
 
@@ -602,7 +647,7 @@ def test_post_commit_promotes_only_task_in_commit_and_preserves_receipt_evidence
         "Repository",
         lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)),
     )
-    monkeypatch.setattr(runner, "_current_commit_message", lambda: "feat(T022): Implement artifact storage abstraction and local store")
+    monkeypatch.setattr(runner, "_current_commit_subject", lambda: "feat(T022): Implement artifact storage abstraction and local store")
     monkeypatch.setattr(
         runner,
         "_commit_paths",
@@ -662,7 +707,7 @@ def test_post_commit_idempotent_for_same_task_and_sha(monkeypatch, tmp_path):
         "Repository",
         lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)),
     )
-    monkeypatch.setattr(runner, "_current_commit_message", lambda: "feat(T022): Implement artifact storage abstraction and local store")
+    monkeypatch.setattr(runner, "_current_commit_subject", lambda: "feat(T022): Implement artifact storage abstraction and local store")
     monkeypatch.setattr(
         runner,
         "_commit_paths",
@@ -704,13 +749,208 @@ def test_post_commit_tooling_commit_does_not_promote_tasks(monkeypatch, tmp_path
     )
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)))
-    monkeypatch.setattr(runner, "_current_commit_message", lambda: "chore: tooling")
+    monkeypatch.setattr(runner, "_current_commit_subject", lambda: "chore: tooling")
 
     result = runner.run_hook("post-commit")
 
     assert result.status == "PASS"
     assert _load_task_state_record("T022", tmp_path).state == TaskLifecycleState.CLOSED
     assert _load_task_receipt_record("T022", tmp_path).state == TaskLifecycleState.CLOSED
+
+
+def test_post_commit_promotes_t023_from_head_diff_without_cached_index(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "title": "Implement ProviderConfig validation before workflow execution",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "receipt_state": TaskLifecycleState.CLOSED,
+                "allowlist": (
+                    "backend/app/domain/workflow_config.py",
+                    "backend/app/workflow/engine.py",
+                    "backend/app/providers/validation.py",
+                    "backend/tests/unit/test_t023.py",
+                ),
+                "branch": "epic/E003-artifact-storage",
+                "head_sha": "6" * 40,
+                "summary": "reviewed and validated",
+                "files_touched": (
+                    "backend/app/domain/workflow_config.py",
+                    "backend/app/workflow/engine.py",
+                    "backend/app/providers/validation.py",
+                    "backend/tests/unit/test_t023.py",
+                ),
+                "notes": ("validation pass",),
+                "validation": ({"name": "pytest", "status": "PASS"},),
+                "review_verdict": "PASS",
+                "safe_to_close": True,
+                "closure_checkbox_before": " ",
+                "closure_checkbox_after": "X",
+                "closure_task_line": 357,
+                "stages": (
+                    {
+                        "name": "validated",
+                        "status": "PASS",
+                        "updated_at": "2026-07-25T00:00:00Z",
+                        "details": {"checks": ["pytest"]},
+                    },
+                    {
+                        "name": "reviewed",
+                        "status": "PASS",
+                        "updated_at": "2026-07-25T00:00:01Z",
+                        "details": {"verdict": "PASS"},
+                    },
+                    {
+                        "name": "closed",
+                        "status": "PASS",
+                        "updated_at": "2026-07-25T00:00:02Z",
+                        "details": {"checkbox": "X"},
+                    },
+                ),
+            }
+        ],
+    )
+    calls, fake_run_process = _post_commit_git_runner_factory(
+        task_id="T023",
+        title="Implement ProviderConfig validation before workflow execution",
+        parent_sha="5" * 40,
+        head_sha="6" * 40,
+        allowlist_paths=(
+            "backend/app/domain/workflow_config.py",
+            "backend/app/workflow/engine.py",
+            "backend/app/providers/validation.py",
+            "backend/tests/unit/test_t023.py",
+        ),
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="epic/E003-artifact-storage", head_sha="6" * 40)),
+    )
+    monkeypatch.setattr(runner.process_runner, "run_process", fake_run_process)
+
+    result = runner.run_hook("post-commit")
+
+    assert result.status == "PASS"
+    assert all("--cached" not in call[0] for call in calls)
+    state = _load_task_state_record("T023", tmp_path)
+    receipt = _load_task_receipt_record("T023", tmp_path)
+    assert state.state == TaskLifecycleState.COMMITTED
+    assert state.head_sha == "6" * 40
+    assert receipt.state == TaskLifecycleState.COMMITTED
+    assert receipt.commit_sha == "6" * 40
+    assert receipt.review_verdict == "PASS"
+    assert receipt.safe_to_close is True
+    assert receipt.files_touched == (
+        "backend/app/domain/workflow_config.py",
+        "backend/app/workflow/engine.py",
+        "backend/app/providers/validation.py",
+        "backend/tests/unit/test_t023.py",
+    )
+    assert receipt.notes == ("validation pass",)
+    assert receipt.validation == ({"name": "pytest", "status": "PASS"},)
+    assert [stage.name for stage in receipt.stages] == ["validated", "reviewed", "closed"]
+    assert _load_task_state_record("T023", tmp_path).state == TaskLifecycleState.COMMITTED
+
+
+def test_post_commit_rejects_two_checkbox_changes(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "title": "Implement ProviderConfig validation before workflow execution",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "receipt_state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/domain/workflow_config.py", "backend/app/workflow/engine.py"),
+                "head_sha": "6" * 40,
+            },
+            {
+                "task_id": "T024",
+                "title": "Implement ProviderConfig validation before workflow execution",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "receipt_state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/workflow/engine.py",),
+                "head_sha": "6" * 40,
+            },
+        ],
+    )
+    calls, fake_run_process = _post_commit_git_runner_factory(
+        task_id="T023",
+        title="Implement ProviderConfig validation before workflow execution",
+        parent_sha="5" * 40,
+        head_sha="6" * 40,
+        allowlist_paths=("backend/app/domain/workflow_config.py", "backend/app/workflow/engine.py"),
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="epic/E003-artifact-storage", head_sha="6" * 40)),
+    )
+    monkeypatch.setattr(runner.process_runner, "run_process", fake_run_process)
+    monkeypatch.setattr(
+        runner,
+        "_task_commit_task_ids_in_commit",
+        lambda _commit_ref, tasks_path=None: ["T023", "T024"],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_commit_paths",
+        lambda _commit_ref: {"backend/app/domain/workflow_config.py", "backend/app/workflow/engine.py", "specs/001-ai-content-studio/tasks.md"},
+    )
+
+    result = runner.run_hook("post-commit")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "exactly task T023" in result.reason
+    assert all("--cached" not in call[0] for call in calls)
+
+
+def test_post_commit_rejects_path_outside_allowlist(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T023",
+                "title": "Implement ProviderConfig validation before workflow execution",
+                "checkbox": "X",
+                "state": TaskLifecycleState.CLOSED,
+                "receipt_state": TaskLifecycleState.CLOSED,
+                "allowlist": ("backend/app/domain/workflow_config.py",),
+                "head_sha": "6" * 40,
+            }
+        ],
+    )
+    calls, fake_run_process = _post_commit_git_runner_factory(
+        task_id="T023",
+        title="Implement ProviderConfig validation before workflow execution",
+        parent_sha="5" * 40,
+        head_sha="6" * 40,
+        allowlist_paths=("backend/app/domain/workflow_config.py", "backend/app/providers/validation.py"),
+    )
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(FakeGitStatus(branch="epic/E003-artifact-storage", head_sha="6" * 40)),
+    )
+    monkeypatch.setattr(runner.process_runner, "run_process", fake_run_process)
+
+    result = runner.run_hook("post-commit")
+
+    assert result.status == "FAIL"
+    assert result.reason is not None
+    assert "outside task allowlist" in result.reason
+    assert "backend/app/providers/validation.py" in result.reason
+    assert all("--cached" not in call[0] for call in calls)
 
 
 def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch, tmp_path):
