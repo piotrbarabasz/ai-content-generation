@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.tooling.local_autopilot import epic_pipeline as epic_module
 from app.tooling.local_autopilot.epic_pipeline import EpicPipeline, EpicPipelineResult, run_epic_pipeline
 from app.tooling.local_autopilot.github_adapter import GitHubAuthResult
 from app.tooling.local_autopilot.models import (
@@ -587,6 +588,192 @@ def test_run_epic_syncs_existing_branch_before_tasks(tmp_path):
 
     assert result.status == RunStatus.COMPLETED
     assert ("sync_branch_with_base", "feature/E002", "master", "b" * 40) in repo.calls
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_reloads_manifest_after_branch_switch_and_skips_activation_when_branch_is_already_active(tmp_path, monkeypatch):
+    _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
+    repo = FakeRepository(tmp_path)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+    get_epic_calls: list[str] = []
+
+    def fake_get_epic(epic_id: str, directory: Path):
+        get_epic_calls.append(repo.current_branch)
+        status = "planned" if repo.current_branch == "master" else "active"
+        return {
+            "id": epic_id,
+            "title": "Epic E002",
+            "milestone": "M001",
+            "feature": "specs/001-ai-content-studio",
+            "base_branch": "master",
+            "branch": "feature/E002",
+            "status": status,
+            "risk": "medium",
+            "depends_on": ["E001"],
+            "tasks": ["T007", "T008"],
+            "required_checks": [
+                "python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",
+                "git --no-pager diff --check",
+            ],
+        }
+
+    monkeypatch.setattr(epic_module, "get_epic", fake_get_epic)
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH))
+
+    assert result.status == RunStatus.COMPLETED
+    assert ("create_branch", "feature/E002", "master") in repo.calls
+    assert repo.commit_messages == []
+    assert get_epic_calls[0] == "master"
+    assert "feature/E002" in get_epic_calls
+    assert result.task_ids == ("T007", "T008")
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_creates_activation_commit_once_for_existing_planned_branch(tmp_path, monkeypatch):
+    _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
+    repo = FakeRepository(tmp_path)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    def fake_get_epic(epic_id: str, directory: Path):
+        status = "planned" if repo.current_branch == "master" else "planned"
+        return {
+            "id": epic_id,
+            "title": "Epic E002",
+            "milestone": "M001",
+            "feature": "specs/001-ai-content-studio",
+            "base_branch": "master",
+            "branch": "feature/E002",
+            "status": status,
+            "risk": "medium",
+            "depends_on": ["E001"],
+            "tasks": ["T007", "T008"],
+            "required_checks": [
+                "python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",
+                "git --no-pager diff --check",
+            ],
+        }
+
+    monkeypatch.setattr(epic_module, "get_epic", fake_get_epic)
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH), human_authorized=True)
+
+    assert result.status == RunStatus.COMPLETED
+    assert repo.commit_messages == ["feat(E002): activate epic"]
+    assert ("create_branch", "feature/E002", "master") in repo.calls
+    assert result.activation_commit_sha == f"{1:040x}"[-40:]
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_rejects_completed_branch_after_switch(tmp_path, monkeypatch):
+    _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
+    repo = FakeRepository(tmp_path)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    def fake_get_epic(epic_id: str, directory: Path):
+        status = "planned" if repo.current_branch == "master" else "completed"
+        return {
+            "id": epic_id,
+            "title": "Epic E002",
+            "milestone": "M001",
+            "feature": "specs/001-ai-content-studio",
+            "base_branch": "master",
+            "branch": "feature/E002",
+            "status": status,
+            "risk": "medium",
+            "depends_on": ["E001"],
+            "tasks": ["T007", "T008"],
+            "required_checks": [
+                "python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",
+                "git --no-pager diff --check",
+            ],
+        }
+
+    monkeypatch.setattr(epic_module, "get_epic", fake_get_epic)
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH), human_authorized=True)
+
+    assert result.status == RunStatus.FAILED
+    assert "completed epics cannot be reactivated" in (result.reason or "")
+    assert repo.commit_messages == []
+    assert task_pipeline.calls == []
+
+
+def test_run_epic_propagates_activation_commit_failure(tmp_path, monkeypatch):
+    _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
+    repo = FakeRepository(tmp_path, commit_should_fail=True)
+    github = FakeGitHubAdapter()
+    receipt = FakeReviewReceipt(tmp_path)
+    pipeline, task_pipeline, _ = _build_pipeline(
+        tmp_path,
+        repo,
+        github,
+        receipt,
+        {
+            "T007": {"status": RunStatus.COMPLETED, "commit_sha": "1" * 40, "title": "Task 7"},
+            "T008": {"status": RunStatus.COMPLETED, "commit_sha": "2" * 40, "title": "Task 8"},
+        },
+    )
+
+    def fake_get_epic(epic_id: str, directory: Path):
+        status = "planned" if repo.current_branch == "master" else "planned"
+        return {
+            "id": epic_id,
+            "title": "Epic E002",
+            "milestone": "M001",
+            "feature": "specs/001-ai-content-studio",
+            "base_branch": "master",
+            "branch": "feature/E002",
+            "status": status,
+            "risk": "medium",
+            "depends_on": ["E001"],
+            "tasks": ["T007", "T008"],
+            "required_checks": [
+                "python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py",
+                "git --no-pager diff --check",
+            ],
+        }
+
+    monkeypatch.setattr(epic_module, "get_epic", fake_get_epic)
+
+    result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH), human_authorized=True)
+
+    assert result.status == RunStatus.FAILED
+    assert "activation commit failed" in (result.reason or "")
+    assert repo.commit_messages == ["feat(E002): activate epic"]
     assert task_pipeline.calls == []
 
 

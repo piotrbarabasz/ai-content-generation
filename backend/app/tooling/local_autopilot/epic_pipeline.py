@@ -109,24 +109,36 @@ class EpicPipeline:
             if dependency_errors:
                 raise EpicPipelineError("; ".join(dependency_errors))
 
-            if str(epic_manifest.get("status") or "") == "planned":
+            initial_status = str(epic_manifest.get("status") or "")
+            if initial_status == "planned":
+                if human_authorized is None:
+                    human_authorized = bool(run.request.human_authorized)
+                self.repository.create_branch(branch_name, base_branch=base_branch)
+            else:
+                self.repository.create_branch(branch_name, base_branch=base_branch)
+
+            epic_manifest = get_epic(epic_id, self.workstreams_dir)
+            branch_status = str(epic_manifest.get("status") or "")
+            if branch_status == "completed":
+                raise EpicPipelineError("completed epics cannot be reactivated")
+            if branch_status == "planned":
                 if human_authorized is None:
                     human_authorized = bool(run.request.human_authorized)
                 if not human_authorized:
                     raise EpicPipelineError("human authorization is required to activate a planned epic")
-                self.repository.create_branch(branch_name, base_branch=base_branch)
-                updated_manifest = activate_epic_with_human_authorization(
+                activate_epic_with_human_authorization(
                     epic_id,
                     human_authorized=True,
                     directory=self.workstreams_dir,
                 )
                 self._stage_and_commit_activation(epic_manifest_path=self._epic_manifest_path(epic_id), epic_id=epic_id)
-                self._write_active_epic(epic_id)
                 activation_commit_sha = self.repository.head_sha()
-            else:
-                self.repository.create_branch(branch_name, base_branch=base_branch)
-                self._write_active_epic(epic_id)
+            elif branch_status == "active":
                 activation_commit_sha = None
+            else:
+                raise EpicPipelineError(f"{epic_id} manifest is missing status or has unsupported status {branch_status!r}")
+
+            self._write_active_epic(epic_id)
 
             self.repository.sync_branch_with_base(branch_name, base_branch=base_branch, base_head_sha=base_head_sha)
 
@@ -475,7 +487,7 @@ class EpicPipeline:
                 "executed_command": " ".join(result.command),
                 "exit_code": result.exit_code if result.exit_code is not None else 0,
             }
-            for expected_command, result in zip(expected_commands, required_check_results, strict=True)
+            for expected_command, result in zip(expected_commands, required_check_results)
         ]
         return self.review_receipt_writer(
             epic_id=str(epic_manifest.get("id") or ""),
