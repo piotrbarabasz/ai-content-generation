@@ -226,7 +226,7 @@ Test requirements: Add direct schema validation and application-construction tes
 Parallelizable: no
 Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily. End-to-end API smoke coverage is handled in T019.
 
-- [ ] T015 Implement minimal API endpoints
+- [X] T015 Implement minimal API endpoints
 Milestone: M002
 Epic: E004
 Risk: high
