@@ -194,7 +194,7 @@ Notes: Keep module output formats stable so the export bundle can assemble refer
 
 ## Phase 7: Workflow presets
 
-- [ ] T013 Define MVP workflow presets
+- [X] T013 Define MVP workflow presets
 Milestone: M002
 Epic: E004
 Risk: high

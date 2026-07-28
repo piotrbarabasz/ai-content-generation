@@ -8,6 +8,8 @@ from typing import Any
 
 from app.workflow.execution import ModuleExecutionPlan, ModuleExecutionStep
 from app.workflow.module import ModuleDefinition, WorkflowModule
+from app.workflow.presets import MVP_WORKFLOW_PRESETS, WorkflowPresetDefinition
+from app.domain.enums import WorkflowPreset
 
 
 class ModuleRegistryError(ValueError):
@@ -154,3 +156,84 @@ class ModuleRegistry:
         raise ModuleRegistryError(
             f"Unsatisfied module dependency group ({dependency_list}); missing or out of order: {missing_list}."
         )
+
+
+class WorkflowPresetRegistryError(ValueError):
+    """Raised when preset registration or lookup fails."""
+
+
+def _normalize_workflow_preset(preset: WorkflowPreset | str) -> WorkflowPreset:
+    try:
+        return WorkflowPreset(preset)
+    except ValueError as exc:
+        raise WorkflowPresetRegistryError(f"Unknown workflow preset: {preset}.") from exc
+
+
+def _as_preset_definition(
+    preset: WorkflowPresetDefinition | WorkflowPreset | str,
+) -> WorkflowPresetDefinition:
+    if isinstance(preset, WorkflowPresetDefinition):
+        return preset
+    normalized = _normalize_workflow_preset(preset)
+    for definition in MVP_WORKFLOW_PRESETS:
+        if definition.workflow_preset is normalized:
+            return definition
+    raise WorkflowPresetRegistryError(f"Unknown workflow preset: {normalized.value}.")
+
+
+class WorkflowPresetRegistry:
+    """Registry of canonical workflow presets."""
+
+    def __init__(
+        self,
+        presets: Iterable[WorkflowPresetDefinition | WorkflowPreset | str] | None = None,
+    ) -> None:
+        self._presets: dict[WorkflowPreset, WorkflowPresetDefinition] = {}
+        if presets is not None:
+            for preset in presets:
+                self.register(preset)
+
+    def register(self, preset: WorkflowPresetDefinition | WorkflowPreset | str) -> None:
+        definition = _as_preset_definition(preset)
+        if definition.workflow_preset in self._presets:
+            raise WorkflowPresetRegistryError(
+                f"Duplicate workflow preset registration: {definition.workflow_preset.value}."
+            )
+        self._presets[definition.workflow_preset] = definition
+
+    def get(self, preset: WorkflowPreset | str) -> WorkflowPresetDefinition:
+        normalized = _normalize_workflow_preset(preset)
+        try:
+            return self._presets[normalized]
+        except KeyError as exc:
+            raise WorkflowPresetRegistryError(
+                f"Unknown workflow preset: {normalized.value}."
+            ) from exc
+
+    def has(self, preset: WorkflowPreset | str) -> bool:
+        try:
+            normalized = _normalize_workflow_preset(preset)
+        except WorkflowPresetRegistryError:
+            return False
+        return normalized in self._presets
+
+    def list_presets(self) -> tuple[WorkflowPresetDefinition, ...]:
+        return tuple(self._presets.values())
+
+    def build_workflow_config_payload(
+        self,
+        preset: WorkflowPreset | str,
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        definition = self.get(preset)
+        return definition.build_workflow_config_payload(project_id=project_id)
+
+
+def build_mvp_workflow_preset_registry() -> WorkflowPresetRegistry:
+    """Return the canonical preset registry for the MVP feature set."""
+
+    return WorkflowPresetRegistry(MVP_WORKFLOW_PRESETS)
+
+
+MVP_WORKFLOW_PRESET_REGISTRY = build_mvp_workflow_preset_registry()
