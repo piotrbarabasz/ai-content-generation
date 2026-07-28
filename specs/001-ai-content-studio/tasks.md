@@ -493,7 +493,7 @@ Test requirements: Add enabled and disabled research tests.
 Parallelizable: no
 Notes: Do not implement real web fetching or external research integrations.
 
-- [ ] T032 Implement DossierModule
+- [X] T032 Implement DossierModule
 Milestone: M002
 Epic: E004
 Risk: high
