@@ -512,7 +512,13 @@ class TaskPipeline:
                     current_state = TaskLifecycleState.CLOSED
 
                 if current_state == TaskLifecycleState.CLOSED:
-                    self.repository.stage_allowlist(list(task_context.allowlist) + [task_context.tasks_path.relative_to(self.root).as_posix()])
+                    commit_paths = [
+                        *task_context.allowlist,
+                        task_context.tasks_path.relative_to(self.root).as_posix(),
+                    ]
+                    normalization_results = self._repair_whitespace(commit_paths)
+                    command_results.extend(normalization_results)
+                    self.repository.stage_allowlist(commit_paths)
                     cached_check = self.repository.diff_check(cached=True)
                     command_results.append(self._command_result_from_process(cached_check))
                     if cached_check.status != "PASS":
