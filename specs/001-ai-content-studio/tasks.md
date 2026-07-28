@@ -461,7 +461,7 @@ Test requirements: Add export manifest schema tests.
 Parallelizable: no
 Notes: Required files are manifest.json, workflow_config.json and workflow_run.json.
 
-- [ ] T030 Implement ExportModule against the manifest contract
+- [X] T030 Implement ExportModule against the manifest contract
 Milestone: M002
 Epic: E004
 Risk: high
