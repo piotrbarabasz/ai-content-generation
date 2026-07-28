@@ -243,7 +243,7 @@ Notes: Avoid making the CLI the only usable interface. Full API smoke coverage i
 
 ## Phase 9: Approval basics
 
-- [ ] T016 Add approval checkpoint domain model and state machine
+- [X] T016 Add approval checkpoint domain model and state machine
 Milestone: M002
 Epic: E004
 Risk: high
