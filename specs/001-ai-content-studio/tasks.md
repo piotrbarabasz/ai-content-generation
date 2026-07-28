@@ -386,7 +386,7 @@ Notes: Do not commit real credentials or runtime artifacts.
 
 ## Phase 13: Remediation - short video modules and export
 
-- [ ] T025 Implement ScriptGenerationModule
+- [X] T025 Implement ScriptGenerationModule
 Milestone: M002
 Epic: E004
 Risk: high
