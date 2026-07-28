@@ -523,7 +523,7 @@ Test requirements: Add outline artifact tests.
 Parallelizable: no
 Notes: Outline is required for the long-form MVP path.
 
-- [ ] T034 Implement PostProcessingModule
+- [X] T034 Implement PostProcessingModule
 Milestone: M002
 Epic: E004
 Risk: high
