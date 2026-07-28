@@ -478,7 +478,7 @@ Notes: Export must work without publishing automation.
 
 ## Phase 14: Remediation - long-form workflow
 
-- [ ] T031 Implement ResearchModule
+- [X] T031 Implement ResearchModule
 Milestone: M002
 Epic: E004
 Risk: high
