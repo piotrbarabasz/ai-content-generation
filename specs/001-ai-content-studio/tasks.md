@@ -508,7 +508,7 @@ Test requirements: Add dossier artifact tests.
 Parallelizable: no
 Notes: Long-form workflows can still continue from topic with research disabled.
 
-- [ ] T033 Implement OutlineModule
+- [X] T033 Implement OutlineModule
 Milestone: M002
 Epic: E004
 Risk: high
