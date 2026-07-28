@@ -177,7 +177,7 @@ Test requirements: Add direct module-behavior tests in this task.
 Parallelizable: no
 Notes: Keep the module APIs narrow so each module can be tested independently.
 
-- [ ] T012 Implement VoiceoverModule
+- [X] T012 Implement VoiceoverModule
 Milestone: M002
 Epic: E004
 Risk: high
