@@ -585,7 +585,7 @@ Test requirements: Add workflow approval pause/resume tests.
 Parallelizable: no
 Notes: Rejection preserves artifacts and records a decision.
 
-- [ ] T038 Add approval and resume API routes
+- [X] T038 Add approval and resume API routes
 Milestone: M002
 Epic: E005
 Risk: high
