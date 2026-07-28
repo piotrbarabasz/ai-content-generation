@@ -162,7 +162,7 @@ Notes: Keep real vendor integrations out of this slice.
 
 ## Phase 6: MVP modules
 
-- [ ] T011 Implement BriefModule
+- [X] T011 Implement BriefModule
 Milestone: M002
 Epic: E004
 Risk: high
