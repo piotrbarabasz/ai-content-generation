@@ -542,6 +542,44 @@ def test_run_task_repairs_whitespace_once(tmp_path):
     assert any(command == ("normalize_allowlist_eof",) for command in (tuple(item.command) for item in result.command_results))
 
 
+def test_run_task_normalizes_eof_before_staging(tmp_path, monkeypatch):
+    implementation_file, _, tasks_file = _setup_repo(tmp_path)
+    implementation_file.write_bytes(b"print('placeholder')\n\n\n")
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    original_close_task_checkbox = pipeline._close_task_checkbox
+    original_stage_allowlist = pipeline.repository.stage_allowlist
+
+    def close_task_checkbox_with_extra_newlines(task_context, text):
+        updated_text, before_line, after_line = original_close_task_checkbox(task_context, text)
+        return f"{updated_text}\n\n", before_line, after_line
+
+    def stage_after_normalization(paths):
+        for path in (implementation_file, tasks_file):
+            data = path.read_bytes()
+            assert data.endswith(b"\n")
+            assert not data.endswith(b"\n\n")
+        assert list(paths) == [
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+            "specs/001-ai-content-studio/tasks.md",
+        ]
+        original_stage_allowlist(paths)
+
+    monkeypatch.setattr(pipeline, "_close_task_checkbox", close_task_checkbox_with_extra_newlines)
+    monkeypatch.setattr(pipeline.repository, "stage_allowlist", stage_after_normalization)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert implementation_file.read_bytes() == b"print('placeholder')\n"
+    assert tasks_file.read_bytes().endswith(b"\n")
+    assert not tasks_file.read_bytes().endswith(b"\n\n")
+    assert any(command == ("normalize_allowlist_eof",) for command in (tuple(item.command) for item in result.command_results))
+    assert any(command[:3] == ("git", "add", "--") for command in runner.calls)
+
+
 def test_run_task_fails_when_commit_fails(tmp_path):
     _setup_repo(tmp_path)
     runner = ScenarioRunner(
