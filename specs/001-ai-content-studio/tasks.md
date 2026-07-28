@@ -431,7 +431,7 @@ Test requirements: Add enabled and disabled caption module tests.
 Parallelizable: no
 Notes: Disabled captions must not require CaptionProvider validation.
 
-- [ ] T028 Implement VideoRenderingModule
+- [X] T028 Implement VideoRenderingModule
 Milestone: M002
 Epic: E004
 Risk: high
