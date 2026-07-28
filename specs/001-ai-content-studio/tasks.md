@@ -307,7 +307,7 @@ Notes: The API smoke test should verify status transitions rather than implement
 
 ## Phase 11: Migration documentation
 
-- [ ] T020 Document migration from source repos to the new architecture
+- [X] T020 Document migration from source repos to the new architecture
 Milestone: M002
 Epic: E004
 Risk: high
