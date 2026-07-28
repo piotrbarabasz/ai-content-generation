@@ -553,7 +553,7 @@ Test requirements: Add QA report tests.
 Parallelizable: no
 Notes: QA is required for long_form_script_voiceover.
 
-- [ ] T036 Define LongFormWorkflowPreset
+- [X] T036 Define LongFormWorkflowPreset
 Milestone: M002
 Epic: E004
 Risk: high
