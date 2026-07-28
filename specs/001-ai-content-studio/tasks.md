@@ -211,7 +211,7 @@ Notes: Keep preset definitions declarative so they can be reused by API and test
 
 ## Phase 8: API layer
 
-- [ ] T014 Create the API application and shared schemas
+- [X] T014 Create the API application and shared schemas
 Milestone: M002
 Epic: E004
 Risk: high
