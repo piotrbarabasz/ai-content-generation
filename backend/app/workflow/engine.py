@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 
+from app.domain.approval import ApprovalCheckpoint
 from app.domain.base import DomainValidationError
 from app.domain.workflow_config import WorkflowConfig
 from app.domain.types import JsonDict
@@ -16,6 +17,8 @@ from app.workflow.execution import (
     ModuleExecutionPlan,
     ModuleExecutionStep,
     ModuleResult,
+    approval_checkpoint_id_from_result,
+    approval_checkpoint_ids_from_result,
 )
 from app.workflow.module import WorkflowModule
 from app.workflow.registry import ModuleRegistry, ModuleRegistryError
@@ -40,6 +43,72 @@ def _skipped_result(module_name: str, reason: str) -> ModuleResult:
     return ModuleResult(module_name=module_name, status="skipped", skipped_reason=reason)
 
 
+def _coerce_approval_checkpoint_map(
+    approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None,
+) -> dict[str, ApprovalCheckpoint]:
+    if approval_checkpoints is None:
+        return {}
+    if isinstance(approval_checkpoints, Sequence) and not isinstance(approval_checkpoints, Mapping):
+        checkpoint_map: dict[str, ApprovalCheckpoint] = {}
+        for checkpoint in approval_checkpoints:
+            if not isinstance(checkpoint, ApprovalCheckpoint):
+                continue
+            checkpoint_id = checkpoint.id.strip()
+            if checkpoint_id:
+                checkpoint_map[checkpoint_id] = checkpoint
+        return checkpoint_map
+    checkpoint_map: dict[str, ApprovalCheckpoint] = {}
+    for checkpoint_id, checkpoint in approval_checkpoints.items():
+        normalized_checkpoint_id = str(checkpoint_id).strip()
+        if not normalized_checkpoint_id:
+            continue
+        if not isinstance(checkpoint, ApprovalCheckpoint):
+            continue
+        checkpoint_map[normalized_checkpoint_id] = checkpoint
+    return checkpoint_map
+
+
+def _normalize_module_result_for_resume(
+    result: ModuleResult,
+    *,
+    approval_checkpoints: Mapping[str, ApprovalCheckpoint],
+) -> ModuleResult:
+    if result.status != "waiting_for_approval":
+        return result
+
+    checkpoint_id = approval_checkpoint_id_from_result(result)
+    checkpoint = approval_checkpoints.get(checkpoint_id) if checkpoint_id else None
+    if checkpoint is None or not checkpoint.is_resumable:
+        return result
+
+    output = dict(result.output)
+    checkpoint_payload = dict(output.get("approval_checkpoint", {}))
+    checkpoint_payload["status"] = checkpoint.status
+    checkpoint_payload["required"] = checkpoint.required
+    checkpoint_payload["resolved_at"] = (
+        checkpoint.resolved_at.isoformat() if checkpoint.resolved_at is not None else None
+    )
+    checkpoint_payload["decision_history"] = [
+        {
+            "id": decision.id,
+            "checkpoint_id": decision.checkpoint_id,
+            "decision": decision.decision,
+            "reviewer_id": decision.reviewer_id,
+            "comment": decision.comment,
+            "revised_artifact_id": decision.revised_artifact_id,
+            "created_at": decision.created_at.isoformat(),
+        }
+        for decision in checkpoint.decision_history
+    ]
+    checkpoint_payload.setdefault("id", checkpoint.id)
+    checkpoint_payload.setdefault("checkpoint_type", checkpoint.checkpoint_type)
+    checkpoint_payload.setdefault("artifact_id", checkpoint.artifact_id)
+    checkpoint_payload.setdefault("created_at", checkpoint.created_at.isoformat())
+    output["approval_checkpoint"] = checkpoint_payload
+
+    return replace(result, status="completed", output=output)
+
+
 @dataclass(slots=True, frozen=True)
 class WorkflowExecutionResult:
     """Summary of a workflow plan execution."""
@@ -51,6 +120,7 @@ class WorkflowExecutionResult:
     failed_module: str | None = None
     failure_message: str = ""
     artifact_ids: tuple[str, ...] = field(default_factory=tuple)
+    approval_checkpoint_ids: tuple[str, ...] = field(default_factory=tuple)
 
 
 class CoreWorkflowEngine:
@@ -79,6 +149,8 @@ class CoreWorkflowEngine:
         provider_registry: ProviderRegistry | None = None,
         inputs: JsonDict | None = None,
         modules: Mapping[str, WorkflowModule] | None = None,
+        seed_module_results: Mapping[str, ModuleResult] | None = None,
+        approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None = None,
     ) -> WorkflowExecutionResult:
         """Execute a plan and return the captured module outcomes."""
 
@@ -105,6 +177,8 @@ class CoreWorkflowEngine:
             workflow_config_id=workflow_config_id,
             inputs=inputs,
             modules=modules,
+            seed_module_results=seed_module_results,
+            approval_checkpoints=approval_checkpoints,
         )
 
     def run_plan(
@@ -115,18 +189,27 @@ class CoreWorkflowEngine:
         workflow_config_id: str,
         inputs: JsonDict | None = None,
         modules: Mapping[str, WorkflowModule] | None = None,
+        seed_module_results: Mapping[str, ModuleResult] | None = None,
+        approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None = None,
     ) -> WorkflowExecutionResult:
         module_map = dict(self._modules)
         if modules is not None:
             module_map.update(modules)
 
-        module_results: dict[str, ModuleResult] = {}
+        module_results: dict[str, ModuleResult] = dict(seed_module_results or {})
         completed_modules: list[str] = []
         overall_status: ExecutionStatus = "completed"
         failed_module: str | None = None
         failure_message = ""
         enabled_modules = plan.enabled_modules
         disabled_modules = plan.disabled_modules
+        approval_checkpoint_map = _coerce_approval_checkpoint_map(approval_checkpoints)
+        approval_checkpoint_ids: list[str] = []
+
+        for seeded_result in module_results.values():
+            for checkpoint_id in approval_checkpoint_ids_from_result(seeded_result):
+                if checkpoint_id not in approval_checkpoint_ids:
+                    approval_checkpoint_ids.append(checkpoint_id)
 
         for step in plan.steps:
             try:
@@ -144,6 +227,37 @@ class CoreWorkflowEngine:
                     step.disabled_reason or "disabled",
                 )
                 continue
+
+            existing_result = module_results.get(step.module_name)
+            if existing_result is not None:
+                checkpoint_id = approval_checkpoint_id_from_result(existing_result)
+                if checkpoint_id and checkpoint_id not in approval_checkpoint_ids:
+                    approval_checkpoint_ids.append(checkpoint_id)
+
+                normalized_result = _normalize_module_result_for_resume(
+                    existing_result,
+                    approval_checkpoints=approval_checkpoint_map,
+                )
+                module_results[step.module_name] = normalized_result
+
+                if normalized_result.status == "completed":
+                    completed_modules.append(step.module_name)
+                    continue
+
+                if normalized_result.status == "skipped":
+                    continue
+
+                if normalized_result.status == "waiting_for_approval":
+                    failure_message = ""
+                    failed_module = None
+                    overall_status = "waiting_for_approval"
+                    break
+
+                if normalized_result.status == "failed":
+                    failure_message = normalized_result.error_message
+                    failed_module = step.module_name
+                    overall_status = "failed"
+                    break
 
             if step.module_name not in module_map:
                 failure_message = f"Module {step.module_name} is not registered with the engine."
@@ -177,6 +291,7 @@ class CoreWorkflowEngine:
                 inputs=_coerce_inputs(inputs),
                 module_results=dict(module_results),
                 artifact_ids=_artifact_ids(module_results),
+                approval_checkpoint_ids=tuple(approval_checkpoint_ids),
             )
             try:
                 result = module.execute(context)
@@ -194,6 +309,10 @@ class CoreWorkflowEngine:
                 break
 
             module_results[step.module_name] = result
+            for checkpoint_id in approval_checkpoint_ids_from_result(result):
+                if checkpoint_id not in approval_checkpoint_ids:
+                    approval_checkpoint_ids.append(checkpoint_id)
+
             if result.status == "completed":
                 completed_modules.append(step.module_name)
                 continue
@@ -217,6 +336,7 @@ class CoreWorkflowEngine:
             failed_module=failed_module,
             failure_message=failure_message,
             artifact_ids=_artifact_ids(module_results),
+            approval_checkpoint_ids=tuple(approval_checkpoint_ids),
         )
 
     def _dependency_error(

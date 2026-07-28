@@ -570,7 +570,7 @@ Notes: Long-form MVP does not need video rendering.
 
 ## Phase 15: Remediation - approval workflow and API
 
-- [ ] T037 Integrate approval checkpoints into workflow execution
+- [X] T037 Integrate approval checkpoints into workflow execution
 Milestone: M002
 Epic: E005
 Risk: high

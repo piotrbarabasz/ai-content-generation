@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.domain.approval import ApprovalCheckpoint
 from app.domain.types import JsonDict
 
 ExecutionStatus = Literal[
@@ -21,6 +23,77 @@ def _coerce_tuple(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]
     if values is None:
         return ()
     return tuple(str(value).strip() for value in values)
+
+
+def _coerce_approval_checkpoint_map(
+    approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None,
+) -> dict[str, ApprovalCheckpoint]:
+    if approval_checkpoints is None:
+        return {}
+    if isinstance(approval_checkpoints, Mapping):
+        checkpoint_map: dict[str, ApprovalCheckpoint] = {}
+        for key, checkpoint in approval_checkpoints.items():
+            checkpoint_id = str(key).strip()
+            if checkpoint_id and isinstance(checkpoint, ApprovalCheckpoint):
+                checkpoint_map[checkpoint_id] = checkpoint
+        return checkpoint_map
+
+    checkpoint_map: dict[str, ApprovalCheckpoint] = {}
+    for checkpoint in approval_checkpoints:
+        if not isinstance(checkpoint, ApprovalCheckpoint):
+            continue
+        checkpoint_id = checkpoint.id.strip()
+        if checkpoint_id:
+            checkpoint_map[checkpoint_id] = checkpoint
+    return checkpoint_map
+
+
+def _approval_checkpoint_id_from_output(output: Mapping[str, object]) -> str:
+    checkpoint_payload = output.get("approval_checkpoint")
+    if not isinstance(checkpoint_payload, Mapping):
+        return ""
+    checkpoint_id = str(checkpoint_payload.get("id", "")).strip()
+    if checkpoint_id:
+        return checkpoint_id
+
+    checkpoint_ids = output.get("approval_checkpoint_ids")
+    if isinstance(checkpoint_ids, Sequence) and not isinstance(checkpoint_ids, (str, bytes)):
+        for value in checkpoint_ids:
+            candidate = str(value).strip()
+            if candidate:
+                return candidate
+    return ""
+
+
+def approval_checkpoint_id_from_result(result: "ModuleResult") -> str:
+    """Return the first approval checkpoint id embedded in a module result."""
+
+    output = result.output
+    if not isinstance(output, Mapping):
+        return ""
+    return _approval_checkpoint_id_from_output(output)
+
+
+def approval_checkpoint_ids_from_result(result: "ModuleResult") -> tuple[str, ...]:
+    """Return approval checkpoint ids embedded in a module result."""
+
+    output = result.output
+    if not isinstance(output, Mapping):
+        return ()
+
+    checkpoint_ids: list[str] = []
+    checkpoint_id = approval_checkpoint_id_from_result(result)
+    if checkpoint_id:
+        checkpoint_ids.append(checkpoint_id)
+
+    nested_ids = output.get("approval_checkpoint_ids")
+    if isinstance(nested_ids, Sequence) and not isinstance(nested_ids, (str, bytes)):
+        for value in nested_ids:
+            candidate = str(value).strip()
+            if candidate and candidate not in checkpoint_ids:
+                checkpoint_ids.append(candidate)
+
+    return tuple(checkpoint_ids)
 
 
 @dataclass(slots=True, frozen=True)
@@ -83,6 +156,37 @@ class ModuleExecutionContext:
             "approval_checkpoint_ids",
             _coerce_tuple(self.approval_checkpoint_ids),
         )
+
+
+@dataclass(slots=True, frozen=True)
+class WorkflowExecutionState:
+    """Seed state used to resume a partially completed workflow run."""
+
+    module_results: dict[str, ModuleResult] = field(default_factory=dict)
+    approval_checkpoint_ids: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "module_results", dict(self.module_results))
+        object.__setattr__(self, "approval_checkpoint_ids", _coerce_tuple(self.approval_checkpoint_ids))
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        module_results: Mapping[str, ModuleResult] | None = None,
+        approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None = None,
+    ) -> "WorkflowExecutionState":
+        checkpoint_map = _coerce_approval_checkpoint_map(approval_checkpoints)
+        seeded_results = dict(module_results or {})
+        checkpoint_ids: list[str] = []
+        for result in seeded_results.values():
+            for checkpoint_id in approval_checkpoint_ids_from_result(result):
+                if checkpoint_id not in checkpoint_ids:
+                    checkpoint_ids.append(checkpoint_id)
+        for checkpoint_id in checkpoint_map:
+            if checkpoint_id not in checkpoint_ids:
+                checkpoint_ids.append(checkpoint_id)
+        return cls(module_results=seeded_results, approval_checkpoint_ids=tuple(checkpoint_ids))
 
 
 @dataclass(slots=True, frozen=True)
