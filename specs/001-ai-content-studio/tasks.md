@@ -416,7 +416,7 @@ Test requirements: Add scene planning and NarrativeSegment versus RenderScene se
 Parallelizable: no
 Notes: Required for short_video preset.
 
-- [ ] T027 Implement CaptionsModule
+- [X] T027 Implement CaptionsModule
 Milestone: M002
 Epic: E004
 Risk: high
