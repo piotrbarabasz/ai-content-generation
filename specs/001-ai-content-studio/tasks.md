@@ -538,7 +538,7 @@ Test requirements: Add post-processing artifact tests.
 Parallelizable: no
 Notes: Keep this deterministic for MVP.
 
-- [ ] T035 Implement QAModule
+- [X] T035 Implement QAModule
 Milestone: M002
 Epic: E004
 Risk: high
