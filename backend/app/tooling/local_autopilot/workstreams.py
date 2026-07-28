@@ -165,18 +165,13 @@ def next_dependency_ready_task(
     task_order = [task_id for task_id in (epic.get("tasks") or []) if isinstance(task_id, str)]
     tasks_file = Path(tasks_file)
     task_records = _load_task_blocks(tasks_file)
-    ready: list[str] = []
     for task_id in task_order:
         record = task_records.get(task_id)
         if record is None or record["completed"]:
             continue
         if _dependencies_complete(record["dependencies"], task_records):
-            ready.append(task_id)
-    if not ready:
-        return None
-    if len(ready) > 1:
-        raise ValueError(f"ambiguous next task for epic {epic_id}: {', '.join(ready)}")
-    return ready[0]
+            return task_id
+    return None
 
 
 def all_epic_tasks_complete(

@@ -179,3 +179,36 @@ def test_next_ready_epic_for_milestone_uses_manifest_order_and_dependency_readin
 
     _write(directory / "E001.yml", _epic("E001", "M001", ["T001"], status="completed"))
     assert workstreams.next_ready_epic_for_milestone("M001", tasks_file=tasks_file, directory=directory) == "E002"
+
+
+def test_next_dependency_ready_task_uses_manifest_order_when_multiple_tasks_are_ready(tmp_path, monkeypatch):
+    _patch_root(monkeypatch, tmp_path)
+
+    directory = tmp_path / ".specify" / "workstreams"
+    tasks_file = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+
+    _write(directory / "M002.yml", _milestone("M002", ["E004"]))
+    _write(directory / "E004.yml", _epic("E004", "M002", ["T011", "T014", "T029", "T031"], status="active"))
+    _write(
+        tasks_file,
+        _tasks(
+            _task("T011", "E004", "M002"),
+            _task("T014", "E004", "M002"),
+            _task("T029", "E004", "M002"),
+            _task("T031", "E004", "M002"),
+        ),
+    )
+
+    assert workstreams.next_dependency_ready_task("E004", tasks_file=tasks_file, directory=directory) == "T011"
+
+    _write(
+        tasks_file,
+        _tasks(
+            _task("T011", "E004", "M002", completed=True),
+            _task("T014", "E004", "M002"),
+            _task("T029", "E004", "M002"),
+            _task("T031", "E004", "M002"),
+        ),
+    )
+
+    assert workstreams.next_dependency_ready_task("E004", tasks_file=tasks_file, directory=directory) == "T014"
