@@ -401,7 +401,7 @@ Test requirements: Add script output and narrative segment tests.
 Parallelizable: no
 Notes: Keep NarrativeSegment separate from RenderScene.
 
-- [ ] T026 Implement ScenePlanningModule
+- [X] T026 Implement ScenePlanningModule
 Milestone: M002
 Epic: E004
 Risk: high
