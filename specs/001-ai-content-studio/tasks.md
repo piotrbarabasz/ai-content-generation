@@ -162,7 +162,7 @@ Notes: Keep real vendor integrations out of this slice.
 
 ## Phase 6: MVP modules
 
-- [ ] T011 Implement BriefModule
+- [X] T011 Implement BriefModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -177,7 +177,7 @@ Test requirements: Add direct module-behavior tests in this task.
 Parallelizable: no
 Notes: Keep the module APIs narrow so each module can be tested independently.
 
-- [ ] T012 Implement VoiceoverModule
+- [X] T012 Implement VoiceoverModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -194,7 +194,7 @@ Notes: Keep module output formats stable so the export bundle can assemble refer
 
 ## Phase 7: Workflow presets
 
-- [ ] T013 Define MVP workflow presets
+- [X] T013 Define MVP workflow presets
 Milestone: M002
 Epic: E004
 Risk: high
@@ -211,7 +211,7 @@ Notes: Keep preset definitions declarative so they can be reused by API and test
 
 ## Phase 8: API layer
 
-- [ ] T014 Create the API application and shared schemas
+- [X] T014 Create the API application and shared schemas
 Milestone: M002
 Epic: E004
 Risk: high
@@ -226,7 +226,7 @@ Test requirements: Add direct schema validation and application-construction tes
 Parallelizable: no
 Notes: Keep API schemas aligned with the domain models rather than duplicating fields unnecessarily. End-to-end API smoke coverage is handled in T019.
 
-- [ ] T015 Implement minimal API endpoints
+- [X] T015 Implement minimal API endpoints
 Milestone: M002
 Epic: E004
 Risk: high
@@ -243,7 +243,7 @@ Notes: Avoid making the CLI the only usable interface. Full API smoke coverage i
 
 ## Phase 9: Approval basics
 
-- [ ] T016 Add approval checkpoint domain model and state machine
+- [X] T016 Add approval checkpoint domain model and state machine
 Milestone: M002
 Epic: E004
 Risk: high
@@ -307,7 +307,7 @@ Notes: The API smoke test should verify status transitions rather than implement
 
 ## Phase 11: Migration documentation
 
-- [ ] T020 Document migration from source repos to the new architecture
+- [X] T020 Document migration from source repos to the new architecture
 Milestone: M002
 Epic: E004
 Risk: high
@@ -386,7 +386,7 @@ Notes: Do not commit real credentials or runtime artifacts.
 
 ## Phase 13: Remediation - short video modules and export
 
-- [ ] T025 Implement ScriptGenerationModule
+- [X] T025 Implement ScriptGenerationModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -401,7 +401,7 @@ Test requirements: Add script output and narrative segment tests.
 Parallelizable: no
 Notes: Keep NarrativeSegment separate from RenderScene.
 
-- [ ] T026 Implement ScenePlanningModule
+- [X] T026 Implement ScenePlanningModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -416,7 +416,7 @@ Test requirements: Add scene planning and NarrativeSegment versus RenderScene se
 Parallelizable: no
 Notes: Required for short_video preset.
 
-- [ ] T027 Implement CaptionsModule
+- [X] T027 Implement CaptionsModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -431,7 +431,7 @@ Test requirements: Add enabled and disabled caption module tests.
 Parallelizable: no
 Notes: Disabled captions must not require CaptionProvider validation.
 
-- [ ] T028 Implement VideoRenderingModule
+- [X] T028 Implement VideoRenderingModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -446,7 +446,7 @@ Test requirements: Add render-required and disabled-render tests.
 Parallelizable: no
 Notes: Do not implement real video rendering in the first slice.
 
-- [ ] T029 Define ExportBundle manifest schema
+- [X] T029 Define ExportBundle manifest schema
 Milestone: M002
 Epic: E004
 Risk: high
@@ -461,7 +461,7 @@ Test requirements: Add export manifest schema tests.
 Parallelizable: no
 Notes: Required files are manifest.json, workflow_config.json and workflow_run.json.
 
-- [ ] T030 Implement ExportModule against the manifest contract
+- [X] T030 Implement ExportModule against the manifest contract
 Milestone: M002
 Epic: E004
 Risk: high
@@ -478,7 +478,7 @@ Notes: Export must work without publishing automation.
 
 ## Phase 14: Remediation - long-form workflow
 
-- [ ] T031 Implement ResearchModule
+- [X] T031 Implement ResearchModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -493,7 +493,7 @@ Test requirements: Add enabled and disabled research tests.
 Parallelizable: no
 Notes: Do not implement real web fetching or external research integrations.
 
-- [ ] T032 Implement DossierModule
+- [X] T032 Implement DossierModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -508,7 +508,7 @@ Test requirements: Add dossier artifact tests.
 Parallelizable: no
 Notes: Long-form workflows can still continue from topic with research disabled.
 
-- [ ] T033 Implement OutlineModule
+- [X] T033 Implement OutlineModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -523,7 +523,7 @@ Test requirements: Add outline artifact tests.
 Parallelizable: no
 Notes: Outline is required for the long-form MVP path.
 
-- [ ] T034 Implement PostProcessingModule
+- [X] T034 Implement PostProcessingModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -538,7 +538,7 @@ Test requirements: Add post-processing artifact tests.
 Parallelizable: no
 Notes: Keep this deterministic for MVP.
 
-- [ ] T035 Implement QAModule
+- [X] T035 Implement QAModule
 Milestone: M002
 Epic: E004
 Risk: high
@@ -553,7 +553,7 @@ Test requirements: Add QA report tests.
 Parallelizable: no
 Notes: QA is required for long_form_script_voiceover.
 
-- [ ] T036 Define LongFormWorkflowPreset
+- [X] T036 Define LongFormWorkflowPreset
 Milestone: M002
 Epic: E004
 Risk: high
