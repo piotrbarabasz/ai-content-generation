@@ -600,7 +600,7 @@ Test requirements: Add API tests for approve, reject, request changes and blocke
 Parallelizable: no
 Notes: Route naming may use the repository's established API prefix.
 
-- [ ] T047 Synchronize API schema with WorkflowConfig
+- [X] T047 Synchronize API schema with WorkflowConfig
 Milestone: M002
 Epic: E005
 Risk: medium

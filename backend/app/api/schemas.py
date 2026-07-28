@@ -108,6 +108,62 @@ class WorkflowConfigSchema(WorkflowConfigCreateRequest):
     created_at: datetime
 
 
+_WORKFLOW_CONFIG_CANONICAL_FIELDS = (
+    "project_id",
+    "workflow_preset",
+    "content_type",
+    "content_genre",
+    "duration_profile",
+    "target_platform",
+    "language",
+    "tone",
+    "enabled_modules",
+    "disabled_modules",
+    "provider_config",
+    "render_config",
+    "caption_config",
+    "voice_config",
+    "asset_config",
+    "approval_policy",
+    "export_config",
+)
+
+_WORKFLOW_CONFIG_ENUM_FIELDS = {
+    "workflow_preset": WorkflowPreset,
+    "content_type": ContentType,
+    "content_genre": ContentGenre,
+    "duration_profile": DurationProfile,
+    "target_platform": TargetPlatform,
+}
+
+
+def _validate_workflow_config_schema_sync() -> None:
+    """Fail fast if the API request schema drifts from the canonical domain model."""
+
+    actual_fields = tuple(WorkflowConfigCreateRequest.model_fields)
+    if actual_fields != _WORKFLOW_CONFIG_CANONICAL_FIELDS:
+        raise RuntimeError(
+            "WorkflowConfigCreateRequest field order is out of sync with WorkflowConfig."
+        )
+
+    actual_schema_fields = tuple(WorkflowConfigSchema.model_fields)
+    expected_schema_fields = _WORKFLOW_CONFIG_CANONICAL_FIELDS + ("id", "created_at")
+    if actual_schema_fields != expected_schema_fields:
+        raise RuntimeError(
+            "WorkflowConfigSchema field order is out of sync with WorkflowConfig."
+        )
+
+    for field_name, expected_type in _WORKFLOW_CONFIG_ENUM_FIELDS.items():
+        actual_type = WorkflowConfigCreateRequest.model_fields[field_name].annotation
+        if actual_type is not expected_type:
+            raise RuntimeError(
+                f"WorkflowConfigCreateRequest field {field_name} no longer matches {expected_type.__name__}."
+            )
+
+
+_validate_workflow_config_schema_sync()
+
+
 class WorkflowRunCreateRequest(ApiSchema):
     workflow_config_id: str = Field(min_length=1)
 
