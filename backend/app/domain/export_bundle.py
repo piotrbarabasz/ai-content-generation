@@ -1,5 +1,6 @@
 """Export bundle domain model."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from app.domain.base import DomainEntity, DomainValidationError, new_id
@@ -12,10 +13,22 @@ def _coerce_str_list(values: list[str] | tuple[str, ...] | None) -> list[str]:
     return [str(value) for value in values]
 
 
+def _coerce_manifest(manifest: Mapping[str, object] | object | None) -> JsonDict:
+    if manifest is None:
+        return {}
+    to_payload = getattr(manifest, "to_payload", None)
+    if callable(to_payload):
+        manifest = to_payload()
+    if not isinstance(manifest, Mapping):
+        raise DomainValidationError("ExportBundle manifest must be a mapping or expose to_payload().")
+    return dict(manifest)
+
+
 @dataclass(slots=True)
 class ExportBundle(DomainEntity):
     workflow_run_id: str = ""
     manifest_path: str = ""
+    manifest: JsonDict = field(default_factory=dict)
     required_files: list[str] = field(default_factory=list)
     included_artifacts: list[str] = field(default_factory=list)
     missing_optional_artifacts: list[str] = field(default_factory=list)
@@ -29,6 +42,7 @@ class ExportBundle(DomainEntity):
         *,
         workflow_run_id: str,
         manifest_path: str,
+        manifest: Mapping[str, object] | object | None = None,
         required_files: list[str] | tuple[str, ...] | None = None,
         included_artifacts: list[str] | tuple[str, ...] | None = None,
         missing_optional_artifacts: list[str] | tuple[str, ...] | None = None,
@@ -47,6 +61,7 @@ class ExportBundle(DomainEntity):
             id=new_id("export_bundle"),
             workflow_run_id=workflow_run_id,
             manifest_path=manifest_path,
+            manifest=_coerce_manifest(manifest),
             required_files=_coerce_str_list(required_files),
             included_artifacts=_coerce_str_list(included_artifacts),
             missing_optional_artifacts=_coerce_str_list(missing_optional_artifacts),

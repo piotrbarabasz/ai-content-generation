@@ -446,7 +446,7 @@ Test requirements: Add render-required and disabled-render tests.
 Parallelizable: no
 Notes: Do not implement real video rendering in the first slice.
 
-- [ ] T029 Define ExportBundle manifest schema
+- [X] T029 Define ExportBundle manifest schema
 Milestone: M002
 Epic: E004
 Risk: high
