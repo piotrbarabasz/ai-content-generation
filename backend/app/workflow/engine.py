@@ -22,6 +22,7 @@ from app.workflow.execution import (
 )
 from app.workflow.module import WorkflowModule
 from app.workflow.registry import ModuleRegistry, ModuleRegistryError
+from app.workflow.usage import NoopCostTracker, UsageTracker
 
 
 def _coerce_inputs(inputs: JsonDict | None) -> JsonDict:
@@ -130,9 +131,11 @@ class CoreWorkflowEngine:
         self,
         module_registry: ModuleRegistry,
         modules: Mapping[str, WorkflowModule] | None = None,
+        usage_tracker: UsageTracker | None = None,
     ) -> None:
         self._module_registry = module_registry
         self._modules: dict[str, WorkflowModule] = dict(modules or {})
+        self._usage_tracker = usage_tracker or NoopCostTracker()
 
     def register_module(self, module: WorkflowModule) -> None:
         """Register an executable module instance with the engine."""
@@ -309,6 +312,7 @@ class CoreWorkflowEngine:
                 break
 
             module_results[step.module_name] = result
+            self._track_usage(workflow_run_id=workflow_run_id, result=result)
             for checkpoint_id in approval_checkpoint_ids_from_result(result):
                 if checkpoint_id not in approval_checkpoint_ids:
                     approval_checkpoint_ids.append(checkpoint_id)
@@ -337,6 +341,16 @@ class CoreWorkflowEngine:
             failure_message=failure_message,
             artifact_ids=_artifact_ids(module_results),
             approval_checkpoint_ids=tuple(approval_checkpoint_ids),
+        )
+
+    def _track_usage(self, *, workflow_run_id: str, result: ModuleResult) -> None:
+        """Forward optional usage metadata to the configured tracker."""
+
+        usage_metadata = result.usage_metadata
+        self._usage_tracker.record(
+            workflow_run_id=workflow_run_id,
+            module_name=result.module_name,
+            usage_metadata=usage_metadata if usage_metadata else None,
         )
 
     def _dependency_error(

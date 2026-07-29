@@ -617,7 +617,7 @@ Notes: This remediation task isolates API schema synchronization from the comple
 
 ## Phase 16: Remediation - usage tracking and expanded tests
 
-- [ ] T039 Add UsageTracker and NoopCostTracker
+- [X] T039 Add UsageTracker and NoopCostTracker
 Milestone: M003
 Epic: E006
 Risk: medium
