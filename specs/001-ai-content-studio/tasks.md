@@ -692,7 +692,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Use mock providers and local artifact storage only.
 
-- [ ] T044 Add retry, failed module and static secret hygiene tests
+- [X] T044 Add retry, failed module and static secret hygiene tests
 Milestone: M003
 Epic: E006
 Risk: medium

@@ -44,6 +44,10 @@ def _skipped_result(module_name: str, reason: str) -> ModuleResult:
     return ModuleResult(module_name=module_name, status="skipped", skipped_reason=reason)
 
 
+def _should_retry_result(result: ModuleResult) -> bool:
+    return result.status == "failed"
+
+
 def _coerce_approval_checkpoint_map(
     approval_checkpoints: Mapping[str, ApprovalCheckpoint] | Sequence[ApprovalCheckpoint] | None,
 ) -> dict[str, ApprovalCheckpoint]:
@@ -285,49 +289,80 @@ class CoreWorkflowEngine:
                 overall_status = "failed"
                 break
 
-            context = ModuleExecutionContext(
-                workflow_run_id=workflow_run_id,
-                workflow_config_id=workflow_config_id,
-                module_name=step.module_name,
-                enabled_modules=enabled_modules,
-                disabled_modules=disabled_modules,
-                inputs=_coerce_inputs(inputs),
-                module_results=dict(module_results),
-                artifact_ids=_artifact_ids(module_results),
-                approval_checkpoint_ids=tuple(approval_checkpoint_ids),
-            )
-            try:
-                result = module.execute(context)
-            except Exception as exc:  # pragma: no cover - defensive guard
-                message = str(exc) or exc.__class__.__name__
-                result = _failure_result(step.module_name, message)
-
-            if result.module_name != step.module_name:
-                failure_message = (
-                    f"Module {step.module_name} returned result for {result.module_name}."
+            retry_limit = max(0, step.retry_limit)
+            attempt = 0
+            step_result: ModuleResult | None = None
+            while True:
+                attempt += 1
+                context = ModuleExecutionContext(
+                    workflow_run_id=workflow_run_id,
+                    workflow_config_id=workflow_config_id,
+                    module_name=step.module_name,
+                    enabled_modules=enabled_modules,
+                    disabled_modules=disabled_modules,
+                    inputs=_coerce_inputs(inputs),
+                    module_results=dict(module_results),
+                    artifact_ids=_artifact_ids(module_results),
+                    approval_checkpoint_ids=tuple(approval_checkpoint_ids),
                 )
+                try:
+                    result = module.execute(context)
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    message = str(exc) or exc.__class__.__name__
+                    result = _failure_result(step.module_name, message)
+
+                if result.module_name != step.module_name:
+                    failure_message = (
+                        f"Module {step.module_name} returned result for {result.module_name}."
+                    )
+                    failed_module = step.module_name
+                    module_results[step.module_name] = _failure_result(step.module_name, failure_message)
+                    overall_status = "failed"
+                    step_result = module_results[step.module_name]
+                    break
+
+                self._track_usage(workflow_run_id=workflow_run_id, result=result)
+
+                if result.status == "completed":
+                    module_results[step.module_name] = result
+                    completed_modules.append(step.module_name)
+                    for checkpoint_id in approval_checkpoint_ids_from_result(result):
+                        if checkpoint_id not in approval_checkpoint_ids:
+                            approval_checkpoint_ids.append(checkpoint_id)
+                    step_result = result
+                    break
+
+                if result.status == "skipped":
+                    module_results[step.module_name] = result
+                    step_result = result
+                    break
+
+                if result.status == "waiting_for_approval":
+                    module_results[step.module_name] = result
+                    for checkpoint_id in approval_checkpoint_ids_from_result(result):
+                        if checkpoint_id not in approval_checkpoint_ids:
+                            approval_checkpoint_ids.append(checkpoint_id)
+                    failure_message = ""
+                    failed_module = None
+                    overall_status = "waiting_for_approval"
+                    step_result = result
+                    break
+
+                if _should_retry_result(result) and attempt <= retry_limit:
+                    continue
+
+                module_results[step.module_name] = result
                 failed_module = step.module_name
-                module_results[step.module_name] = _failure_result(step.module_name, failure_message)
+                failure_message = result.error_message
                 overall_status = "failed"
+                step_result = result
                 break
 
-            module_results[step.module_name] = result
-            self._track_usage(workflow_run_id=workflow_run_id, result=result)
-            for checkpoint_id in approval_checkpoint_ids_from_result(result):
-                if checkpoint_id not in approval_checkpoint_ids:
-                    approval_checkpoint_ids.append(checkpoint_id)
+            if step_result is None:
+                break
 
-            if result.status == "completed":
-                completed_modules.append(step.module_name)
-                continue
-
-            if result.status == "skipped":
-                continue
-
-            failed_module = step.module_name if result.status == "failed" else failed_module
-            failure_message = result.error_message
-            overall_status = result.status
-            break
+            if overall_status in {"failed", "waiting_for_approval"}:
+                break
 
         if overall_status == "completed" and plan.steps and not completed_modules:
             overall_status = "skipped"
