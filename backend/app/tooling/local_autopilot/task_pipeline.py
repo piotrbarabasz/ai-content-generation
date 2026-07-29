@@ -54,6 +54,7 @@ class TaskContext:
     validation_commands: tuple[str, ...]
     tasks_path: Path
     tasks_text: str
+    tasks_bytes: bytes
 
 
 @dataclass(frozen=True)
@@ -233,10 +234,11 @@ class TaskPipeline:
                         attempts=attempts,
                     )
 
+                self._restore_tasks_md_after_codex(task_context)
                 touched_source = codex_result.result_json.get("files_touched")
                 if not isinstance(touched_source, list):
                     touched_source = codex_result.result_json.get("files_changed")
-                touched_files = tuple(str(item).replace("\\", "/") for item in (touched_source or ()))
+                touched_files = self._normalize_files_touched(touched_source or (), task_context)
                 outcome = str(codex_result.result_json.get("agent_outcome") or codex_result.result_json.get("final_status") or "").strip().lower()
                 if outcome == "completed":
                     outcome = "finished"
@@ -270,7 +272,7 @@ class TaskPipeline:
 
                 scope_check = self._check_scope_drift(
                     _load_json_mapping(baseline_file),
-                    [*task_context.allowlist, task_context.tasks_path.relative_to(self.root).as_posix()],
+                    task_context.allowlist,
                 )
                 if scope_check is not None:
                     receipt = self._write_receipt(
@@ -737,6 +739,7 @@ class TaskPipeline:
             implementation_files = tuple(_split_comma_list(implementation[1]))
             test_file_list = tuple(_split_comma_list(test_files[1]))
             commands = tuple(_split_validation_commands(validation_commands[1]))
+            tasks_bytes = tasks_path.read_bytes()
             return TaskContext(
                 task_id=task_id,
                 task_line=start_line,
@@ -750,7 +753,8 @@ class TaskPipeline:
                 allowlist=tuple([*implementation_files, *test_file_list]),
                 validation_commands=commands,
                 tasks_path=tasks_path,
-                tasks_text=tasks_path.read_text(encoding="utf-8"),
+                tasks_text=tasks_bytes.decode("utf-8"),
+                tasks_bytes=tasks_bytes,
             )
         raise TaskPipelineError(f"task does not exist in tasks.md: {task_id}")
 
@@ -829,6 +833,20 @@ class TaskPipeline:
         )
         return self._command_result_from_process(result)
 
+    def _restore_tasks_md_after_codex(self, task_context: TaskContext) -> None:
+        current_text = task_context.tasks_path.read_bytes().decode("utf-8")
+        if current_text == task_context.tasks_text:
+            return
+        verification = self._verify_task_completion_change(
+            task_context,
+            before_text=task_context.tasks_text,
+            after_text=current_text,
+        )
+        if verification is None:
+            task_context.tasks_path.write_bytes(task_context.tasks_bytes)
+            return
+        raise TaskPipelineError("Codex modified tasks.md outside the selected task checkbox")
+
     def _run_hook(self, mode: str, *, cancel_event: Any | None = None) -> CommandResult:
         python_executable = self._resolve_agent_python()
         result = self._run(
@@ -873,6 +891,19 @@ class TaskPipeline:
             ),
         )
 
+    def _normalize_files_touched(self, files_touched: Sequence[str], task_context: TaskContext) -> tuple[str, ...]:
+        tasks_path_candidates = {
+            task_context.tasks_path.as_posix(),
+            task_context.tasks_path.relative_to(self.root).as_posix(),
+        }
+        normalized_files: list[str] = []
+        for item in files_touched:
+            normalized = Path(str(item)).as_posix()
+            if normalized in tasks_path_candidates:
+                continue
+            normalized_files.append(normalized)
+        return tuple(normalized_files)
+
     def _verify_task_completion_change(self, task_context: TaskContext, *, before_text: str, after_text: str) -> str | None:
         before_lines = before_text.splitlines()
         after_lines = after_text.splitlines()
@@ -887,13 +918,14 @@ class TaskPipeline:
         before_line = before_lines[line_number - 1]
         after_line = after_lines[line_number - 1]
         expected_before = f"- [ ] {task_context.task_id}"
-        expected_after = f"- [X] {task_context.task_id}"
         if not before_line.startswith(expected_before):
             return f"{task_context.tasks_path.name}:{line_number}: only the selected task may be closed"
-        if before_line.replace("- [ ]", "- [X]", 1) != after_line:
+        expected_suffix = before_line[len(expected_before):]
+        if after_line not in {
+            f"- [X] {task_context.task_id}{expected_suffix}",
+            f"- [x] {task_context.task_id}{expected_suffix}",
+        }:
             return f"{task_context.tasks_path.name}:{line_number}: task text must remain identical apart from the checkbox"
-        if not after_line.startswith(expected_after):
-            return f"{task_context.tasks_path.name}:{line_number}: the selected task must be marked complete"
         return None
 
     def _blocked_reason_from_codex(self, result: Any) -> str | None:
