@@ -677,7 +677,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Do not require real media files.
 
-- [ ] T043 Add long-form workflow execution tests
+- [X] T043 Add long-form workflow execution tests
 Milestone: M003
 Epic: E006
 Risk: medium
