@@ -275,7 +275,7 @@ Test requirements: These tests should be deterministic and run without network o
 Parallelizable: yes
 Notes: Focus on the engine's contract rather than implementation details.
 
-- [ ] T018 Add tests for artifact storage and mock providers
+- [X] T018 Add tests for artifact storage and mock providers
 Milestone: M003
 Epic: E006
 Risk: high
