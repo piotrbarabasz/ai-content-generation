@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.tooling.local_autopilot.controller import ControllerEvent, ControllerSnapshot, ScopeChoices
-from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, PullRequestInfo, RunMode, RunStatus, ScopeType
-from app.tooling.local_autopilot.ui import LocalAutopilotUI, StartSummary
+from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, PullRequestInfo, RunMode, RunStatus, ScopeType, TaskResult
+from app.tooling.local_autopilot.scope_proposal import build_scope_expansion_proposal, save_scope_expansion_proposal, load_scope_expansion_proposal
+from app.tooling.local_autopilot.ui import LocalAutopilotUI, StartSummary, TaskRetrySummary
 
 
 class FakeRoot:
@@ -35,12 +37,16 @@ class FakeView:
         self.scope_ids: list[str] = []
         self.logs: list[str] = []
         self.snapshots: list[ControllerSnapshot] = []
-        self.action_states: list[tuple[bool, bool, bool]] = []
+        self.action_states: list[tuple[bool, bool, bool, bool, bool]] = []
         self.confirm_start_results: list[bool] = [True]
         self.confirm_close_results: list[bool] = [True]
+        self.confirm_retry_results: list[bool] = [True]
+        self.confirm_scope_expansion_results: list[str] = ["retry"]
         self.info_messages: list[tuple[str, str]] = []
         self.error_messages: list[tuple[str, str]] = []
         self.confirm_start_summaries: list[StartSummary] = []
+        self.confirm_retry_summaries: list[object] = []
+        self.confirm_scope_expansion_summaries: list[object] = []
         self.cleared = 0
 
     def get_repo_path(self) -> str:
@@ -78,8 +84,8 @@ class FakeView:
     def set_create_draft_pr(self, value: bool) -> None:
         self.create_draft_pr = bool(value)
 
-    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool) -> None:
-        self.action_states.append((busy, can_resume, can_open_pr))
+    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool, can_retry: bool, can_retry_task: bool) -> None:
+        self.action_states.append((busy, can_resume, can_open_pr, can_retry, can_retry_task))
 
     def set_snapshot(self, snapshot: ControllerSnapshot) -> None:
         self.snapshots.append(snapshot)
@@ -94,6 +100,14 @@ class FakeView:
     def confirm_start(self, summary: StartSummary) -> bool:
         self.confirm_start_summaries.append(summary)
         return self.confirm_start_results.pop(0)
+
+    def confirm_retry_task(self, summary) -> bool:
+        self.confirm_retry_summaries.append(summary)
+        return self.confirm_retry_results.pop(0)
+
+    def confirm_scope_expansion(self, summary):
+        self.confirm_scope_expansion_summaries.append(summary)
+        return self.confirm_scope_expansion_results.pop(0)
 
     def confirm_close_during_run(self) -> bool:
         return self.confirm_close_results.pop(0)
@@ -136,6 +150,7 @@ class FakeController:
             created_at="2026-07-23T12:00:00Z",
             updated_at="2026-07-23T12:00:00Z",
         )
+        self._current_run = self.run
 
     def available_scope_choices(self, repo_path):
         self.repo_path = repo_path
@@ -163,6 +178,7 @@ class FakeController:
             running=True,
             status=RunStatus.PREFLIGHT,
         )
+        self._current_run = self.run
         return self.run
 
     def resume_run(self, *, repo_path, scope_type, scope_id, create_draft_pr=True):
@@ -176,6 +192,7 @@ class FakeController:
             }
         )
         self.snapshot_value = replace(self.snapshot_value, running=True, status=RunStatus.WAITING_FOR_MERGE, scope_type=scope_type, scope_id=scope_id)
+        self._current_run = self.run
         return self.run
 
     def stop(self) -> bool:
@@ -188,6 +205,9 @@ class FakeController:
 
     def snapshot(self) -> ControllerSnapshot:
         return self.snapshot_value
+
+    def current_run(self):
+        return getattr(self, "_current_run", self.run)
 
     def poll_events(self) -> list[ControllerEvent]:
         events = list(self.events)
@@ -291,3 +311,208 @@ def test_close_during_run_requests_stop_instead_of_destroying():
 
     assert controller.stop_called is True
     assert root.destroyed is False
+
+
+def test_retry_push_button_is_enabled_for_failed_push_runs():
+    root = FakeRoot()
+    controller = FakeController()
+    controller.run = replace(
+        controller.run,
+        status=RunStatus.FAILED,
+        branch_name="feature/E001",
+        task_results=(
+            TaskResult(
+                task_id="T001",
+                status=RunStatus.COMPLETED,
+                commit_sha="2" * 40,
+                title="Task 1",
+            ),
+        ),
+        last_error="push failed: exit_code=1; remote rejected branch",
+    )
+    controller._current_run = controller.run
+    controller.snapshot_value = replace(controller.snapshot_value, status=RunStatus.FAILED, running=False)
+    view = FakeView()
+    app = LocalAutopilotUI(root=root, controller=controller, view=view, poll_interval_ms=10)
+
+    assert view.action_states[-1] == (False, False, True, True, False)
+
+
+def test_retry_push_updates_snapshot_after_success(monkeypatch):
+    root = FakeRoot()
+    controller = FakeController()
+    controller.run = replace(
+        controller.run,
+        status=RunStatus.FAILED,
+        branch_name="feature/E001",
+        task_results=(
+            TaskResult(
+                task_id="T001",
+                status=RunStatus.COMPLETED,
+                commit_sha="2" * 40,
+                title="Task 1",
+            ),
+        ),
+        last_error="push failed: exit_code=1; remote rejected branch",
+    )
+    controller._current_run = controller.run
+    controller.snapshot_value = replace(controller.snapshot_value, status=RunStatus.FAILED, running=False)
+    view = FakeView()
+
+    def fake_retry_push_pipeline(run, **kwargs):
+        return SimpleNamespace(
+            status=RunStatus.WAITING_FOR_MERGE,
+            run=replace(run, status=RunStatus.WAITING_FOR_MERGE, pull_request=PullRequestInfo(number=17, url="https://example.invalid/pr/17", title="PR 17", base_branch="master", head_branch="feature/E001")),
+            branch_name="feature/E001",
+            epic_id="E001",
+            pull_request=PullRequestInfo(number=17, url="https://example.invalid/pr/17", title="PR 17", base_branch="master", head_branch="feature/E001"),
+            reason=None,
+        )
+
+    monkeypatch.setattr("app.tooling.local_autopilot.ui.retry_push_pipeline", fake_retry_push_pipeline)
+    app = LocalAutopilotUI(root=root, controller=controller, view=view, poll_interval_ms=10)
+
+    app.retry_push()
+
+    assert view.snapshots[-1].status is RunStatus.WAITING_FOR_MERGE
+    assert controller.snapshot_value.status is RunStatus.WAITING_FOR_MERGE
+    assert controller.current_run().status is RunStatus.WAITING_FOR_MERGE
+    assert not view.error_messages
+
+
+def test_retry_current_task_shows_assessment_and_updates_snapshot(monkeypatch):
+    root = FakeRoot()
+    controller = FakeController()
+    controller.run = replace(
+        controller.run,
+        status=RunStatus.FAILED,
+        current_task_id="T045",
+        branch_name="feat/local-autopilot-ui",
+        last_error="task failed",
+    )
+    controller._current_run = controller.run
+    controller.snapshot_value = replace(
+        controller.snapshot_value,
+        status=RunStatus.FAILED,
+        current_task_id="T045",
+        branch_name="feat/local-autopilot-ui",
+        running=False,
+    )
+    view = FakeView()
+
+    assessment = SimpleNamespace(
+        task_id="T045",
+        current_state=SimpleNamespace(value="FAILED"),
+        allowed_paths=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+        unexpected_paths=(),
+        can_resume=True,
+        reason="task T045 can resume from terminal state FAILED",
+    )
+    monkeypatch.setattr("app.tooling.local_autopilot.ui.assess_task_recovery", lambda *args, **kwargs: assessment)
+
+    class FakeTaskPipeline:
+        def __init__(self, *args, **kwargs):
+            self.calls: list[tuple[str, str]] = []
+
+        def run_task(self, run, *, task_id, cancel_event=None):
+            self.calls.append((run.run_id, task_id))
+            task_result = TaskResult(task_id=task_id, status=RunStatus.COMPLETED, commit_sha="b" * 40, title="Task 45")
+            updated_run = replace(run, status=RunStatus.COMPLETED, current_task_id=task_id, task_results=(task_result,))
+            return SimpleNamespace(
+                status=RunStatus.COMPLETED,
+                run=updated_run,
+                task_result=task_result,
+                attempts=1,
+                baseline_path="baseline.json",
+                allowlist=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+                validation_commands=("python -m pytest",),
+                command_results=(),
+                reason=None,
+            )
+
+    monkeypatch.setattr("app.tooling.local_autopilot.ui.TaskPipeline", FakeTaskPipeline)
+    app = LocalAutopilotUI(root=root, controller=controller, view=view, poll_interval_ms=10)
+
+    app.retry_current_task()
+
+    assert isinstance(view.confirm_retry_summaries[-1], TaskRetrySummary)
+    assert view.confirm_retry_summaries[-1].codex_skipped is True
+    assert view.snapshots[-1].status is RunStatus.COMPLETED
+    assert controller.current_run().status is RunStatus.COMPLETED
+    assert controller.current_run().current_task_id == "T045"
+    assert not view.error_messages
+
+
+def test_retry_current_task_shows_scope_expansion_dialog_and_marks_rejected(monkeypatch, tmp_path):
+    root = FakeRoot()
+    controller = FakeController()
+    controller.run = AutopilotRun(
+        run_id="run-123",
+        request=AutopilotRequest(
+            scope_type=ScopeType.EPIC,
+            scope_id="E001",
+            run_mode=RunMode.FULL,
+            repo_path=str(tmp_path),
+        ),
+        status=RunStatus.BLOCKED,
+        created_at="2026-07-23T12:00:00Z",
+        updated_at="2026-07-23T12:00:00Z",
+        epic_id="E001",
+        branch_name="feat/local-autopilot-ui",
+        current_task_id="T045",
+        last_error="scope expansion approval required",
+    )
+    controller._current_run = controller.run
+    controller.snapshot_value = replace(
+        controller.snapshot_value,
+        repo_path=str(tmp_path),
+        status=RunStatus.BLOCKED,
+        current_task_id="T045",
+        branch_name="feat/local-autopilot-ui",
+        running=False,
+    )
+    view = FakeView()
+    view.confirm_scope_expansion_results = ["reject"]
+
+    assessment = SimpleNamespace(
+        task_id="T045",
+        current_state=SimpleNamespace(value="BLOCKED"),
+        allowed_paths=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+        unexpected_paths=("backend/other.py",),
+        can_resume=False,
+        reason="scope expansion approval required for T045",
+    )
+    monkeypatch.setattr("app.tooling.local_autopilot.ui.assess_task_recovery", lambda *args, **kwargs: assessment)
+
+    proposal = build_scope_expansion_proposal(
+        proposal_id="T045-run-123",
+        run_id="run-123",
+        task_id="T045",
+        epic_id="E001",
+        branch="feat/local-autopilot-ui",
+        head_sha="a" * 40,
+        baseline_head_sha="b" * 40,
+        current_allowlist=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+        files_touched=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+        unexpected_paths=("backend/other.py",),
+        codex_summary="Implementation complete.",
+        codex_notes=("Touched outside scope",),
+        created_at="2026-07-29T12:00:00Z",
+    )
+    save_scope_expansion_proposal(proposal, root=tmp_path)
+
+    class FakeTaskPipeline:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("task pipeline should not run when changes are rejected")
+
+    monkeypatch.setattr("app.tooling.local_autopilot.ui.TaskPipeline", FakeTaskPipeline)
+    app = LocalAutopilotUI(root=root, controller=controller, view=view, poll_interval_ms=10)
+
+    app.retry_current_task()
+
+    assert view.confirm_scope_expansion_summaries[-1].unexpected_paths == ("backend/other.py",)
+    assert view.confirm_scope_expansion_summaries[-1].current_allowlist == ("backend/app/tooling/local_autopilot/task_pipeline.py",)
+    assert view.confirm_scope_expansion_summaries[-1].codex_summary == "Implementation complete."
+    assert load_scope_expansion_proposal("T045", root=tmp_path).status == "rejected"
+    assert view.error_messages[-1][0] == "Retry current task"
+    assert "scope expansion approval required" in view.error_messages[-1][1]

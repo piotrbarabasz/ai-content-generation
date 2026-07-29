@@ -42,3 +42,14 @@ The local autopilot is a Windows desktop control panel for running one epic or o
 - PowerShell: `scripts/run-local-autopilot.ps1`
 - Double-click launcher: `scripts/run-local-autopilot.cmd`
 - Module entry point: `python -m backend.app.tooling.local_autopilot`
+
+## Local Linux CI Parity
+
+Use the WSL2 runner when you want to catch Linux-only failures before pushing from Windows.
+
+- PowerShell entrypoint: `scripts/run-linux-ci.ps1`
+- WSL implementation: `scripts/run-linux-ci.sh`
+- Default distribution: `Ubuntu-24.04`
+- The runner creates a temporary git bundle from the current `HEAD` and `master`, clones it to a native Linux filesystem under `~/ai-content-generation-ci/<timestamp>/`, and runs the same validation steps used by GitHub Actions.
+- The summary is written to `.specify/runtime/local-ci/latest.json`, and the full log is written alongside it with a timestamped filename.
+- Pass `-KeepWorkspace` to keep the Linux clone after a failure for inspection.

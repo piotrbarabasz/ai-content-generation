@@ -8,7 +8,10 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from app.tooling import git_hook_runner as runner
+from app.tooling.local_autopilot import validation_receipt as validation_receipt_module
 from app.tooling.local_autopilot.task_state_machine import (
     TaskLifecycleState,
     TaskReceiptStage,
@@ -309,6 +312,41 @@ def _load_task_receipt_record(task_id: str, root: Path) -> TaskReceiptRecord:
     receipt = runner.load_task_receipt(task_id, root=root)
     assert receipt is not None
     return receipt
+
+
+def _write_validation_receipt(
+    tmp_path: Path,
+    *,
+    head_sha: str,
+    branch: str,
+    checks: list[dict[str, object]] | None = None,
+    status: str = "PASS",
+) -> Path:
+    checks = checks or [
+        {
+            "name": "pytest_full",
+            "command": [sys.executable, "-m", "pytest"],
+            "status": "PASS",
+            "exit_code": 0,
+            "duration_ms": 123,
+        },
+        {
+            "name": "git_diff_check",
+            "command": ["git", "--no-pager", "diff", "--check"],
+            "status": "PASS",
+            "exit_code": 0,
+            "duration_ms": 12,
+        },
+    ]
+    return validation_receipt_module.write_validation_receipt(
+        head_sha=head_sha,
+        branch=branch,
+        python_executable=sys.executable,
+        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        status=status,
+        checks=checks,
+        root=tmp_path,
+    )
 
 
 def test_pre_commit_uses_process_runner_and_disables_heartbeat(monkeypatch, capsys, tmp_path):
@@ -1029,7 +1067,143 @@ def test_pre_push_removes_tooling_pytest_and_runs_full_pytest_once(monkeypatch, 
     ]
     assert all("backend/tests/unit/tooling" not in call[0] for call in calls)
     assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 1
-    assert [call[1]["timeout_seconds"] for call in calls] == [20, 20, 300, 20]
+    assert [call[1]["timeout_seconds"] for call in calls] == [20, 20, 900, 20]
+    source = Path(runner.__file__).read_text(encoding="utf-8")
+    assert "timeout_seconds=300" not in source
+
+
+def test_pre_push_skips_pytest_when_validation_receipt_matches_head(monkeypatch, tmp_path):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "feature/E003",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    _write_validation_receipt(tmp_path, head_sha="3" * 40, branch="feature/E003")
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="feature/E003", head_sha="3" * 40),
+            ancestors={("2" * 40, "3" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([300.0, 300.01, 301.0, 301.01, 302.0, 302.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+    assert [command.status for command in result.commands] == ["PASS", "PASS", "SKIP", "PASS"]
+    assert result.commands[2].reason == "validated receipt matches HEAD " + "3" * 40
+    assert [call[0] for call in calls] == [
+        (sys.executable, "-m", "backend.app.tooling.workstream_validation"),
+        (sys.executable, "-m", "backend.app.tooling.repository_checks", "--mode", "task-metadata"),
+        ("git", "--no-pager", "diff", "--check"),
+    ]
+    assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 0
+
+
+@pytest.mark.parametrize(
+    ("receipt_kwargs", "clean"),
+    [
+        ({"head_sha": "4" * 40, "branch": "feature/E003"}, True),
+        ({"head_sha": "3" * 40, "branch": "feature/other"}, True),
+        ({"head_sha": "3" * 40, "branch": "feature/E003", "checks": [{"name": "git_diff_check", "command": ["git", "--no-pager", "diff", "--check"], "status": "PASS", "exit_code": 0, "duration_ms": 12}]}, True),
+        ({"head_sha": "3" * 40, "branch": "feature/E003", "checks": [{"name": "pytest_full", "command": [sys.executable, "-m", "pytest"], "status": "TIMEOUT", "exit_code": 124, "duration_ms": 900000}, {"name": "git_diff_check", "command": ["git", "--no-pager", "diff", "--check"], "status": "PASS", "exit_code": 0, "duration_ms": 12}]}, True),
+        ({"head_sha": "3" * 40, "branch": "feature/E003"}, False),
+    ],
+)
+def test_pre_push_invalid_validation_receipt_runs_pytest(monkeypatch, tmp_path, receipt_kwargs, clean):
+    _write_task_entries_fixture(
+        tmp_path,
+        [
+            {
+                "task_id": "T022",
+                "checkbox": "X",
+                "state": TaskLifecycleState.COMMITTED,
+                "receipt_state": TaskLifecycleState.COMMITTED,
+                "branch": "feature/E003",
+                "head_sha": "2" * 40,
+                "commit_sha": "2" * 40,
+            }
+        ],
+    )
+    _write_validation_receipt(tmp_path, **receipt_kwargs)
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "Repository",
+        lambda _root: FakeRepository(
+            FakeGitStatus(branch="feature/E003", head_sha="3" * 40, tracked=() if clean else ("dirty.txt",)),
+            ancestors={("2" * 40, "3" * 40)},
+        ),
+    )
+    monkeypatch.setattr(runner, "_commit_exists", lambda commit_sha: commit_sha == "2" * 40)
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([110.0, 111.0, 112.0, 113.0, 114.0, 115.0, 116.0, 117.0, 118.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([320.0, 320.01, 321.0, 321.01, 322.0, 322.01, 323.0, 323.01]))
+
+    result = runner.run_hook("pre-push")
+
+    assert result.status == "PASS"
+    assert sum(1 for command in result.commands if command.status == "SKIP") == 0
+    assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 1
+
+
+def test_ci_ignores_validation_receipt_and_runs_full_pytest(monkeypatch, tmp_path):
+    _write_validation_receipt(tmp_path, head_sha="3" * 40, branch="feature/E003")
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus(branch="feature/E003", head_sha="3" * 40)))
+    _patch_run_process(
+        monkeypatch,
+        [
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+            FakeProcessResult(status="PASS"),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(runner.time, "monotonic", _clock([500.0, 501.0, 502.0, 503.0, 504.0, 505.0, 506.0, 507.0, 508.0]))
+    monkeypatch.setattr(runner.time, "perf_counter", _clock([600.0, 600.01, 601.0, 601.01, 602.0, 602.01, 603.0, 603.01]))
+
+    result = runner.run_hook("ci", base_sha="b" * 40, head_sha="c" * 40)
+
+    assert result.status == "PASS"
+    assert sum(1 for command in result.commands if command.status == "SKIP") == 0
+    assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 1
 
 
 def test_pre_push_accepts_matching_committed_records_on_epic_branch(monkeypatch, tmp_path):
@@ -1477,7 +1651,8 @@ def test_ci_uses_commit_range_and_full_pytest_once(monkeypatch):
         ("git", "--no-pager", "diff", "--check", "b" * 40 + "..." + "c" * 40),
     ]
     assert sum(1 for call in calls if call[0] == (sys.executable, "-m", "pytest")) == 1
-    assert [call[1]["timeout_seconds"] for call in calls] == [30, 30, 600, 30]
+    assert [call[1]["timeout_seconds"] for call in calls] == [30, 30, 900, 30]
+    assert result.global_timeout_seconds == 1020
 
 
 def test_global_timeout_pre_commit_prints_global_timeout_and_stops(monkeypatch, capsys, tmp_path):
@@ -1502,26 +1677,28 @@ def test_global_timeout_pre_push(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus()))
     _patch_run_process(monkeypatch, [FakeProcessResult(status="PASS")], calls)
-    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 481.0]))
+    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 1021.0]))
     monkeypatch.setattr(runner.time, "perf_counter", _clock([800.0, 800.01, 800.02, 800.03]))
 
     result = runner.run_hook("pre-push")
 
     assert result.status == "TIMEOUT"
     assert result.global_timeout is True
+    assert result.global_timeout_seconds == 1020
     assert len(calls) == 1
 
 
 def test_global_timeout_ci(monkeypatch):
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
     _patch_run_process(monkeypatch, [FakeProcessResult(status="PASS")], calls)
-    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 901.0]))
+    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 1021.0]))
     monkeypatch.setattr(runner.time, "perf_counter", _clock([900.0, 900.01, 900.02, 900.03]))
 
     result = runner.run_hook("ci", base_sha="b" * 40, head_sha="c" * 40)
 
     assert result.status == "TIMEOUT"
     assert result.global_timeout is True
+    assert result.global_timeout_seconds == 1020
     assert len(calls) == 1
 
 
@@ -1530,7 +1707,7 @@ def test_timeout_stops_following_commands(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     monkeypatch.setattr(runner, "Repository", lambda _root: FakeRepository(FakeGitStatus()))
     _patch_run_process(monkeypatch, [FakeProcessResult(status="PASS")], calls)
-    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 481.0]))
+    monkeypatch.setattr(runner.time, "monotonic", _clock([0.0, 1.0, 2.0, 1021.0]))
     monkeypatch.setattr(runner.time, "perf_counter", _clock([1000.0, 1000.01, 1000.02, 1000.03]))
 
     result = runner.run_hook("pre-push")

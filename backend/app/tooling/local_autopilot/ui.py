@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -13,7 +13,14 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from .controller import AutopilotController, AutopilotControllerError, ControllerEvent, ControllerSnapshot, ScopeChoices
+from .epic_pipeline import retry_push_pipeline
+from .recovery import assess_task_recovery
+from .github_adapter import GitHubAdapter
 from .models import RunMode, RunStatus, ScopeType
+from . import process_runner
+from .scope_proposal import build_suggested_metadata_change, load_scope_expansion_proposal, reject_scope_expansion_proposal
+from .repository import Repository
+from .task_pipeline import TaskPipeline
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,28 @@ class StartSummary:
     commit: str = "YES"
     push: str = "YES"
     pr: str = "YES"
+
+
+@dataclass(frozen=True)
+class TaskRetrySummary:
+    task_id: str
+    state: str
+    allowed_dirty_paths: tuple[str, ...]
+    unexpected_paths: tuple[str, ...]
+    codex_skipped: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class ScopeExpansionSummary:
+    task_id: str
+    state: str
+    current_allowlist: tuple[str, ...]
+    unexpected_paths: tuple[str, ...]
+    codex_summary: str
+    suggested_metadata_change: str
+    reason: str
+    codex_skipped: bool
 
 
 class ViewAdapter(Protocol):
@@ -52,7 +81,11 @@ class ViewAdapter(Protocol):
 
     def set_create_draft_pr(self, value: bool) -> None: ...
 
-    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool) -> None: ...
+    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool, can_retry: bool, can_retry_task: bool) -> None: ...
+
+    def confirm_retry_task(self, summary: TaskRetrySummary) -> bool: ...
+
+    def confirm_scope_expansion(self, summary: ScopeExpansionSummary) -> str: ...
 
     def set_snapshot(self, snapshot: ControllerSnapshot) -> None: ...
 
@@ -79,6 +112,8 @@ class TkAutopilotView:
         on_stop: Callable[[], None],
         on_resume: Callable[[], None],
         on_open_pr: Callable[[], None],
+        on_retry_push: Callable[[], None],
+        on_retry_task: Callable[[], None],
         on_open_logs: Callable[[], None],
         on_scope_change: Callable[[], None],
         on_repo_change: Callable[[], None],
@@ -134,8 +169,10 @@ class TkAutopilotView:
         self._stop_button = ttk.Button(button_row, text="Stop", command=on_stop)
         self._resume_button = ttk.Button(button_row, text="Resume", command=on_resume)
         self._open_pr_button = ttk.Button(button_row, text="Open PR", command=on_open_pr)
+        self._retry_push_button = ttk.Button(button_row, text="Retry push", command=on_retry_push)
+        self._retry_task_button = ttk.Button(button_row, text="Retry current task", command=on_retry_task)
         self._open_logs_button = ttk.Button(button_row, text="Open logs", command=on_open_logs)
-        for column, widget in enumerate((self._start_button, self._stop_button, self._resume_button, self._open_pr_button, self._open_logs_button)):
+        for column, widget in enumerate((self._start_button, self._stop_button, self._resume_button, self._open_pr_button, self._retry_push_button, self._retry_task_button, self._open_logs_button)):
             widget.grid(row=0, column=column, padx=(0, 8))
 
         summary = ttk.Frame(main)
@@ -182,7 +219,7 @@ class TkAutopilotView:
         progress_row.rowconfigure(1, weight=1)
         self._log.configure(state="disabled")
 
-        self.set_action_states(busy=False, can_resume=False, can_open_pr=False)
+        self.set_action_states(busy=False, can_resume=False, can_open_pr=False, can_retry=False, can_retry_task=False)
 
     def get_repo_path(self) -> str:
         return self._repo_path_var.get().strip()
@@ -219,11 +256,13 @@ class TkAutopilotView:
     def set_create_draft_pr(self, value: bool) -> None:
         self._create_draft_pr_var.set(bool(value))
 
-    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool) -> None:
+    def set_action_states(self, *, busy: bool, can_resume: bool, can_open_pr: bool, can_retry: bool, can_retry_task: bool) -> None:
         self._start_button.configure(state="disabled" if busy else "normal")
         self._stop_button.configure(state="normal" if busy else "disabled")
         self._resume_button.configure(state="disabled" if busy or not can_resume else "normal")
         self._open_pr_button.configure(state="normal" if can_open_pr else "disabled")
+        self._retry_push_button.configure(state="normal" if can_retry else "disabled")
+        self._retry_task_button.configure(state="normal" if can_retry_task else "disabled")
         self._open_logs_button.configure(state="normal")
         self._repo_entry.configure(state="disabled" if busy else "normal")
         self._scope_type.configure(state="disabled" if busy else "readonly")
@@ -283,6 +322,72 @@ class TkAutopilotView:
     def show_error(self, title: str, message: str) -> None:
         messagebox.showerror(title, message)
 
+    def confirm_retry_task(self, summary: TaskRetrySummary) -> bool:
+        message = "\n".join(
+            [
+                f"Task: {summary.task_id}",
+                f"State: {summary.state}",
+                f"Allowed dirty paths: {', '.join(summary.allowed_dirty_paths) or 'none'}",
+                f"Unexpected paths: {', '.join(summary.unexpected_paths) or 'none'}",
+                f"Codex skipped: {'yes' if summary.codex_skipped else 'no'}",
+                f"Reason: {summary.reason}",
+            ]
+        )
+        return messagebox.askyesno("Retry current task", message)
+
+    def confirm_scope_expansion(self, summary: ScopeExpansionSummary) -> str:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Scope expansion approval")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        result = tk.StringVar(master=self.root, value="")
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(row=0, column=0, sticky="nsew")
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        unexpected_lines = [f"- {path}" for path in summary.unexpected_paths] or ["- none"]
+        allowlist_lines = [f"- {path}" for path in summary.current_allowlist] or ["- none"]
+        text = "\n".join(
+            [
+                f"Task: {summary.task_id}",
+                f"State: {summary.state}",
+                f"Codex skipped: {'yes' if summary.codex_skipped else 'no'}",
+                "Unexpected paths:",
+                *unexpected_lines,
+                "Current allowlist:",
+                *allowlist_lines,
+                "Codex summary:",
+                summary.codex_summary or "none",
+                "Suggested metadata change:",
+                summary.suggested_metadata_change,
+                "Reason:",
+                summary.reason,
+            ]
+        )
+        label = ttk.Label(frame, text=text, justify="left")
+        label.grid(row=0, column=0, columnspan=3, sticky="w")
+
+        def _close(choice: str) -> None:
+            result.set(choice)
+            if dialog.winfo_exists():
+                dialog.destroy()
+
+        def _copy_and_keep() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(summary.suggested_metadata_change)
+            _close("copy")
+
+        ttk.Button(frame, text="Copy suggested metadata change", command=_copy_and_keep).grid(row=1, column=0, sticky="w", pady=(12, 0))
+        ttk.Button(frame, text="Retry after spec update", command=lambda: _close("retry")).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(12, 0))
+        ttk.Button(frame, text="Reject changes", command=lambda: _close("reject")).grid(row=1, column=2, sticky="w", padx=(8, 0), pady=(12, 0))
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: _close("reject"))
+        dialog.wait_variable(result)
+        return result.get()
+
 
 class LocalAutopilotUI:
     def __init__(
@@ -307,6 +412,8 @@ class LocalAutopilotUI:
             on_stop=self.stop,
             on_resume=self.resume,
             on_open_pr=self.open_pr,
+            on_retry_push=self.retry_push,
+            on_retry_task=self.retry_current_task,
             on_open_logs=self.open_logs,
             on_scope_change=self.refresh_scope_ids,
             on_repo_change=self.refresh_scope_ids,
@@ -378,6 +485,127 @@ class LocalAutopilotUI:
         except (AutopilotControllerError, ValueError) as exc:
             self.view.show_error("Resume autopilot", str(exc))
 
+    def retry_push(self) -> None:
+        run = self.controller.current_run()
+        if run is None or run.status is not RunStatus.FAILED or run.request.run_mode is not RunMode.FULL:
+            self.view.show_error("Retry push", "There is no failed push to retry.")
+            return
+        if not run.last_error or "push failed" not in run.last_error.lower():
+            self.view.show_error("Retry push", "The current run is not in a push-failed state.")
+            return
+        try:
+            repo_path = Path(run.request.repo_path).expanduser().resolve(strict=False)
+            process_runner_fn = getattr(self.controller, "_run", None)
+            config = getattr(self.controller, "config", None)
+            repository = Repository(repo_path, process_runner_fn=process_runner_fn) if process_runner_fn is not None else Repository(repo_path)
+            github = GitHubAdapter(repo_path, process_runner_fn=process_runner_fn) if process_runner_fn is not None else GitHubAdapter(repo_path)
+            result = retry_push_pipeline(
+                run,
+                root=repo_path,
+                config=config,
+                repository=repository,
+                github_adapter=github,
+                process_runner_fn=process_runner_fn or process_runner.run_process,
+            )
+        except (AutopilotControllerError, ValueError, RuntimeError) as exc:
+            self.view.show_error("Retry push", str(exc))
+            return
+
+        snapshot = replace(
+            self.controller.snapshot(),
+            status=result.status,
+            running=False,
+            branch_name=result.branch_name,
+            epic_id=result.epic_id,
+            current_task_id=result.run.current_task_id,
+            progress=95 if result.status is RunStatus.WAITING_FOR_MERGE else 100,
+            pull_request_number=result.pull_request.number if result.pull_request is not None else None,
+            pull_request_url=result.pull_request.url if result.pull_request is not None else None,
+            pull_request_title=result.pull_request.title if result.pull_request is not None else None,
+            last_error=result.reason,
+            message=result.reason or result.status.value,
+        )
+        setattr(self.controller, "_current_run", result.run)
+        if hasattr(self.controller, "_snapshot"):
+            self.controller._snapshot = snapshot  # type: ignore[attr-defined]
+        if hasattr(self.controller, "snapshot_value"):
+            self.controller.snapshot_value = snapshot  # type: ignore[attr-defined]
+        self.view.set_snapshot(snapshot)
+        self._update_action_states()
+
+    def retry_current_task(self) -> None:
+        run = self.controller.current_run()
+        if run is None or run.status not in {RunStatus.FAILED, RunStatus.BLOCKED, RunStatus.CANCELLED} or not run.current_task_id:
+            self.view.show_error("Retry current task", "There is no interrupted task to retry.")
+            return
+        try:
+            repo_path = Path(run.request.repo_path).expanduser().resolve(strict=False)
+            process_runner_fn = getattr(self.controller, "_run", None)
+            config = getattr(self.controller, "config", None)
+            repository = Repository(repo_path, process_runner_fn=process_runner_fn) if process_runner_fn is not None else Repository(repo_path)
+            assessment = assess_task_recovery(run.current_task_id, run.run_id, repo_path, repository=repository)
+            if assessment.unexpected_paths:
+                proposal = load_scope_expansion_proposal(assessment.task_id, repo_path)
+                action = self.view.confirm_scope_expansion(
+                    ScopeExpansionSummary(
+                        task_id=assessment.task_id,
+                        state=assessment.current_state.value,
+                        current_allowlist=assessment.allowed_paths,
+                        unexpected_paths=assessment.unexpected_paths,
+                        codex_summary=proposal.codex_summary if proposal is not None else assessment.reason,
+                        suggested_metadata_change=build_suggested_metadata_change(assessment.allowed_paths, assessment.unexpected_paths),
+                        reason=assessment.reason,
+                        codex_skipped=assessment.can_resume,
+                    )
+                )
+                if action == "copy":
+                    return
+                if action == "reject":
+                    reject_scope_expansion_proposal(assessment.task_id, repo_path)
+                    self.view.show_error("Retry current task", assessment.reason)
+                    return
+                if action != "retry":
+                    return
+            elif not self.view.confirm_retry_task(
+                TaskRetrySummary(
+                    task_id=assessment.task_id,
+                    state=assessment.current_state.value,
+                    allowed_dirty_paths=assessment.allowed_paths,
+                    unexpected_paths=assessment.unexpected_paths,
+                    codex_skipped=assessment.can_resume,
+                    reason=assessment.reason,
+                )
+            ):
+                return
+            pipeline = TaskPipeline(repo_path, config=config, repository=repository, process_runner_fn=process_runner_fn or process_runner.run_process)
+            result = pipeline.run_task(run, task_id=run.current_task_id)
+        except (AutopilotControllerError, ValueError, RuntimeError) as exc:
+            self.view.show_error("Retry current task", str(exc))
+            return
+
+        snapshot = replace(
+            self.controller.snapshot(),
+            status=result.status,
+            running=False,
+            branch_name=result.run.branch_name,
+            epic_id=result.run.epic_id,
+            current_task_id=result.run.current_task_id,
+            progress=100 if result.status is RunStatus.COMPLETED else 100,
+            pull_request_number=None,
+            pull_request_url=None,
+            pull_request_title=None,
+            last_commit=result.task_result.commit_sha,
+            last_error=result.reason,
+            message=result.reason or result.status.value,
+        )
+        setattr(self.controller, "_current_run", result.run)
+        if hasattr(self.controller, "_snapshot"):
+            self.controller._snapshot = snapshot  # type: ignore[attr-defined]
+        if hasattr(self.controller, "snapshot_value"):
+            self.controller.snapshot_value = snapshot  # type: ignore[attr-defined]
+        self.view.set_snapshot(snapshot)
+        self._update_action_states()
+
     def stop(self) -> None:
         self.controller.stop()
 
@@ -423,9 +651,12 @@ class LocalAutopilotUI:
             self._update_from_snapshot(event.snapshot)
         if event.kind in {"finished", "failed"}:
             self._update_action_states()
-            if self.controller.snapshot().status == RunStatus.COMPLETED:
+            snapshot_status = self.controller.snapshot().status
+            if snapshot_status == RunStatus.COMPLETED:
                 self.view.show_info("Autopilot", "Run completed.")
-            elif self.controller.snapshot().status == RunStatus.CANCELLED:
+            elif snapshot_status == RunStatus.PAUSED:
+                self.view.show_info("Autopilot", event.message or "Run paused.")
+            elif snapshot_status == RunStatus.CANCELLED:
                 self.view.show_info("Autopilot", "Run cancelled.")
             else:
                 self.view.show_error("Autopilot", event.message or "Run failed.")
@@ -444,7 +675,19 @@ class LocalAutopilotUI:
             and not self.controller.is_running()
         )
         can_open_pr = bool(snapshot.pull_request_url or self.controller.latest_pr_url())
-        self.view.set_action_states(busy=self.controller.is_running(), can_resume=can_resume, can_open_pr=can_open_pr)
+        can_retry = self._can_retry_push()
+        can_retry_task = (
+            snapshot.current_task_id is not None
+            and snapshot.status in {RunStatus.FAILED, RunStatus.BLOCKED, RunStatus.CANCELLED}
+            and not self.controller.is_running()
+        )
+        self.view.set_action_states(
+            busy=self.controller.is_running(),
+            can_resume=can_resume,
+            can_open_pr=can_open_pr,
+            can_retry=can_retry,
+            can_retry_task=can_retry_task,
+        )
 
     def _repo_path(self) -> str:
         repo_path = self.view.get_repo_path().strip()
@@ -463,6 +706,18 @@ class LocalAutopilotUI:
 
     def _run_mode(self) -> RunMode:
         return RunMode(self.view.get_run_mode().strip().lower())
+
+    def _can_retry_push(self) -> bool:
+        run = self.controller.current_run()
+        if run is None or run.request.run_mode is not RunMode.FULL:
+            return False
+        if run.status is not RunStatus.FAILED:
+            return False
+        if not run.branch_name or not run.task_results:
+            return False
+        if not run.last_error or "push failed" not in run.last_error.lower():
+            return False
+        return True
 
 
 def _open_folder(path: str) -> None:
@@ -485,6 +740,7 @@ def launch_app() -> int:
 __all__ = [
     "LocalAutopilotUI",
     "StartSummary",
+    "ScopeExpansionSummary",
     "TkAutopilotView",
     "ViewAdapter",
     "create_app",

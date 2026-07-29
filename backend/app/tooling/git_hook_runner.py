@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import process_runner
+from .local_autopilot.config import AutopilotConfig, DEFAULT_AUTOPILOT_CONFIG_PATH, load_autopilot_config
 from .local_autopilot.repository import Repository
+from .local_autopilot import validation_receipt
 from .local_autopilot.task_state_machine import (
     TaskLifecycleState,
     TaskReceiptRecord,
@@ -33,11 +35,9 @@ MAX_LINE_LENGTH = 300
 ZERO_SHA = "0" * 40
 TASK_COMMIT_MESSAGE_PATTERN = re.compile(r"^feat\((T\d{3}[A-Z]?)\):")
 CLOSURE_BRANCH_PATTERN = re.compile(r"^chore/close-(E\d{3})$")
-GLOBAL_TIMEOUTS = {
+_SHORT_GLOBAL_TIMEOUTS = {
     "pre-commit": 60,
-    "pre-push": 480,
     "post-commit": 60,
-    "ci": 900,
 }
 
 
@@ -57,6 +57,7 @@ class HookCommandResult:
     timeout_seconds: int
     duration_ms: int
     timed_out: bool = False
+    reason: str | None = None
     output: str | None = None
 
 
@@ -100,7 +101,32 @@ def _ci_diff_argv(base_sha: str | None, head_sha: str | None) -> tuple[str, ...]
     return ("git", "--no-pager", "diff", "--check")
 
 
-def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str | None = None) -> tuple[HookCommand, ...]:
+def _build_global_timeouts(config: AutopilotConfig) -> dict[str, int]:
+    pre_push_timeout = max(
+        480,
+        config.pre_push_pytest_timeout_seconds + config.hook_timeout_buffer_seconds,
+    )
+    ci_timeout = max(
+        900,
+        config.ci_pytest_timeout_seconds + config.hook_timeout_buffer_seconds,
+    )
+    return {
+        **_SHORT_GLOBAL_TIMEOUTS,
+        "pre-push": pre_push_timeout,
+        "ci": ci_timeout,
+    }
+
+
+GLOBAL_TIMEOUTS = _build_global_timeouts(load_autopilot_config())
+
+
+def _build_hook_commands(
+    config: AutopilotConfig,
+    mode: str,
+    *,
+    base_sha: str | None = None,
+    head_sha: str | None = None,
+) -> tuple[HookCommand, ...]:
     if mode == "pre-commit":
         return (
             HookCommand(
@@ -135,7 +161,7 @@ def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str 
             HookCommand(
                 name="pytest_full",
                 argv=(sys.executable, "-m", "pytest"),
-                timeout_seconds=300,
+                timeout_seconds=config.pre_push_pytest_timeout_seconds,
             ),
             HookCommand(
                 name="git_diff_check",
@@ -162,7 +188,7 @@ def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str 
             HookCommand(
                 name="pytest_full",
                 argv=(sys.executable, "-m", "pytest"),
-                timeout_seconds=600,
+                timeout_seconds=config.ci_pytest_timeout_seconds,
             ),
             HookCommand(
                 name="git_diff_check",
@@ -172,6 +198,23 @@ def _commands_for_mode(mode: str, *, base_sha: str | None = None, head_sha: str 
         )
 
     raise ValueError(f"unsupported mode: {mode}")
+
+
+def _validation_receipt_skip_reason(repository: Repository) -> str | None:
+    current = repository.status()
+    if not current.head_sha or not current.branch:
+        return None
+    path = validation_receipt.validation_receipt_path(current.head_sha, ROOT)
+    errors = validation_receipt.validate_receipt_for_head(
+        path,
+        current_head_sha=current.head_sha,
+        current_branch=current.branch,
+        repo_clean=current.clean,
+        current_python_version=(sys.version_info.major, sys.version_info.minor),
+    )
+    if errors:
+        return None
+    return f"validated receipt matches HEAD {current.head_sha}"
 
 
 def _task_state_records() -> list[TaskStateRecord]:
@@ -606,15 +649,32 @@ def _run_command(command: HookCommand, *, deadline: float, heartbeat_seconds: in
     )
 
 
+def _skip_command(command: HookCommand, *, reason: str) -> HookCommandResult:
+    return HookCommandResult(
+        name=command.name,
+        command=_command_text(command.argv),
+        status="SKIP",
+        exit_code=0,
+        timeout_seconds=command.timeout_seconds,
+        duration_ms=0,
+        timed_out=False,
+        reason=reason,
+    )
+
+
 def run_hook(
     mode: str,
     *,
     base_sha: str | None = None,
     head_sha: str | None = None,
     heartbeat_seconds: int = 30,
+    config: AutopilotConfig | None = None,
+    config_path: Path | str = DEFAULT_AUTOPILOT_CONFIG_PATH,
 ) -> HookRunResult:
-    commands = _commands_for_mode(mode, base_sha=base_sha, head_sha=head_sha)
-    deadline = time.monotonic() + GLOBAL_TIMEOUTS[mode]
+    loaded_config = config or load_autopilot_config(config_path)
+    global_timeouts = _build_global_timeouts(loaded_config)
+    commands = _build_hook_commands(loaded_config, mode, base_sha=base_sha, head_sha=head_sha)
+    deadline = time.monotonic() + global_timeouts[mode]
     results: list[HookCommandResult] = []
     global_timeout = False
     overall_status = "PASS"
@@ -630,7 +690,7 @@ def run_hook(
             mode=mode,
             status=overall_status,
             global_timeout=False,
-            global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+            global_timeout_seconds=global_timeouts[mode],
             commands=tuple(results),
             reason=reason,
         )
@@ -649,12 +709,17 @@ def run_hook(
             mode=mode,
             status="FAIL",
             global_timeout=False,
-            global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+            global_timeout_seconds=global_timeouts[mode],
             commands=tuple(results),
             reason=state_error,
         )
 
     for command in commands:
+        if mode == "pre-push" and command.name == "pytest_full":
+            skip_reason = _validation_receipt_skip_reason(repository)
+            if skip_reason is not None:
+                results.append(_skip_command(command, reason=skip_reason))
+                continue
         try:
             result = _run_command(command, deadline=deadline, heartbeat_seconds=heartbeat_seconds)
         except TimeoutError:
@@ -672,7 +737,7 @@ def run_hook(
             global_timeout = True
             overall_status = "TIMEOUT"
             break
-        if result.status != "PASS":
+        if result.status not in {"PASS", "SKIP"}:
             overall_status = result.status
             break
 
@@ -680,7 +745,7 @@ def run_hook(
         mode=mode,
         status=overall_status,
         global_timeout=global_timeout,
-        global_timeout_seconds=GLOBAL_TIMEOUTS[mode],
+        global_timeout_seconds=global_timeouts[mode],
         commands=tuple(results),
         reason=reason,
     )
@@ -701,6 +766,8 @@ def _render_text(result: HookRunResult) -> str:
             f"{index}. {command.name}: {command.status} exit={exit_code} "
             f"timeout={command.timeout_seconds}s duration={command.duration_ms}ms command={command.command}"
         )
+        if command.reason:
+            line += f" reason={command.reason}"
         if command.timed_out:
             line += " TIMEOUT"
         lines.append(_truncate(line))
@@ -730,6 +797,8 @@ def _render_json(result: HookRunResult) -> str:
             "duration_ms": command.duration_ms,
             "timed_out": command.timed_out,
         }
+        if command.reason is not None:
+            payload["reason"] = command.reason
         if command.output and command.status != "PASS":
             payload["output"] = command.output
         suffix = "," if index < len(result.commands) - 1 else ""
@@ -770,7 +839,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_render_json(result))
     else:
         print(_render_text(result))
-    return 0 if result.status == "PASS" else 1
+    return 0 if result.status in {"PASS", "SKIP"} else 1
 
 
 if __name__ == "__main__":

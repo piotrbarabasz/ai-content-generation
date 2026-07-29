@@ -22,6 +22,10 @@ class AutopilotConfig:
     max_repair_cycles: int
     max_tasks_per_run: int
     command_timeout_seconds: int
+    push_timeout_seconds: int
+    pre_push_pytest_timeout_seconds: int
+    ci_pytest_timeout_seconds: int
+    hook_timeout_buffer_seconds: int
     codex_timeout_seconds: int
     closure_mode: str
 
@@ -69,6 +73,10 @@ def load_autopilot_config(path: Path | str = DEFAULT_AUTOPILOT_CONFIG_PATH) -> A
         "max_repair_cycles",
         "max_tasks_per_run",
         "command_timeout_seconds",
+        "push_timeout_seconds",
+        "pre_push_pytest_timeout_seconds",
+        "ci_pytest_timeout_seconds",
+        "hook_timeout_buffer_seconds",
         "codex_timeout_seconds",
         "closure_mode",
     }
@@ -85,11 +93,19 @@ def load_autopilot_config(path: Path | str = DEFAULT_AUTOPILOT_CONFIG_PATH) -> A
         max_repair_cycles=_require_int(loaded, "max_repair_cycles"),
         max_tasks_per_run=_require_int(loaded, "max_tasks_per_run"),
         command_timeout_seconds=_require_int(loaded, "command_timeout_seconds"),
+        push_timeout_seconds=_require_int(loaded, "push_timeout_seconds"),
+        pre_push_pytest_timeout_seconds=_require_int(loaded, "pre_push_pytest_timeout_seconds"),
+        ci_pytest_timeout_seconds=_require_int(loaded, "ci_pytest_timeout_seconds"),
+        hook_timeout_buffer_seconds=_require_int(loaded, "hook_timeout_buffer_seconds"),
         codex_timeout_seconds=_require_int(loaded, "codex_timeout_seconds"),
         closure_mode=_require_text(loaded, "closure_mode"),
     )
     if config.closure_mode != "pull_request":
         raise ValueError("closure_mode must be 'pull_request'")
+    if config.auto_merge:
+        raise ValueError("auto_merge must be false")
+    if config.deploy:
+        raise ValueError("deploy must be false")
     return config
 
 
