@@ -298,6 +298,17 @@ def test_build_prompt_requires_single_task_and_local_controls(tmp_path):
     assert "Use the local speckit-loop workflow for exactly one task and do not broaden scope." in prompt
     assert "Use the specified Python interpreter exactly as given." in prompt
     assert "Do not create commits, pushes, pull requests, merges, or deployments." in prompt
+    assert "Task ownership and closure rules:" in prompt
+    assert "The outer TaskPipeline owns persistent task closure." in prompt
+    assert "Do not run spec_closer." in prompt
+    assert "Do not modify tasks.md." in prompt
+    assert "Do not change any checkbox in tasks.md." in prompt
+    assert "Perform implementation, targeted validation, and review only." in prompt
+    assert "Stop after reviewer PASS / SAFE_TO_CLOSE." in prompt
+    assert "The outer TaskPipeline will run the finalizer, close the checkbox, and commit." in prompt
+    assert "Do not add tasks.md to files_touched." in prompt
+    assert "files_touched must contain only implementation and test files that were actually changed." in prompt
+    assert "Do not start another task." in prompt
     assert "Return exactly one JSON object and nothing else." in prompt
     assert "Do not wrap the JSON in markers, fences, markdown, or explanatory text." in prompt
     assert "Do not include legacy keys." in prompt
