@@ -260,7 +260,7 @@ Notes: Keep approval simplified for MVP, but model it explicitly in the workflow
 
 ## Phase 10: Tests
 
-- [ ] T017 Add tests for module registry and execution order
+- [X] T017 Add tests for module registry and execution order
 Milestone: M003
 Epic: E006
 Risk: high
