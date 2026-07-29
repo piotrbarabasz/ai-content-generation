@@ -5,7 +5,7 @@ milestone: M003
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E006-tests-quality
-status: active
+status: completed
 risk: medium
 depends_on:
   - E002
