@@ -8,6 +8,7 @@ from app.api.schemas import ExportBundleSchema, WorkflowRunCreateRequest, Workfl
 from app.domain.artifact import Artifact
 from app.domain.export_bundle import ExportBundle
 
+from .approvals import approval_checkpoints_are_resolved, get_blocking_approval_checkpoints
 from .projects import (
     ARTIFACTS_BY_RUN,
     EXPORT_BUNDLES,
@@ -93,6 +94,32 @@ def request_export_bundle(workflow_run_id: str) -> ExportBundleSchema:
 def get_export_bundle(workflow_run_id: str) -> ExportBundleSchema:
     bundle = _ensure_export_bundle(workflow_run_id)
     return _export_bundle_schema(bundle)
+
+
+@router.post("/workflow-runs/{workflow_run_id}/resume", response_model=WorkflowRunSchema)
+def resume_workflow_run(workflow_run_id: str) -> WorkflowRunSchema:
+    workflow_run = get_workflow_run_or_404(workflow_run_id)
+    blocking_checkpoints = get_blocking_approval_checkpoints(workflow_run_id)
+    if not approval_checkpoints_are_resolved(workflow_run_id):
+        blocking_types = ", ".join(
+            checkpoint.checkpoint_type for checkpoint in blocking_checkpoints
+        ) or "unknown"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow run is blocked by unresolved approval checkpoints: {blocking_types}.",
+        )
+
+    if workflow_run.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed workflow runs cannot be resumed.",
+        )
+
+    workflow_run.status = "running"
+    if not workflow_run.current_stage:
+        workflow_run.current_stage = "resumed"
+    WORKFLOW_RUNS[workflow_run.id] = workflow_run
+    return _workflow_run_schema(workflow_run)
 
 
 register_api_router(router)

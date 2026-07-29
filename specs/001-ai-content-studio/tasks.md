@@ -570,7 +570,7 @@ Notes: Long-form MVP does not need video rendering.
 
 ## Phase 15: Remediation - approval workflow and API
 
-- [ ] T037 Integrate approval checkpoints into workflow execution
+- [X] T037 Integrate approval checkpoints into workflow execution
 Milestone: M002
 Epic: E005
 Risk: high
@@ -585,7 +585,7 @@ Test requirements: Add workflow approval pause/resume tests.
 Parallelizable: no
 Notes: Rejection preserves artifacts and records a decision.
 
-- [ ] T038 Add approval and resume API routes
+- [X] T038 Add approval and resume API routes
 Milestone: M002
 Epic: E005
 Risk: high
@@ -600,7 +600,7 @@ Test requirements: Add API tests for approve, reject, request changes and blocke
 Parallelizable: no
 Notes: Route naming may use the repository's established API prefix.
 
-- [ ] T047 Synchronize API schema with WorkflowConfig
+- [X] T047 Synchronize API schema with WorkflowConfig
 Milestone: M002
 Epic: E005
 Risk: medium
