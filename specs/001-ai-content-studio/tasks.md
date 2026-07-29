@@ -662,7 +662,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Include artifact preservation assertions for rejection.
 
-- [ ] T042 Add export bundle content tests
+- [X] T042 Add export bundle content tests
 Milestone: M003
 Epic: E006
 Risk: medium
