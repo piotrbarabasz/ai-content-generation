@@ -632,7 +632,7 @@ Test requirements: Add usage metadata absent test.
 Parallelizable: yes
 Notes: Do not implement billing dashboard or advanced analytics.
 
-- [ ] T040 Add provider and workflow config validation tests
+- [X] T040 Add provider and workflow config validation tests
 Milestone: M003
 Epic: E006
 Risk: medium

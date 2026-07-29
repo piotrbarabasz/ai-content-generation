@@ -1,117 +1,56 @@
-import unittest
+from __future__ import annotations
+
+import pytest
 
 from app.domain.base import DomainValidationError
-from app.domain.enums import (
-    ContentGenre,
-    ContentType,
-    DurationProfile,
-    TargetPlatform,
-    WorkflowPreset,
-)
+from app.domain.enums import ContentGenre, ContentType, DurationProfile, TargetPlatform, WorkflowPreset
 from app.domain.workflow_config import WorkflowConfig
+from app.workflow.presets import LONG_FORM_SCRIPT_VOICEOVER_PRESET, SHORT_VIDEO_PRESET
 
 
-class WorkflowConfigValidationTests(unittest.TestCase):
-    def test_valid_short_video_config(self) -> None:
-        config = WorkflowConfig.create(
-            project_id="project_1",
-            workflow_preset="short_video",
-            content_type="short_video",
-            content_genre="news",
-            duration_profile="60s",
-            target_platform="youtube_shorts",
-            language="pl",
-            tone="dynamic",
-            enabled_modules=["brief", "scenePlanning", "videoRendering", "export"],
-            disabled_modules=["voiceover", "thumbnail", "publishing"],
-        )
+@pytest.mark.parametrize(
+    ("preset_definition", "project_id"),
+    [
+        (SHORT_VIDEO_PRESET, "project_1"),
+        (LONG_FORM_SCRIPT_VOICEOVER_PRESET, "project_2"),
+    ],
+)
+def test_workflow_config_accepts_canonical_preset_payloads(
+    preset_definition,
+    project_id: str,
+) -> None:
+    config = WorkflowConfig.from_payload(
+        preset_definition.build_workflow_config_payload(project_id=project_id)
+    )
 
-        self.assertEqual(config.workflow_preset, WorkflowPreset.SHORT_VIDEO)
-        self.assertEqual(config.content_type, ContentType.SHORT_VIDEO)
-        self.assertEqual(config.content_genre, ContentGenre.NEWS)
-        self.assertEqual(config.duration_profile, DurationProfile.SIXTY_SECONDS)
-        self.assertEqual(config.target_platform, TargetPlatform.YOUTUBE_SHORTS)
+    assert config.project_id == project_id
+    assert config.workflow_preset is preset_definition.workflow_preset
+    assert config.content_type is preset_definition.content_type
+    assert config.content_genre is preset_definition.content_genre
+    assert config.duration_profile is preset_definition.duration_profile
+    assert config.target_platform is preset_definition.target_platform
+    assert config.enabled_modules == list(preset_definition.required_modules)
+    assert config.disabled_modules == list(preset_definition.optional_modules)
 
-    def test_valid_long_form_script_voiceover_config(self) -> None:
-        config = WorkflowConfig.create(
-            project_id="project_2",
-            workflow_preset="long_form_script_voiceover",
-            content_type="long_form_video",
-            content_genre="documentary",
-            duration_profile="8_15min",
-            target_platform="youtube",
-            language="en",
-            tone="informative",
-            enabled_modules=["brief", "outline", "scriptGeneration", "qa", "export"],
-            disabled_modules=["videoRendering", "captions"],
-        )
 
-        self.assertEqual(
-            config.workflow_preset, WorkflowPreset.LONG_FORM_SCRIPT_VOICEOVER
-        )
-        self.assertEqual(config.content_type, ContentType.LONG_FORM_VIDEO)
-
-    def test_payload_accepts_canonical_camel_case_schema(self) -> None:
-        config = WorkflowConfig.from_payload(
-            {
-                "projectId": "project_3",
-                "workflowPreset": "short_video",
-                "contentType": "short_video",
-                "contentGenre": "story",
-                "durationProfile": "15_30s",
-                "targetPlatform": "tiktok",
-                "language": "pl",
-                "tone": "dramatic",
-                "enabledModules": ["brief", "export"],
-                "disabledModules": ["captions"],
-                "providerConfig": {},
-                "renderConfig": {},
-                "captionConfig": {},
-                "voiceConfig": {},
-                "assetConfig": {},
-                "approvalPolicy": {},
-                "exportConfig": {},
-            }
-        )
-
-        self.assertEqual(config.content_genre, ContentGenre.STORY)
-
-    def test_invalid_enum_value_is_rejected(self) -> None:
-        with self.assertRaises(DomainValidationError):
-            WorkflowConfig.create(
-                project_id="project_4",
-                workflow_preset="short_video",
-                content_type="short_video",
-                content_genre="not_a_genre",
-                duration_profile="60s",
-                target_platform="youtube_shorts",
-                language="pl",
-                tone="dynamic",
-            )
-
-    def test_enabled_disabled_module_conflict_is_rejected(self) -> None:
-        with self.assertRaises(DomainValidationError):
-            WorkflowConfig.create(
-                project_id="project_5",
-                workflow_preset="short_video",
-                content_type="short_video",
-                content_genre="news",
-                duration_profile="60s",
-                target_platform="youtube_shorts",
-                language="pl",
-                tone="dynamic",
-                enabled_modules=["brief", "captions"],
-                disabled_modules=["captions"],
-            )
-
-    def test_provider_validation_runs_after_config_validation(self) -> None:
-        calls = []
-
-        def provider_validator(config: WorkflowConfig) -> None:
-            calls.append(config.workflow_preset)
-
+def test_workflow_config_rejects_invalid_enum_values() -> None:
+    with pytest.raises(DomainValidationError):
         WorkflowConfig.create(
-            project_id="project_6",
+            project_id="project_3",
+            workflow_preset="short_video",
+            content_type="short_video",
+            content_genre="not_a_genre",
+            duration_profile="60s",
+            target_platform="youtube_shorts",
+            language="pl",
+            tone="dynamic",
+        )
+
+
+def test_workflow_config_rejects_enabled_and_disabled_module_conflicts() -> None:
+    with pytest.raises(DomainValidationError):
+        WorkflowConfig.create(
+            project_id="project_4",
             workflow_preset="short_video",
             content_type="short_video",
             content_genre="news",
@@ -119,11 +58,27 @@ class WorkflowConfigValidationTests(unittest.TestCase):
             target_platform="youtube_shorts",
             language="pl",
             tone="dynamic",
-            provider_validator=provider_validator,
+            enabled_modules=["brief", "captions"],
+            disabled_modules=["captions"],
         )
 
-        self.assertEqual(calls, [WorkflowPreset.SHORT_VIDEO])
 
+def test_provider_validation_runs_after_config_validation() -> None:
+    calls: list[WorkflowPreset] = []
 
-if __name__ == "__main__":
-    unittest.main()
+    def provider_validator(config: WorkflowConfig) -> None:
+        calls.append(config.workflow_preset)
+
+    WorkflowConfig.create(
+        project_id="project_5",
+        workflow_preset="short_video",
+        content_type="short_video",
+        content_genre="news",
+        duration_profile="60s",
+        target_platform="youtube_shorts",
+        language="pl",
+        tone="dynamic",
+        provider_validator=provider_validator,
+    )
+
+    assert calls == [WorkflowPreset.SHORT_VIDEO]
