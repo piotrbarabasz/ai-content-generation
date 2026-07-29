@@ -290,7 +290,7 @@ Test requirements: The tests should avoid real provider calls and use only local
 Parallelizable: yes
 Notes: Failed module handling is covered by T044.
 
-- [ ] T019 Add tests for preset registration and API smoke paths
+- [X] T019 Add tests for preset registration and API smoke paths
 Milestone: M003
 Epic: E006
 Risk: high
