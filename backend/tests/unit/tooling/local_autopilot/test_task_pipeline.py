@@ -10,9 +10,10 @@ import pytest
 
 from app.tooling import agent_task_preflight as preflight
 from app.tooling.local_autopilot.config import AutopilotConfig
-from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, RunMode, RunStatus, ScopeType
+from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, CommandResult, RunMode, RunStatus, ScopeType
 from app.tooling.local_autopilot.process_runner import ProcessResult
 from app.tooling.local_autopilot.state_store import load_run_state
+from app.tooling.local_autopilot.task_state_machine import load_task_receipt
 from app.tooling.local_autopilot.task_pipeline import TaskPipeline, TaskPipelineError, _parse_preflight_json_document
 
 
@@ -29,6 +30,7 @@ class ScenarioRunner:
     codex_result_status: str = "PASS"
     codex_json: dict[str, object] | None = None
     codex_api_error_lines: tuple[str, ...] = ()
+    codex_tasks_md_text: str | None = None
     dirty_after_codex: bool = True
     sandbox_banner: str = "sandbox: workspace-write"
 
@@ -39,6 +41,8 @@ class ScenarioRunner:
         self._codex_attempts = 0
         self._committed = False
         self._head_sha = "a" * 40
+        self.tasks_path = self.root / "specs" / "001-ai-content-studio" / "tasks.md"
+        self._tasks_snapshot = self.tasks_path.read_bytes() if self.tasks_path.exists() else None
 
     def __call__(self, argv, **kwargs):
         command = tuple(str(part) for part in argv)
@@ -175,6 +179,8 @@ class ScenarioRunner:
                 "next_task_started": False,
                 "retryable": False,
             }
+            if self.codex_tasks_md_text is not None:
+                self.tasks_path.write_text(self.codex_tasks_md_text, encoding="utf-8")
             output_path = None
             if "--output-last-message" in command:
                 output_path = Path(command[command.index("--output-last-message") + 1])
@@ -202,7 +208,12 @@ class ScenarioRunner:
             stdout = ("## feat/local-autopilot-ui",)
             return self._result(command, stdout=stdout)
         if self._codex_attempts and self.dirty_after_codex:
-            dirty_paths = self.scope_drift_paths or ("specs/001-ai-content-studio/tasks.md",)
+            dirty_paths = list(self.scope_drift_paths)
+            if self._tasks_snapshot is not None and self.tasks_path.exists():
+                if self.tasks_path.read_bytes() != self._tasks_snapshot and "specs/001-ai-content-studio/tasks.md" not in dirty_paths:
+                    dirty_paths.append("specs/001-ai-content-studio/tasks.md")
+            if not dirty_paths:
+                return self._result(command, stdout=("## feat/local-autopilot-ui",))
             stdout = ("## feat/local-autopilot-ui", *[f" M {path}" for path in dirty_paths])
             return self._result(command, stdout=stdout)
         if self.initial_dirty_paths:
@@ -396,6 +407,41 @@ def _build_pipeline(tmp_path: Path, runner: ScenarioRunner, *, max_repair_cycles
     return TaskPipeline(tmp_path, config=_config(max_repair_cycles), process_runner_fn=runner)
 
 
+def _replace_task_checkbox(tasks_text: str, task_id: str, checkbox: str, *, target_task_id: str | None = None) -> str:
+    target_task_id = target_task_id or task_id
+    lines = tasks_text.splitlines()
+    for index, line in enumerate(lines):
+        for prefix in (f"- [ ] {target_task_id}", f"- [X] {target_task_id}", f"- [x] {target_task_id}"):
+            if line.startswith(prefix):
+                lines[index] = line.replace(prefix, f"- [{checkbox}] {target_task_id}", 1)
+                return "\n".join(lines) + ("\n" if tasks_text.endswith("\n") else "")
+    raise AssertionError(f"could not find task line for {target_task_id}")
+
+
+def _append_tasks_line(tasks_text: str, line: str) -> str:
+    text = tasks_text if tasks_text.endswith("\n") else f"{tasks_text}\n"
+    return f"{text}{line}\n"
+
+
+def _append_second_task_block(tasks_text: str, task_id: str = "T046") -> str:
+    block = "\n".join(
+        [
+            f"- [ ] {task_id} Implement another task",
+            "Milestone: M001",
+            "Epic: E001",
+            "Risk: medium",
+            "Implementation files: backend/app/tooling/local_autopilot/task_pipeline.py",
+            "Test files: backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+            "Validation commands: python -m pytest backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+            "Acceptance criteria: done",
+            "Dependencies: None",
+            "",
+        ]
+    )
+    text = tasks_text if tasks_text.endswith("\n") else f"{tasks_text}\n"
+    return f"{text}{block}"
+
+
 def test_run_task_happy_path_commits_and_saves_state(tmp_path):
     implementation_file, test_file, tasks_file = _setup_repo(tmp_path)
     runner = ScenarioRunner(tmp_path)
@@ -413,6 +459,170 @@ def test_run_task_happy_path_commits_and_saves_state(tmp_path):
     assert any(command[:3] == ("git", "add", "--") for command in runner.calls)
     assert any(command[:2] == ("git", "commit") for command in runner.calls)
     assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_restores_tasks_md_before_finalizer_and_filters_tasks_md_from_receipt(tmp_path, monkeypatch):
+    _, test_file, tasks_file = _setup_repo(tmp_path)
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_tasks_md_text=_replace_task_checkbox(original_tasks_text, "T045", "x"),
+        codex_json={
+            "task_id": "T045",
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [
+                test_file.relative_to(tmp_path).as_posix(),
+                tasks_file.relative_to(tmp_path).as_posix(),
+            ],
+            "notes": ["Implementation complete."],
+        },
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+    finalizer_calls: list[tuple[str, str, str]] = []
+    implemented_files_touched: tuple[str, ...] | None = None
+
+    def fake_finalizer(task_id, python_executable):
+        current_tasks_text = tasks_file.read_text(encoding="utf-8")
+        finalizer_calls.append((task_id, python_executable, current_tasks_text))
+        assert current_tasks_text == original_tasks_text
+        return CommandResult(
+            command=(python_executable, "-m", "backend.app.tooling.agent_task_finalize", "--task", task_id, "--json"),
+            status="PASS",
+            exit_code=0,
+            duration_ms=1,
+            timed_out=False,
+            stdout_lines=(),
+            stderr_lines=(),
+            output_truncated=False,
+        )
+
+    original_write_receipt = pipeline._write_receipt
+
+    def wrapped_write_receipt(*, summary, files_touched, **kwargs):
+        nonlocal implemented_files_touched
+        if summary == "Implementation complete." and implemented_files_touched is None:
+            implemented_files_touched = tuple(files_touched)
+        return original_write_receipt(summary=summary, files_touched=files_touched, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_run_task_finalizer", fake_finalizer)
+    monkeypatch.setattr(pipeline, "_write_receipt", wrapped_write_receipt)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.task_result.status == RunStatus.COMPLETED
+    assert result.attempts == 1
+    assert finalizer_calls == [("T045", runner.python_executable, original_tasks_text)]
+    assert implemented_files_touched == (test_file.relative_to(tmp_path).as_posix(),)
+    assert tasks_file.read_text(encoding="utf-8").splitlines()[0].startswith("- [X] T045")
+    assert any(command[:2] == ("git", "commit") for command in runner.calls)
+
+
+def test_run_task_rejects_other_task_checkbox_change(tmp_path, monkeypatch):
+    _setup_repo(tmp_path)
+    tasks_file = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
+    tasks_file.write_text(_append_second_task_block(original_tasks_text), encoding="utf-8")
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_tasks_md_text=_replace_task_checkbox(tasks_file.read_text(encoding="utf-8"), "T045", "X", target_task_id="T046"),
+        codex_json={
+            "task_id": "T045",
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [
+                "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+                "specs/001-ai-content-studio/tasks.md",
+            ],
+            "notes": ["Implementation complete."],
+        },
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    def fake_finalizer(task_id, python_executable):
+        raise AssertionError("finalizer should not run after an invalid tasks.md change")
+
+    monkeypatch.setattr(pipeline, "_run_task_finalizer", fake_finalizer)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert result.reason == "Codex modified tasks.md outside the selected task checkbox"
+    assert not any(command[:2] == ("git", "commit") for command in runner.calls)
+
+
+def test_run_task_rejects_arbitrary_tasks_md_changes(tmp_path, monkeypatch):
+    _, test_file, tasks_file = _setup_repo(tmp_path)
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
+    mutated_tasks_text = _append_tasks_line(original_tasks_text, "Codex added a stray note")
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_tasks_md_text=mutated_tasks_text,
+        codex_json={
+            "task_id": "T045",
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [
+                test_file.relative_to(tmp_path).as_posix(),
+                tasks_file.relative_to(tmp_path).as_posix(),
+            ],
+            "notes": ["Implementation complete."],
+        },
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    def fake_finalizer(task_id, python_executable):
+        raise AssertionError("finalizer should not run after an invalid tasks.md change")
+
+    monkeypatch.setattr(pipeline, "_run_task_finalizer", fake_finalizer)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert result.reason == "Codex modified tasks.md outside the selected task checkbox"
+    assert not any(command[:2] == ("git", "commit") for command in runner.calls)
+
+
+def test_run_task_fails_when_files_touched_only_tasks_md(tmp_path, monkeypatch):
+    _, _, tasks_file = _setup_repo(tmp_path)
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
+    runner = ScenarioRunner(
+        tmp_path,
+        codex_tasks_md_text=_replace_task_checkbox(original_tasks_text, "T045", "X"),
+        codex_json={
+            "task_id": "T045",
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [tasks_file.relative_to(tmp_path).as_posix()],
+            "notes": ["Implementation complete."],
+        },
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+    finalizer_called = False
+
+    def fake_finalizer(task_id, python_executable):
+        nonlocal finalizer_called
+        finalizer_called = True
+        return CommandResult(
+            command=(python_executable, "-m", "backend.app.tooling.agent_task_finalize", "--task", task_id, "--json"),
+            status="PASS",
+            exit_code=0,
+            duration_ms=1,
+            timed_out=False,
+            stdout_lines=(),
+            stderr_lines=(),
+            output_truncated=False,
+        )
+
+    monkeypatch.setattr(pipeline, "_run_task_finalizer", fake_finalizer)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert result.reason == "codex did not touch any files"
+    assert finalizer_called is False
+    assert not any(command[:2] == ("git", "commit") for command in runner.calls)
 
 
 def test_run_task_fails_on_scope_drift(tmp_path):
