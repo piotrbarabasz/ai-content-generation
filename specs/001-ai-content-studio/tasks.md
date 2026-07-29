@@ -647,7 +647,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Keep tests deterministic.
 
-- [ ] T041 Add approval workflow tests
+- [X] T041 Add approval workflow tests
 Milestone: M003
 Epic: E006
 Risk: medium
