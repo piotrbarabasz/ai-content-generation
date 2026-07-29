@@ -696,7 +696,7 @@ Notes: Use mock providers and local artifact storage only.
 Milestone: M003
 Epic: E006
 Risk: medium
-Implementation files: `none`
+Implementation files: `backend/app/workflow/engine.py`
 Test files: `backend/tests/unit/test_retry_behavior.py`, `backend/tests/unit/test_failed_module_handling.py`, `backend/tests/static/test_secret_hygiene.py`
 Validation commands: `python -m pytest backend/tests/unit/test_retry_behavior.py backend/tests/unit/test_failed_module_handling.py backend/tests/static/test_secret_hygiene.py`
 Final PR review required: yes
