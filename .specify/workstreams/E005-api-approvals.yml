@@ -5,7 +5,7 @@ milestone: M002
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E005-api-approvals
-status: active
+status: completed
 risk: high
 depends_on:
   - E004
