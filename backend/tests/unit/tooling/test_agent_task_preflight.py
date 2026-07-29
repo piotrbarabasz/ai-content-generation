@@ -163,6 +163,7 @@ def _patch_context(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(preflight, "WORKSTREAMS_DIR", tmp_path / ".specify" / "workstreams")
     monkeypatch.setattr(preflight, "TASKS_FILE", tmp_path / "specs" / "001-ai-content-studio" / "tasks.md")
     monkeypatch.setattr(preflight, "TASK_RUNS_DIR", tmp_path / ".specify" / "runtime" / "task-runs")
+    monkeypatch.setattr(preflight.repository_checks, "ROOT", tmp_path)
 
 
 def _patch_successful_runtime(monkeypatch):
