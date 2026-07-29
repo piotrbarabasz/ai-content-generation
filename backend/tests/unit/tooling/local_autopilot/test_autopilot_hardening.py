@@ -561,7 +561,7 @@ def _write_repo(tmp_path: Path, *, implementation_newline: bool = True, epic2_st
     )
     _write(
         feature_dir / "main.py",
-        "print('autopilot')\n",
+        "print('autopilot')",
         newline=implementation_newline,
     )
     _write(
