@@ -260,7 +260,7 @@ Notes: Keep approval simplified for MVP, but model it explicitly in the workflow
 
 ## Phase 10: Tests
 
-- [ ] T017 Add tests for module registry and execution order
+- [X] T017 Add tests for module registry and execution order
 Milestone: M003
 Epic: E006
 Risk: high
@@ -275,7 +275,7 @@ Test requirements: These tests should be deterministic and run without network o
 Parallelizable: yes
 Notes: Focus on the engine's contract rather than implementation details.
 
-- [ ] T018 Add tests for artifact storage and mock providers
+- [X] T018 Add tests for artifact storage and mock providers
 Milestone: M003
 Epic: E006
 Risk: high
@@ -290,7 +290,7 @@ Test requirements: The tests should avoid real provider calls and use only local
 Parallelizable: yes
 Notes: Failed module handling is covered by T044.
 
-- [ ] T019 Add tests for preset registration and API smoke paths
+- [X] T019 Add tests for preset registration and API smoke paths
 Milestone: M003
 Epic: E006
 Risk: high
@@ -617,7 +617,7 @@ Notes: This remediation task isolates API schema synchronization from the comple
 
 ## Phase 16: Remediation - usage tracking and expanded tests
 
-- [ ] T039 Add UsageTracker and NoopCostTracker
+- [X] T039 Add UsageTracker and NoopCostTracker
 Milestone: M003
 Epic: E006
 Risk: medium
@@ -632,7 +632,7 @@ Test requirements: Add usage metadata absent test.
 Parallelizable: yes
 Notes: Do not implement billing dashboard or advanced analytics.
 
-- [ ] T040 Add provider and workflow config validation tests
+- [X] T040 Add provider and workflow config validation tests
 Milestone: M003
 Epic: E006
 Risk: medium
@@ -647,7 +647,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Keep tests deterministic.
 
-- [ ] T041 Add approval workflow tests
+- [X] T041 Add approval workflow tests
 Milestone: M003
 Epic: E006
 Risk: medium
@@ -662,7 +662,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Include artifact preservation assertions for rejection.
 
-- [ ] T042 Add export bundle content tests
+- [X] T042 Add export bundle content tests
 Milestone: M003
 Epic: E006
 Risk: medium
@@ -677,7 +677,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Do not require real media files.
 
-- [ ] T043 Add long-form workflow execution tests
+- [X] T043 Add long-form workflow execution tests
 Milestone: M003
 Epic: E006
 Risk: medium
@@ -692,7 +692,7 @@ Test requirements: These are the test cases for this task.
 Parallelizable: yes
 Notes: Use mock providers and local artifact storage only.
 
-- [ ] T044 Add retry, failed module and static secret hygiene tests
+- [X] T044 Add retry, failed module and static secret hygiene tests
 Milestone: M003
 Epic: E006
 Risk: medium
