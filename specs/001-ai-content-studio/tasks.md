@@ -621,7 +621,7 @@ Notes: This remediation task isolates API schema synchronization from the comple
 Milestone: M003
 Epic: E006
 Risk: medium
-Implementation files: `backend/app/workflow/usage.py`, `backend/app/workflow/execution.py`
+Implementation files: `backend/app/workflow/usage.py`, `backend/app/workflow/execution.py`, `backend/app/workflow/engine.py`
 Test files: `backend/tests/unit/test_t039.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t039.py`
 Final PR review required: yes
