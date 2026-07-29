@@ -333,7 +333,7 @@ def _setup_repo(
             ]
         ),
     )
-    _write(implementation_file, "print('placeholder')\n", newline=implementation_newline)
+    _write(implementation_file, "print('placeholder')", newline=implementation_newline)
     _write(test_file, "print('placeholder')\n")
     _write(
         runtime / "baseline.json",

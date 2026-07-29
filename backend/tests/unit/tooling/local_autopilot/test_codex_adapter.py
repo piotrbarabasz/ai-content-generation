@@ -9,6 +9,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
+from types import SimpleNamespace
 
 import pytest
 
@@ -189,7 +190,7 @@ def test_resolve_codex_cli_executable_uses_windows_appdata_fallback(monkeypatch,
     executable = appdata / "npm" / "codex.cmd"
     executable.parent.mkdir(parents=True, exist_ok=True)
     executable.write_text("@echo off\n", encoding="utf-8")
-    monkeypatch.setattr(codex_module.os, "name", "nt", raising=False)
+    monkeypatch.setattr(codex_module, "os", SimpleNamespace(name="nt", environ=os.environ))
     monkeypatch.setenv("APPDATA", str(appdata))
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
     monkeypatch.setattr(codex_module.shutil, "which", lambda candidate: None)
@@ -203,7 +204,7 @@ def test_resolve_codex_cli_executable_uses_posix_which(monkeypatch, tmp_path):
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     calls: list[str] = []
 
-    monkeypatch.setattr(codex_module.os, "name", "posix", raising=False)
+    monkeypatch.setattr(codex_module, "os", SimpleNamespace(name="posix", environ=os.environ))
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
 
     def fake_which(candidate):
