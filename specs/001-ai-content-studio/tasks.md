@@ -775,7 +775,7 @@ Test requirements: Add construction, validation, serialization/helper and defens
 Parallelizable: no
 Notes: Do not migrate `TTSProvider`, `MockTTSProvider` or `VoiceoverModule` in this task. Keeping T049 additive ensures the repository is green after one commit.
 
-- [ ] T050 Migrate mock TTS and VoiceoverModule to real WAV bytes
+- [X] T050 Migrate mock TTS and VoiceoverModule to real WAV bytes
 Milestone: M004
 Epic: E007
 Risk: high
