@@ -77,7 +77,7 @@ def test_narration_metadata_entries_point_to_valid_utf8_fixtures(entry: dict[str
     file_name = str(entry["file"])
     path = FIXTURE_DIR / file_name
     text = _read_fixture_text(path)
-    payload = path.read_bytes()
+    payload = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
 
     for field in (
         "title",
