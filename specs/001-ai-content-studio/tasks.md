@@ -760,7 +760,7 @@ Notes: The planning pack supplies initial fixture content. The task still owns v
 
 ## Phase 18A: Provider-neutral audio result
 
-- [ ] T049 Add an explicit provider-neutral TTS synthesis result model
+- [X] T049 Add an explicit provider-neutral TTS synthesis result model
 Milestone: M004
 Epic: E007
 Risk: medium
