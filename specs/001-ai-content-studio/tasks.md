@@ -743,7 +743,7 @@ Notes: This remediation task supplies the direct evidence that was not part of t
 
 ## Phase 18: Real TTS foundation and narration fixtures
 
-- [ ] T048 Add and validate fixed Polish narration fixtures
+- [X] T048 Add and validate fixed Polish narration fixtures
 Milestone: M004
 Epic: E007
 Risk: low
