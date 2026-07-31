@@ -1,0 +1,27 @@
+id: E009
+title: Long Narration Reliability
+# Part of M004 Real TTS Voiceover.
+milestone: M004
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E009-long-narration-reliability
+status: planned
+risk: high
+depends_on:
+  - E008
+tasks:
+  - T056
+  - T057
+  - T058
+  - T059
+required_checks:
+  - python -m pytest
+  - git --no-pager diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

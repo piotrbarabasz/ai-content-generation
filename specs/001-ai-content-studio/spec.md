@@ -229,3 +229,79 @@ A user or reviewer wants to inspect generated artifacts such as script, scene pl
 - External providers may be unavailable, so mock providers are acceptable for initial validation.
 - The system will persist artifacts in a configurable store rather than relying on hardcoded local paths.
 - The first implementation can be backend/API-first with minimal or deferred UI.
+
+<!-- M004 REAL TTS EXTENSION START -->
+
+## Extension: Real TTS Voiceover (M004)
+
+### User Story 5 - Generate provider-swappable Polish voiceover (Priority: P1)
+
+A developer wants to provide a fixed Polish narration and receive a playable WAV artifact through either the deterministic mock provider or XTTS-v2 without changing workflow orchestration.
+
+**Independent Test**: The one-minute narration fixture produces a valid RIFF/WAVE artifact through the provider-neutral voiceover path, while default tests remain offline and GPU-free.
+
+**Acceptance Scenarios**:
+
+1. **Given** a fixed narration and the mock TTS provider, **When** voiceover synthesis runs, **Then** the artifact store receives valid deterministic WAV bytes rather than a path or URI saved as a `.wav` file.
+2. **Given** an XTTS-v2 `ProviderConfig`, **When** provider composition runs, **Then** an XTTS-v2 implementation is registered behind the existing `TTSProvider` and `ProviderRegistry` contracts without importing the concrete provider from `VoiceoverModule` or `CoreWorkflowEngine`.
+3. **Given** a valid speaker reference and optional XTTS runtime, **When** the manual smoke runner is executed, **Then** it creates a playable Polish WAV and a JSON evidence report or exits non-zero with an actionable error.
+4. **Given** a long narration, **When** chunked synthesis is interrupted and resumed, **Then** valid matching chunks are reused and only missing, changed or corrupt chunks are regenerated.
+
+### Additional Edge Cases
+
+- XTTS optional dependencies are not installed.
+- `device=cuda` is requested but CUDA is unavailable.
+- A private speaker reference is missing, invalid or accidentally placed under a tracked path.
+- A provider returns empty bytes, non-WAV bytes or incompatible WAV parameters.
+- One sentence is longer than the preferred chunk limit.
+- A resumed chunk was generated from different text or voice settings.
+- Two WAV chunks have different sample rates, channel counts, sample widths or compression types.
+
+### Additional Functional Requirements
+
+#### Narration Fixtures
+
+- **FR-055**: The repository MUST contain fixed Polish narration fixtures targeting approximately 1, 5, 8 and 15 minutes.
+- **FR-056**: Fixture metadata MUST record filename, title, language, target duration, actual word count, expected word-count range and feature tags.
+- **FR-057**: Fixture validation MUST be deterministic, offline and independent of any LLM.
+
+#### Provider-neutral Audio Contract
+
+- **FR-058**: TTS synthesis MUST return an explicit provider-neutral result carrying actual audio bytes, sample rate, duration, audio format, provider name and metadata.
+- **FR-059**: `VoiceoverModule` MUST persist actual WAV bytes and MUST reject a string path or URI masquerading as completed audio.
+- **FR-060**: The mock TTS provider MUST generate deterministic, readable PCM WAV data using lightweight local code.
+- **FR-061**: Existing artifact naming and export compatibility for `voiceover.wav` MUST be preserved.
+
+#### XTTS-v2 Composition
+
+- **FR-062**: XTTS-v2 MUST implement the existing `TTSProvider` abstraction.
+- **FR-063**: Concrete TTS providers MUST be created from the existing `ProviderConfig` settings and registered in the existing `ProviderRegistry`; the implementation MUST NOT introduce a second generic provider registry.
+- **FR-064**: XTTS-v2 loading MUST be lazy and occur at most once per provider instance.
+- **FR-065**: Default tests MUST NOT import the real XTTS runtime, download weights, access the network or require a GPU.
+- **FR-066**: Heavy XTTS/PyTorch dependencies MUST remain optional and MUST use versions confirmed by the manual environment spike.
+- **FR-067**: Missing dependencies, unsupported devices, invalid speaker references and invalid audio output MUST produce actionable errors.
+
+#### Long Narration Reliability
+
+- **FR-068**: Technical TTS chunking MUST preserve normalized narration text in order and MUST remain separate from semantic scene segmentation.
+- **FR-069**: Chunking MUST prefer paragraph and sentence boundaries and MUST emit stable non-empty chunk records.
+- **FR-070**: Per-chunk manifests MUST record text/config identity, status, checksum, duration and WAV parameters.
+- **FR-071**: Resume MUST reuse only valid chunks whose text and relevant configuration identity match the current run.
+- **FR-072**: WAV assembly MUST validate format compatibility before concatenation and MUST NOT publish a completed final artifact after partial failure.
+- **FR-073**: Benchmark evidence MUST include provider, model, device, language, word count, chunk count, generation duration, audio duration, real-time factor, sample rate, checksum and failed chunk identifiers.
+
+### Additional Non-Functional Requirements
+
+- **NFR-012**: The real-TTS extension MUST remain compatible with Python 3.11.
+- **NFR-013**: Provider-specific code MUST remain isolated from workflow orchestration and reusable provider-neutral TTS services.
+- **NFR-014**: Runtime voice samples, model caches, intermediate chunks, reports and generated audio MUST be excluded from version control.
+- **NFR-015**: The first long-narration implementation MUST use deterministic local PCM WAV assembly unless a documented requirement proves it insufficient.
+
+### Additional Success Criteria
+
+- **SC-007**: The deterministic mock path stores a valid readable WAV and the complete existing test suite remains green.
+- **SC-008**: A human can run one documented command to generate a one-minute Polish XTTS-v2 WAV after supplying an approved speaker reference.
+- **SC-009**: The fifteen-minute fixture completes with a fake backend, supports simulated interruption/resume and produces a final WAV plus synthesis and benchmark manifests.
+- **SC-010**: No task in M004 implements semantic scene splitting, image generation, captions, rendering, API redesign or deployment.
+
+<!-- M004 REAL TTS EXTENSION END -->
