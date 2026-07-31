@@ -749,7 +749,7 @@ Epic: E007
 Risk: low
 Implementation files: `backend/tests/fixtures/narrations/story_01_1min.txt`, `backend/tests/fixtures/narrations/story_02_5min.txt`, `backend/tests/fixtures/narrations/story_03_8min.txt`, `backend/tests/fixtures/narrations/story_04_15min.txt`, `backend/tests/fixtures/narrations/metadata.json`
 Test files: `backend/tests/unit/test_t048.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t048.py`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t048.py`
 Final PR review required: yes
 Goal: Establish deterministic Polish narration inputs for repeatable one-, five-, eight- and fifteen-minute TTS comparisons.
 Dependencies: None
@@ -766,7 +766,7 @@ Epic: E007
 Risk: medium
 Implementation files: `backend/app/providers/tts_result.py`, `backend/app/providers/__init__.py`
 Test files: `backend/tests/unit/test_t049.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t049.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t049.py`
 Final PR review required: yes
 Goal: Define a typed result that can carry actual audio bytes and provider-neutral metadata without changing runtime behavior in this task.
 Dependencies: T048
@@ -781,7 +781,7 @@ Epic: E007
 Risk: high
 Implementation files: `backend/app/providers/interfaces.py`, `backend/app/providers/mock_tts.py`, `backend/app/modules/voiceover.py`, `backend/app/providers/tts_result.py`
 Test files: `backend/tests/unit/test_t010.py`, `backend/tests/unit/test_t012.py`, `backend/tests/unit/test_t050.py`, `backend/tests/unit/test_mock_providers.py`, `backend/tests/integration/test_long_form_workflow.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t010.py backend/tests/unit/test_t012.py backend/tests/unit/test_t050.py backend/tests/unit/test_mock_providers.py backend/tests/integration/test_long_form_workflow.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t010.py backend/tests/unit/test_t012.py backend/tests/unit/test_t050.py backend/tests/unit/test_mock_providers.py backend/tests/integration/test_long_form_workflow.py`
 Final PR review required: yes
 Goal: Make `voiceover.wav` contain valid audio data instead of a string reference while preserving provider abstraction and existing workflow outputs.
 Dependencies: T049
@@ -798,7 +798,7 @@ Epic: E008
 Risk: medium
 Implementation files: `pyproject.toml`, `backend/requirements.txt`, `.gitignore`, `docs/tts/XTTS_SETUP.md`, `docs/INDEX.md`
 Test files: `backend/tests/unit/test_t051.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t051.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t051.py`
 Final PR review required: yes
 Goal: Keep the base installation lightweight while documenting a reproducible optional XTTS-v2 environment based on the completed manual spike.
 Dependencies: T050
@@ -813,7 +813,7 @@ Epic: E008
 Risk: high
 Implementation files: `backend/app/providers/xtts_v2.py`, `backend/app/providers/tts_result.py`, `backend/app/providers/interfaces.py`
 Test files: `backend/tests/unit/test_t052.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t052.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t052.py`
 Final PR review required: yes
 Goal: Add a real XTTS-v2 adapter that implements the generic TTS contract while remaining fully testable without importing or loading the model in CI.
 Dependencies: T051
@@ -828,7 +828,7 @@ Epic: E008
 Risk: high
 Implementation files: `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `backend/app/providers/__init__.py`, `backend/app/providers/registry.py`
 Test files: `backend/tests/unit/test_t053.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t053.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t053.py`
 Final PR review required: yes
 Goal: Compose mock or XTTS-v2 provider instances from the existing ProviderConfig and register them through the existing ProviderRegistry without changing workflow orchestration.
 Dependencies: T052
@@ -843,7 +843,7 @@ Epic: E008
 Risk: medium
 Implementation files: `none` unless a minimal test seam correction is required in `backend/app/providers/xtts_v2.py`
 Test files: `backend/tests/unit/test_t054.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t052.py backend/tests/unit/test_t053.py backend/tests/unit/test_t054.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t054.py`
 Final PR review required: yes
 Goal: Harden the real-provider boundary against accidental model/network usage and common configuration failures.
 Dependencies: T053
@@ -858,7 +858,7 @@ Epic: E008
 Risk: medium
 Implementation files: `backend/app/tooling/__init__.py`, `backend/app/tooling/tts_smoke.py`, `docs/tts/XTTS_SMOKE.md`, `docs/INDEX.md`
 Test files: `backend/tests/unit/test_t055.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t055.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t055.py`
 Final PR review required: yes
 Goal: Provide one documented command that converts a fixture to WAV through the configured provider and emits machine-readable evidence.
 Dependencies: T054
@@ -875,7 +875,7 @@ Epic: E009
 Risk: high
 Implementation files: `backend/app/tts/__init__.py`, `backend/app/tts/chunking.py`
 Test files: `backend/tests/unit/test_t056.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t056.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t056.py`
 Final PR review required: yes
 Goal: Split long Polish narration into stable TTS-sized chunks without semantic scene analysis or source-text loss.
 Dependencies: T055
@@ -890,7 +890,7 @@ Epic: E009
 Risk: high
 Implementation files: `backend/app/tts/assembly.py`, `backend/app/tts/manifest.py`, `backend/app/tts/chunk_synthesis.py`
 Test files: `backend/tests/unit/test_t057.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t057.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t057.py`
 Final PR review required: yes
 Goal: Synthesize chunks independently, validate persisted outputs, resume interrupted work and assemble one final WAV without re-encoding.
 Dependencies: T056
@@ -905,7 +905,7 @@ Epic: E009
 Risk: medium
 Implementation files: `backend/app/tts/benchmark.py`, `backend/app/tts/manifest.py`, `backend/app/tooling/tts_smoke.py`
 Test files: `backend/tests/unit/test_t058.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t058.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t058.py`
 Final PR review required: yes
 Goal: Produce stable performance evidence for comparing providers, devices and chunk settings without changing synthesis behavior.
 Dependencies: T057
@@ -920,7 +920,7 @@ Epic: E009
 Risk: high
 Implementation files: `backend/app/modules/voiceover.py`, `backend/app/tts/chunking.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/manifest.py`, `backend/app/tts/benchmark.py`
 Test files: `backend/tests/unit/test_t059.py`, `backend/tests/unit/test_t012.py`, `backend/tests/integration/test_long_form_workflow.py`
-Validation commands: `python -m pytest backend/tests/unit/test_t012.py backend/tests/unit/test_t059.py backend/tests/integration/test_long_form_workflow.py`; `python -m pytest`; `git --no-pager diff --check`
+Validation commands: `python -m pytest backend/tests/unit/test_t059.py backend/tests/unit/test_t012.py backend/tests/integration/test_long_form_workflow.py`
 Final PR review required: yes
 Goal: Allow `VoiceoverModule` to use either single-request or chunked/resumable synthesis while remaining provider-neutral and export-compatible.
 Dependencies: T058
