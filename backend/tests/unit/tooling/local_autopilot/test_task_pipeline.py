@@ -372,7 +372,7 @@ def _setup_repo(
     return implementation_file, test_file, feature_dir / "tasks.md"
 
 
-def _make_run(tmp_path: Path) -> AutopilotRun:
+def _make_run(tmp_path: Path, *, run_id: str = "run-045") -> AutopilotRun:
     request = AutopilotRequest(
         scope_type=ScopeType.EPIC,
         scope_id="E001",
@@ -380,7 +380,7 @@ def _make_run(tmp_path: Path) -> AutopilotRun:
         repo_path=str(tmp_path),
     )
     return AutopilotRun(
-        run_id="run-045",
+        run_id=run_id,
         request=request,
         status=RunStatus.PREFLIGHT,
         created_at="2026-07-23T12:00:00Z",
@@ -1109,14 +1109,17 @@ def test_run_task_recovery_resumes_terminal_state_without_codex(tmp_path):
         ),
     )
     pipeline = _build_pipeline(tmp_path, runner)
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is True
+    assert assessment.recovery_mode == recovery_module.DIRTY_IMPLEMENTATION_RESUME
 
-    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+    result = pipeline.run_task(_make_run(tmp_path, run_id="run-046"), task_id="T045")
 
     assert result.status == RunStatus.COMPLETED
     assert result.attempts == 0
     assert result.task_result.status == RunStatus.COMPLETED
     assert result.task_result.commit_sha == "b" * 40
-    assert load_run_state("run-045", root=tmp_path).status == RunStatus.COMPLETED
+    assert load_run_state("run-046", root=tmp_path).status == RunStatus.COMPLETED
     assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
     assert load_task_receipt("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
     assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
@@ -1124,16 +1127,41 @@ def test_run_task_recovery_resumes_terminal_state_without_codex(tmp_path):
     assert any(path.name.startswith("T045-") for path in backup_root.iterdir())
 
 
+def test_run_task_recovery_restarts_clean_terminal_state_and_reruns_codex(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED, dirty_files=())
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is True
+    assert assessment.recovery_mode == recovery_module.CLEAN_RESTART
+
+    result = pipeline.run_task(_make_run(tmp_path, run_id="run-046"), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.attempts == 1
+    assert result.task_result.status == RunStatus.COMPLETED
+    assert result.task_result.commit_sha == "b" * 40
+    assert load_run_state("run-046", root=tmp_path).status == RunStatus.COMPLETED
+    assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert load_task_receipt("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+    backup_root = tmp_path / ".specify" / "runtime" / "recovery-backups"
+    assert any(path.name.startswith("T045-") for path in backup_root.iterdir())
+
+
 def test_run_task_recovery_blocks_on_unexpected_path_and_leaves_files_untouched(tmp_path):
     _write_terminal_task_attempt(
         tmp_path,
-        terminal_state=TaskLifecycleState.BLOCKED,
+        terminal_state=TaskLifecycleState.FAILED,
         dirty_files=("backend/other.py",),
     )
     runner = ScenarioRunner(tmp_path, initial_dirty_paths=("backend/other.py",))
     pipeline = _build_pipeline(tmp_path, runner)
     unexpected_file = tmp_path / "backend" / "other.py"
     original_text = unexpected_file.read_text(encoding="utf-8")
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is False
+    assert assessment.recovery_mode == ""
 
     result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
 
@@ -1190,6 +1218,26 @@ def test_run_task_recovery_blocks_on_stale_baseline(tmp_path):
 
     assert result.status == RunStatus.BLOCKED
     assert "baseline head" in (result.reason or "")
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_recovery_does_not_retry_when_checkbox_is_checked(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    tasks_path = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+    tasks_path.write_text(_replace_task_checkbox(tasks_path.read_text(encoding="utf-8"), "T045", "X"), encoding="utf-8")
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+
+    assert assessment.can_resume is False
+    assert assessment.recovery_mode == ""
+    assert "task checkbox is [X]" in assessment.reason
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert "must be unchecked" in (result.reason or "")
     assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
 
 

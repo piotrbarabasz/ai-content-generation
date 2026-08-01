@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from app.tooling.local_autopilot import process_runner
-from app.tooling.local_autopilot.repository import GitStatus, Repository
+from app.tooling.local_autopilot.repository import Repository
 
 
 def _result(command: tuple[str, ...], *, status: str = "PASS", exit_code: int | None = 0, stdout_lines: tuple[str, ...] = (), stderr_lines: tuple[str, ...] = ()) -> process_runner.ProcessResult:
@@ -304,3 +306,35 @@ def test_normalize_allowlist_eof_only_changes_text_files(tmp_path):
     assert changed == [text_file.as_posix()]
     assert text_file.read_text(encoding="utf-8") == "alpha\nbeta\n"
     assert binary_file.read_bytes() == b"\x00\x01\x02"
+
+
+def test_status_ignores_tmp_pytest_temp_untracked_files(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is required for this test")
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    git("init")
+    git("config", "user.email", "tester@example.invalid")
+    git("config", "user.name", "Tester")
+    (tmp_path / ".gitignore").write_text(".tmp/\n", encoding="utf-8")
+    (tmp_path / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    temp_file = tmp_path / ".tmp" / "pytest-temp" / "generated.txt"
+    temp_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_file.write_text("generated\n", encoding="utf-8")
+    git("add", ".gitignore", "tracked.txt")
+    git("commit", "-m", "initial commit")
+
+    repo = Repository(tmp_path)
+    status = repo.status()
+
+    assert ".tmp/pytest-temp/generated.txt" not in status.untracked
+    assert status.clean is True

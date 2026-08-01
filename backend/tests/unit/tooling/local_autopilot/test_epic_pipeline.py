@@ -1775,7 +1775,7 @@ def test_run_epic_review_failure_blocks_push(tmp_path):
     assert not validation_receipt_module.validation_receipt_path("2" * 40, tmp_path).exists()
 
 
-def test_run_epic_fails_when_required_check_result_count_differs_from_manifest(tmp_path):
+def test_run_epic_reports_required_checks_failed_when_first_check_fails(tmp_path):
     _setup_repo(tmp_path, epic_status="planned", dependency_status="completed")
     repo = FakeRepository(tmp_path)
     github = FakeGitHubAdapter()
@@ -1794,6 +1794,13 @@ def test_run_epic_fails_when_required_check_result_count_differs_from_manifest(t
     def fake_run_required_checks(epic_manifest, command_results, *, cancel_event):
         return (
             CommandResult(
+                command=("python", "-m", "pytest", "backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py"),
+                status="FAIL",
+                exit_code=1,
+                duration_ms=1,
+                timed_out=False,
+            ),
+            CommandResult(
                 command=("git", "--no-pager", "diff", "--check"),
                 status="PASS",
                 exit_code=0,
@@ -1807,7 +1814,10 @@ def test_run_epic_fails_when_required_check_result_count_differs_from_manifest(t
     result = pipeline.run_epic(_make_run(tmp_path, run_mode=RunMode.STOP_BEFORE_PUSH), human_authorized=True)
 
     assert result.status == RunStatus.FAILED
-    assert "declared=2 actual=1" in (result.reason or "")
+    assert "required checks failed" in (result.reason or "")
+    assert "declared=2 actual=1" not in (result.reason or "")
+    assert any(command_result.status == "FAIL" for command_result in result.command_results)
+    assert any(command_result.command == ("python", "-m", "pytest", "backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py") for command_result in result.command_results)
     assert not receipt.writes
     assert task_pipeline.calls == []
 

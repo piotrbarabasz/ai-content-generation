@@ -28,6 +28,8 @@ from .task_state_machine import (
 from .workstreams import get_epic
 
 ROOT = Path(__file__).resolve().parents[4]
+DIRTY_IMPLEMENTATION_RESUME = "DIRTY_IMPLEMENTATION_RESUME"
+CLEAN_RESTART = "CLEAN_RESTART"
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class TaskRecoveryAssessment:
     current_head_sha: str
     can_resume: bool
     requires_baseline_refresh: bool
+    recovery_mode: str
     reason: str
 
 
@@ -59,6 +62,7 @@ class TaskRecoveryResult:
     codex_skipped: bool
     prepared: bool
     already_prepared: bool
+    recovery_mode: str
     reason: str | None
 
 
@@ -89,8 +93,6 @@ def assess_task_recovery(
     current_state = state_record.state if state_record is not None else TaskLifecycleState.PENDING
     if state_record is None:
         reasons.append("task state is missing")
-    elif state_record.run_id and state_record.run_id != run_id:
-        reasons.append(f"task state belongs to run {state_record.run_id!r}, expected {run_id!r}")
 
     if receipt_record is None:
         reasons.append("task receipt is missing")
@@ -123,8 +125,6 @@ def assess_task_recovery(
         reasons.append(f"task checkbox is [{snapshot.checkbox}]")
     if unexpected_paths:
         reasons.append("unexpected dirty paths: " + ", ".join(unexpected_paths))
-    if not dirty_paths:
-        reasons.append("worktree is clean; no recoverable dirty changes")
     if not baseline_exists:
         reasons.append("baseline is missing")
     elif baseline_branch and baseline_branch != branch:
@@ -132,7 +132,8 @@ def assess_task_recovery(
     elif baseline_head_sha and baseline_head_sha != current_head_sha:
         reasons.append(f"baseline head {baseline_head_sha} does not match current head {current_head_sha}")
 
-    can_resume = (
+    recovery_mode = ""
+    can_dirty_resume = (
         state_record is not None
         and receipt_record is not None
         and current_state in TERMINAL_STATES
@@ -148,8 +149,30 @@ def assess_task_recovery(
         and epic_manifest is not None
         and manifest_status == "active"
         and (not manifest_branch or manifest_branch == branch)
-        and state_record.run_id == run_id
     )
+    can_clean_restart = (
+        state_record is not None
+        and receipt_record is not None
+        and current_state in TERMINAL_STATES
+        and not unexpected_paths
+        and not dirty_paths
+        and snapshot.checkbox.upper() == " "
+        and baseline_exists
+        and (not baseline_branch or baseline_branch == branch)
+        and (not baseline_head_sha or baseline_head_sha == current_head_sha)
+        and (not run.epic_id or run.epic_id == epic_id)
+        and (not run.branch_name or run.branch_name == branch)
+        and (not active_epic or active_epic == epic_id)
+        and epic_manifest is not None
+        and manifest_status == "active"
+        and (not manifest_branch or manifest_branch == branch)
+    )
+    can_resume = can_dirty_resume or can_clean_restart
+
+    if can_dirty_resume:
+        recovery_mode = DIRTY_IMPLEMENTATION_RESUME
+    elif can_clean_restart:
+        recovery_mode = CLEAN_RESTART
 
     requires_baseline_refresh = bool(
         not baseline_exists
@@ -158,10 +181,16 @@ def assess_task_recovery(
     )
 
     if can_resume:
-        reasons = [f"task {task_id} can resume from terminal state {current_state.value}"]
+        if recovery_mode == DIRTY_IMPLEMENTATION_RESUME:
+            reasons = [f"task {task_id} can resume implementation from terminal state {current_state.value}"]
+        else:
+            reasons = [f"task {task_id} can clean-restart from terminal state {current_state.value}"]
         if dirty_paths:
             reasons.append(f"dirty paths: {', '.join(dirty_paths)}")
-        reasons.append(f"allowed paths: {', '.join(allowed_paths) or 'none'}")
+        if recovery_mode == DIRTY_IMPLEMENTATION_RESUME:
+            reasons.append(f"allowed paths: {', '.join(allowed_paths) or 'none'}")
+        else:
+            reasons.append("previous terminal state will be archived before preflight")
     elif not reasons:
         reasons.append(f"task {task_id} cannot resume")
 
@@ -178,6 +207,7 @@ def assess_task_recovery(
         current_head_sha=current_head_sha,
         can_resume=can_resume,
         requires_baseline_refresh=requires_baseline_refresh,
+        recovery_mode=recovery_mode,
         reason="; ".join(reason for reason in reasons if reason),
     )
 
@@ -283,6 +313,7 @@ def prepare_task_retry(
             codex_skipped=True,
             prepared=False,
             already_prepared=True,
+            recovery_mode=assessment.recovery_mode,
             reason=assessment.reason,
         )
 
@@ -298,6 +329,7 @@ def prepare_task_retry(
             codex_skipped=False,
             prepared=False,
             already_prepared=False,
+            recovery_mode=assessment.recovery_mode,
             reason=assessment.reason,
         )
 
@@ -307,42 +339,58 @@ def prepare_task_retry(
 
     current_status = repo.status()
     task_snapshot = _load_task_snapshot(task_id, Path(state_record.tasks_path))
-    prepared_state = replace(
-        state_record,
-        state=TaskLifecycleState.IMPLEMENTED,
-        updated_at=_utc_timestamp(),
-        branch=current_status.branch,
-        head_sha=current_status.head_sha,
-        reason=assessment.reason,
-        allowlist=task_snapshot.allowlist,
-        validation_commands=task_snapshot.validation_commands,
-    )
-    save_task_state(prepared_state, root=root_path)
+    if assessment.recovery_mode == DIRTY_IMPLEMENTATION_RESUME:
+        prepared_state = replace(
+            state_record,
+            run_id=run_id,
+            state=TaskLifecycleState.IMPLEMENTED,
+            updated_at=_utc_timestamp(),
+            branch=current_status.branch,
+            head_sha=current_status.head_sha,
+            reason=assessment.reason,
+            allowlist=task_snapshot.allowlist,
+            validation_commands=task_snapshot.validation_commands,
+        )
+        save_task_state(prepared_state, root=root_path)
 
-    dirty_allowlisted_paths = tuple(path for path in assessment.dirty_paths if path in assessment.allowed_paths)
-    prepared_receipt = TaskReceiptRecord(
-        schema_version=1,
-        run_id=run_id,
-        task_id=task_id,
-        updated_at=_utc_timestamp(),
-        state=TaskLifecycleState.IMPLEMENTED,
-        agent_outcome="recovered",
-        summary="task recovery prepared",
-        files_touched=dirty_allowlisted_paths,
-        notes=(
-            "recovery prepared",
-            f"dirty paths: {', '.join(dirty_allowlisted_paths) or 'none'}",
-        ),
-        validation=(),
-        commit_sha="",
-        stages=(),
-        review_verdict="",
-        safe_to_close=False,
-        closure_checkbox_before="",
-        closure_checkbox_after="",
-        closure_task_line=0,
-    )
-    save_task_receipt(prepared_receipt, root=root_path)
+        dirty_allowlisted_paths = tuple(path for path in assessment.dirty_paths if path in assessment.allowed_paths)
+        prepared_receipt = TaskReceiptRecord(
+            schema_version=1,
+            run_id=run_id,
+            task_id=task_id,
+            updated_at=_utc_timestamp(),
+            state=TaskLifecycleState.IMPLEMENTED,
+            agent_outcome="recovered",
+            summary="task recovery prepared",
+            files_touched=dirty_allowlisted_paths,
+            notes=(
+                "recovery prepared",
+                f"dirty paths: {', '.join(dirty_allowlisted_paths) or 'none'}",
+            ),
+            validation=(),
+            commit_sha="",
+            stages=(),
+            review_verdict="",
+            safe_to_close=False,
+            closure_checkbox_before="",
+            closure_checkbox_after="",
+            closure_task_line=0,
+        )
+        save_task_receipt(prepared_receipt, root=root_path)
+    else:
+        prepared_state = replace(
+            state_record,
+            run_id=run_id,
+            state=TaskLifecycleState.PENDING,
+            updated_at=_utc_timestamp(),
+            branch=current_status.branch,
+            head_sha=current_status.head_sha,
+            reason=assessment.reason,
+            allowlist=task_snapshot.allowlist,
+            validation_commands=task_snapshot.validation_commands,
+        )
+        save_task_state(prepared_state, root=root_path)
+        prepared_receipt = None
     supersede_scope_expansion_proposal(task_id, root_path)
 
     return TaskRecoveryResult(
@@ -353,9 +401,10 @@ def prepare_task_retry(
         archived_task_run_path=str(backup_path / f"task-run-{_normalize_task_id(task_id)}"),
         prepared_state=prepared_state,
         prepared_receipt=prepared_receipt,
-        codex_skipped=True,
+        codex_skipped=assessment.recovery_mode == DIRTY_IMPLEMENTATION_RESUME,
         prepared=True,
         already_prepared=False,
+        recovery_mode=assessment.recovery_mode,
         reason=assessment.reason,
     )
 
@@ -514,6 +563,8 @@ def _safe_timestamp_component(timestamp: str) -> str:
 
 
 __all__ = [
+    "CLEAN_RESTART",
+    "DIRTY_IMPLEMENTATION_RESUME",
     "TaskRecoveryAssessment",
     "TaskRecoveryResult",
     "assess_task_recovery",

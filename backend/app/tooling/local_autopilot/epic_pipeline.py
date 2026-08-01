@@ -410,6 +410,18 @@ class EpicPipeline:
 
             expected_required_commands = self._required_check_commands(epic_manifest)
             required_check_results = self._run_required_checks(epic_manifest, command_results, cancel_event=cancel_event)
+            command_results.extend(required_check_results)
+            if any(result.status != "PASS" for result in required_check_results):
+                return self._finalize_failure(
+                    current_run,
+                    epic_id=epic_id,
+                    branch_name=branch_name,
+                    task_ids=tuple(task_ids),
+                    task_results=tuple(task_results),
+                    command_results=tuple(command_results),
+                    reason="required checks failed",
+                    activation_commit_sha=activation_commit_sha,
+                )
             if len(required_check_results) != len(expected_required_commands):
                 return self._finalize_failure(
                     current_run,
@@ -422,18 +434,6 @@ class EpicPipeline:
                         "required checks results count does not match the epic manifest: "
                         f"declared={len(expected_required_commands)} actual={len(required_check_results)}"
                     ),
-                    activation_commit_sha=activation_commit_sha,
-                )
-            command_results.extend(required_check_results)
-            if any(result.status != "PASS" for result in required_check_results):
-                return self._finalize_failure(
-                    current_run,
-                    epic_id=epic_id,
-                    branch_name=branch_name,
-                    task_ids=tuple(task_ids),
-                    task_results=tuple(task_results),
-                    command_results=tuple(command_results),
-                    reason="required checks failed",
                     activation_commit_sha=activation_commit_sha,
                 )
 
@@ -679,8 +679,6 @@ class EpicPipeline:
                     heartbeat_seconds=0,
                 )
             results.append(self._command_result_from_process(result))
-            if result.status != "PASS":
-                break
         return tuple(results)
 
     def _verify_task_evidence(
