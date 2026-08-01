@@ -81,6 +81,12 @@ class SimulatedShell:
                 return self._result(command, status="FAIL", exit_code=1)
             return self._result(command, stdout=(self.python_executable,))
 
+        if command == ("git", "remote", "get-url", "origin"):
+            return self._result(command, stdout=("https://example.invalid/repo.git",))
+
+        if command == ("git", "ls-remote", "--exit-code", "origin", "HEAD"):
+            return self._result(command, stdout=(f"{self.state.base_sha}\tHEAD",))
+
         if command == ("git", "status", "--porcelain=v1", "--branch", "--untracked-files=all"):
             return self._status_result(command)
 
@@ -142,6 +148,10 @@ class SimulatedShell:
                 return self._result(command)
 
         if command == ("git", "merge", "--ff-only", "master"):
+            self.state.head_sha = self.state.base_sha
+            return self._result(command)
+
+        if command == ("git", "merge", "--no-edit", "master"):
             self.state.head_sha = self.state.base_sha
             return self._result(command)
 
@@ -375,6 +385,9 @@ class SimulatedShell:
         if command[:2] == (self.python_executable, "-m") and "pytest" in command:
             return self._result(command, stdout=("ok",))
 
+        if command == (self.python_executable, "--version"):
+            return self._result(command, stdout=("Python 3.11.8",))
+
         if command[:3] == (self.python_executable, "-m", "backend.app.tooling.agent_task_finalize"):
             return self._result(command, stdout=("status: PASS",))
 
@@ -599,6 +612,10 @@ def _config() -> AutopilotConfig:
         max_repair_cycles=2,
         max_tasks_per_run=20,
         command_timeout_seconds=180,
+        push_timeout_seconds=1200,
+        pre_push_pytest_timeout_seconds=900,
+        ci_pytest_timeout_seconds=900,
+        hook_timeout_buffer_seconds=120,
         codex_timeout_seconds=3600,
         closure_mode="pull_request",
     )
@@ -820,7 +837,7 @@ def test_milestone_pipeline_fails_when_waiting_pr_is_closed_without_merge(tmp_pa
     "scenario, expected_status, expected_reason",
     [
         ({"invalid_codex_json": True}, RunStatus.FAILED, "AUTOPILOT_RESULT_JSON"),
-        ({"scope_drift_after_codex": True, "dirty_paths": ("backend/other.py",)}, RunStatus.FAILED, "unexpected paths"),
+        ({"scope_drift_after_codex": True, "dirty_paths": ("backend/other.py",)}, RunStatus.BLOCKED, "scope expansion approval required"),
         ({"diff_checks": ["FAIL", "PASS"]}, RunStatus.COMPLETED, None),
         ({"commit_fail": True}, RunStatus.FAILED, "git commit failed"),
         ({"codex_cli_ok": False}, RunStatus.FAILED, "codex CLI is missing"),

@@ -103,13 +103,14 @@ class GitHubAdapter:
                 return pr
         return None
 
-    def create_draft_pr(
+    def create_pr(
         self,
         base: str,
         head: str,
         title: str,
         body: str,
         *,
+        draft: bool,
         timeout_seconds: int = 120,
     ) -> PullRequestInfo:
         executable = resolve_github_cli_executable()
@@ -118,8 +119,8 @@ class GitHubAdapter:
         existing = self.find_pr(base, head, timeout_seconds=min(timeout_seconds, 30))
         if existing is not None:
             return existing
-        result = self._run(
-            [
+        if draft:
+            argv = [
                 executable,
                 "pr",
                 "create",
@@ -132,7 +133,23 @@ class GitHubAdapter:
                 title,
                 "--body",
                 body,
-            ],
+            ]
+        else:
+            argv = [
+                executable,
+                "pr",
+                "create",
+                "--base",
+                base,
+                "--head",
+                head,
+                "--title",
+                title,
+                "--body",
+                body,
+            ]
+        result = self._run(
+            argv,
             cwd=self.root,
             timeout_seconds=timeout_seconds,
         )
@@ -142,6 +159,17 @@ class GitHubAdapter:
         if created is None:
             raise RuntimeError("created pull request could not be verified")
         return created
+
+    def create_draft_pr(
+        self,
+        base: str,
+        head: str,
+        title: str,
+        body: str,
+        *,
+        timeout_seconds: int = 120,
+    ) -> PullRequestInfo:
+        return self.create_pr(base, head, title, body, draft=True, timeout_seconds=timeout_seconds)
 
     def get_pr_status(self, number: int, *, timeout_seconds: int = 30) -> PullRequestInfo | None:
         if number <= 0:
@@ -244,6 +272,27 @@ def create_draft_pr(
     )
 
 
+def create_pr(
+    base: str,
+    head: str,
+    title: str,
+    body: str,
+    *,
+    root: Path | str = ROOT,
+    draft: bool,
+    timeout_seconds: int = 120,
+    process_runner_fn: Callable[..., process_runner.ProcessResult] = process_runner.run_process,
+) -> PullRequestInfo:
+    return GitHubAdapter(root, process_runner_fn=process_runner_fn).create_pr(
+        base,
+        head,
+        title,
+        body,
+        draft=draft,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def get_pr_status(
     number: int,
     *,
@@ -330,6 +379,7 @@ def _pull_request_from_json(payload: Any) -> PullRequestInfo | None:
 __all__ = [
     "GitHubAdapter",
     "GitHubAuthResult",
+    "create_pr",
     "create_draft_pr",
     "find_pr",
     "get_pr_status",

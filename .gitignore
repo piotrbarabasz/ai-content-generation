@@ -39,6 +39,7 @@ outputs/
 artifacts/
 tmp/
 temp/
+.tmp/
 *.mp4
 *.mov
 *.wav

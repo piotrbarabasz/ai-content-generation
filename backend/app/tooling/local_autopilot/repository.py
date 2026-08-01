@@ -11,6 +11,7 @@ from . import process_runner
 
 ROOT = Path(__file__).resolve().parents[4]
 FORBIDDEN_GIT_COMMANDS = {"rebase", "stash", "reset"}
+BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,249}$")
 TEXT_SUFFIXES = {".txt", ".md", ".py", ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".ps1", ".cmd", ".bat"}
 
 
@@ -48,7 +49,7 @@ class Repository:
             if index == 0 and part == "git":
                 continue
             if part == "merge":
-                if not _is_allowed_ff_only_merge(args):
+                if not (_is_allowed_ff_only_merge(args) or _is_allowed_no_edit_merge(args)):
                     raise ValueError("forbidden git command: merge")
                 continue
             if part in FORBIDDEN_GIT_COMMANDS:
@@ -83,17 +84,47 @@ class Repository:
             raise RuntimeError("cannot resolve HEAD")
         return result.stdout_lines[0].strip()
 
+    def validate_remote(
+        self,
+        remote: str = "origin",
+        *,
+        timeout_seconds: int = 20,
+        probe_timeout_seconds: int | None = None,
+    ) -> str:
+        normalized_remote = remote.strip()
+        if not normalized_remote:
+            raise ValueError("remote must be a non-empty string")
+        result = self._git("git", "remote", "get-url", normalized_remote, timeout_seconds=timeout_seconds)
+        if result.status != "PASS" or not result.stdout_lines:
+            raise RuntimeError(_result_detail(result) or f"{normalized_remote} remote is missing")
+        remote_url = result.stdout_lines[0].strip()
+        if not remote_url:
+            raise RuntimeError(f"{normalized_remote} remote is missing")
+        if probe_timeout_seconds is not None:
+            probe = self._git(
+                "git",
+                "ls-remote",
+                "--exit-code",
+                normalized_remote,
+                "HEAD",
+                timeout_seconds=probe_timeout_seconds,
+            )
+            if probe.status != "PASS":
+                raise RuntimeError(_result_detail(probe) or f"{normalized_remote} remote HEAD probe failed")
+        return remote_url
+
     def branch_exists(self, branch: str) -> bool:
         result = self._git("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
         return result.status == "PASS"
 
-    def switch_to_master_and_pull(self, base_branch: str = "master", remote: str = "origin") -> None:
-        switch_result = self._git("git", "switch", base_branch)
+    def switch_to_master_and_pull(self, base_branch: str = "master", remote: str = "origin", *, timeout_seconds: int = 20) -> None:
+        _validate_branch_name(base_branch, field_name="base_branch")
+        switch_result = self._git("git", "switch", base_branch, timeout_seconds=timeout_seconds)
         if switch_result.status != "PASS":
-            raise RuntimeError(f"git switch {base_branch} failed")
-        pull_result = self._git("git", "pull", "--ff-only", remote, base_branch)
+            raise RuntimeError(_result_detail(switch_result) or f"git switch {base_branch} failed")
+        pull_result = self._git("git", "pull", "--ff-only", remote, base_branch, timeout_seconds=timeout_seconds)
         if pull_result.status != "PASS":
-            raise RuntimeError(f"git pull --ff-only {remote} {base_branch} failed")
+            raise RuntimeError(_result_detail(pull_result) or f"git pull --ff-only {remote} {base_branch} failed")
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         result = self._git("git", "merge-base", "--is-ancestor", ancestor, descendant)
@@ -149,16 +180,39 @@ class Repository:
         return tuple(line.replace("\\", "/").strip() for line in result.stdout_lines if line.strip())
 
     def merge_ff_only(self, branch: str) -> None:
+        _validate_branch_name(branch)
         result = self._git("git", "merge", "--ff-only", branch)
         if result.status != "PASS":
-            raise RuntimeError(f"git merge --ff-only {branch} failed")
+            raise RuntimeError(_result_detail(result) or f"git merge --ff-only {branch} failed")
+
+    def merge_base_into_active_branch(self, branch: str, base_branch: str, *, timeout_seconds: int = 20) -> None:
+        _validate_branch_name(branch)
+        _validate_branch_name(base_branch, field_name="base_branch")
+        current = self.require_clean_tree()
+        if current.branch != branch:
+            raise RuntimeError(f"current branch {current.branch!r} does not match {branch!r}")
+        switch_result = self._git("git", "switch", base_branch, timeout_seconds=timeout_seconds)
+        if switch_result.status != "PASS":
+            raise RuntimeError(_result_detail(switch_result) or f"git switch {base_branch} failed")
+        pull_result = self._git("git", "pull", "--ff-only", "origin", base_branch, timeout_seconds=timeout_seconds)
+        if pull_result.status != "PASS":
+            raise RuntimeError(_result_detail(pull_result) or f"git pull --ff-only origin {base_branch} failed")
+        switch_back = self._git("git", "switch", branch, timeout_seconds=timeout_seconds)
+        if switch_back.status != "PASS":
+            raise RuntimeError(_result_detail(switch_back) or f"git switch {branch} failed")
+        merge_result = self._git("git", "merge", "--no-edit", base_branch, timeout_seconds=timeout_seconds)
+        if merge_result.status != "PASS":
+            raise RuntimeError(_result_detail(merge_result) or f"git merge --no-edit {base_branch} failed")
 
     def sync_branch_with_base(self, branch: str, *, base_branch: str = "master", base_head_sha: str | None = None) -> None:
+        _validate_branch_name(branch)
+        _validate_branch_name(base_branch, field_name="base_branch")
         current = self.status()
         if current.branch != branch:
             raise RuntimeError(f"current branch {current.branch!r} does not match {branch!r}")
         branch_head_sha = self.head_sha()
-        resolved_base_head = base_head_sha or self._git("git", "rev-parse", base_branch).stdout_lines[0].strip()
+        resolved_base_result = self._git("git", "rev-parse", base_branch)
+        resolved_base_head = base_head_sha or (resolved_base_result.stdout_lines[0].strip() if resolved_base_result.status == "PASS" and resolved_base_result.stdout_lines else "")
         if not resolved_base_head:
             raise RuntimeError(f"cannot resolve {base_branch} head")
         if self.is_ancestor(branch_head_sha, resolved_base_head):
@@ -194,8 +248,10 @@ class Repository:
             raise ValueError("commit message must be a non-empty string")
         return self._git("git", "commit", "-m", message.strip())
 
-    def push(self, branch: str, remote: str = "origin") -> process_runner.ProcessResult:
-        return self._git("git", "push", "-u", remote, branch)
+    def push(self, branch: str, remote: str = "origin", *, timeout_seconds: int = 20) -> process_runner.ProcessResult:
+        _validate_branch_name(branch)
+        _validate_branch_name(remote, field_name="remote")
+        return self._git("git", "push", "-u", remote, branch, timeout_seconds=timeout_seconds)
 
     def normalize_allowlist_eof(self, text_paths: Sequence[Path | str]) -> list[str]:
         changed: list[str] = []
@@ -286,6 +342,33 @@ def _append_unique(bucket: list[str], value: str) -> None:
 def _is_allowed_ff_only_merge(args: Sequence[str]) -> bool:
     parts = tuple(args)
     return len(parts) == 4 and parts[:3] == ("git", "merge", "--ff-only") and bool(parts[3].strip())
+
+
+def _is_allowed_no_edit_merge(args: Sequence[str]) -> bool:
+    parts = tuple(args)
+    return len(parts) == 4 and parts[:3] == ("git", "merge", "--no-edit") and bool(parts[3].strip())
+
+
+def _validate_branch_name(branch: str, *, field_name: str = "branch") -> str:
+    if not isinstance(branch, str) or not branch.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    normalized = branch.strip()
+    if not BRANCH_NAME_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{field_name} is not a valid git branch name")
+    forbidden = ("..", "//", "@{", "\\", " ", "\t", "\n", "\r", "~", "^", ":", "?", "*", "[", "]")
+    if normalized.startswith("-") or normalized.endswith("/") or normalized.endswith(".") or normalized.endswith(".lock"):
+        raise ValueError(f"{field_name} is not a valid git branch name")
+    if any(token in normalized for token in forbidden):
+        raise ValueError(f"{field_name} is not a valid git branch name")
+    return normalized
+
+
+def _result_detail(result: process_runner.ProcessResult) -> str | None:
+    for line in (*result.stderr_lines, *result.stdout_lines):
+        cleaned = line.strip()
+        if cleaned:
+            return cleaned
+    return None
 
 
 __all__ = ["GitStatus", "Repository", "ROOT"]

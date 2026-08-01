@@ -400,6 +400,7 @@ def _progress_for_status(status: RunStatus) -> int:
         RunStatus.PR_CREATING: 90,
         RunStatus.WAITING_FOR_MERGE: 95,
         RunStatus.CLOSING: 98,
+        RunStatus.PAUSED: 90,
         RunStatus.COMPLETED: 100,
         RunStatus.BLOCKED: 100,
         RunStatus.FAILED: 100,

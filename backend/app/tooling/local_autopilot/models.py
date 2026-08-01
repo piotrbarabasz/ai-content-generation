@@ -35,6 +35,7 @@ class RunStatus(str, Enum):
     PR_CREATING = "pr_creating"
     WAITING_FOR_MERGE = "waiting_for_merge"
     CLOSING = "closing"
+    PAUSED = "paused"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     FAILED = "failed"
@@ -93,6 +94,90 @@ class PullRequestInfo:
 
 
 @dataclass(frozen=True)
+class ScopeExpansionProposal:
+    schema_version: int
+    proposal_id: str
+    run_id: str
+    task_id: str
+    epic_id: str
+    branch: str
+    head_sha: str
+    baseline_head_sha: str
+    current_allowlist: tuple[str, ...] = ()
+    files_touched: tuple[str, ...] = ()
+    unexpected_paths: tuple[str, ...] = ()
+    codex_summary: str = ""
+    codex_notes: tuple[str, ...] = ()
+    created_at: str = ""
+    status: str = "pending"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema_version, int) or isinstance(self.schema_version, bool) or self.schema_version <= 0:
+            raise ValueError("schema_version must be a positive integer")
+        _validate_run_id(self.proposal_id)
+        _validate_run_id(self.run_id)
+        _validate_task_id(self.task_id)
+        _validate_scope_id(ScopeType.EPIC, self.epic_id)
+        _validate_non_empty_text("branch", self.branch)
+        _validate_commit_sha(self.head_sha)
+        _validate_commit_sha(self.baseline_head_sha)
+        for field_name, values in {
+            "current_allowlist": self.current_allowlist,
+            "files_touched": self.files_touched,
+            "unexpected_paths": self.unexpected_paths,
+            "codex_notes": self.codex_notes,
+        }.items():
+            if isinstance(values, (str, bytes, bytearray)):
+                raise ValueError(f"{field_name} must be a sequence of strings")
+            for item in values:
+                _validate_non_empty_text(field_name, str(item))
+        if self.codex_summary:
+            _validate_non_empty_text("codex_summary", self.codex_summary)
+        _validate_non_empty_text("created_at", self.created_at)
+        if self.status not in {"pending", "approved", "rejected", "superseded"}:
+            raise ValueError("status must be one of: pending, approved, rejected, superseded")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "proposal_id": self.proposal_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "epic_id": self.epic_id,
+            "branch": self.branch,
+            "head_sha": self.head_sha,
+            "baseline_head_sha": self.baseline_head_sha,
+            "current_allowlist": list(self.current_allowlist),
+            "files_touched": list(self.files_touched),
+            "unexpected_paths": list(self.unexpected_paths),
+            "codex_summary": self.codex_summary,
+            "codex_notes": list(self.codex_notes),
+            "created_at": self.created_at,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "ScopeExpansionProposal":
+        return cls(
+            schema_version=int(payload.get("schema_version", 1)),
+            proposal_id=str(payload.get("proposal_id") or ""),
+            run_id=str(payload.get("run_id") or ""),
+            task_id=str(payload.get("task_id") or ""),
+            epic_id=str(payload.get("epic_id") or ""),
+            branch=str(payload.get("branch") or ""),
+            head_sha=str(payload.get("head_sha") or ""),
+            baseline_head_sha=str(payload.get("baseline_head_sha") or ""),
+            current_allowlist=tuple(str(item) for item in payload.get("current_allowlist", ()) or ()),
+            files_touched=tuple(str(item) for item in payload.get("files_touched", ()) or ()),
+            unexpected_paths=tuple(str(item) for item in payload.get("unexpected_paths", ()) or ()),
+            codex_summary=str(payload.get("codex_summary") or ""),
+            codex_notes=tuple(str(item) for item in payload.get("codex_notes", ()) or ()),
+            created_at=str(payload.get("created_at") or ""),
+            status=str(payload.get("status") or "pending"),
+        )
+
+
+@dataclass(frozen=True)
 class TaskResult:
     task_id: str
     status: RunStatus
@@ -122,6 +207,8 @@ class AutopilotRun:
     task_results: tuple[TaskResult, ...] = ()
     command_results: tuple[CommandResult, ...] = ()
     pull_request: PullRequestInfo | None = None
+    implementation_pull_request: PullRequestInfo | None = None
+    closure_pull_request: PullRequestInfo | None = None
     last_error: str | None = None
 
     def __post_init__(self) -> None:
@@ -193,6 +280,7 @@ __all__ = [
     "AutopilotRun",
     "CommandResult",
     "PullRequestInfo",
+    "ScopeExpansionProposal",
     "RunMode",
     "RunStatus",
     "ScopeType",

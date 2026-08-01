@@ -15,16 +15,20 @@ from app.tooling import task_consistency
 from . import process_runner, repository as repository_module
 from .codex_adapter import CodexAdapter
 from .config import AutopilotConfig, DEFAULT_AUTOPILOT_CONFIG_PATH, load_autopilot_config
+from .recovery import prepare_task_retry
+from .scope_proposal import build_scope_expansion_proposal, build_suggested_metadata_change, save_scope_expansion_proposal
 from .models import AutopilotRun, CommandResult, RunStatus, TaskResult
 from .task_state_machine import (
     TASK_RECEIPT_DIR,
     TASK_STATE_DIR,
+    TERMINAL_STATES,
     TaskLifecycleState,
     TaskReceiptRecord,
     TaskReceiptStage,
     TaskStateMachine,
     TaskStateMachineError,
     load_task_receipt,
+    load_task_state,
     save_task_receipt,
     save_task_state,
     task_receipt_path,
@@ -126,6 +130,19 @@ class TaskPipeline:
                     reason=str(checklist_blocker),
                     attempts=0,
                 )
+
+            existing_state = load_task_state(task_id, root=self.root)
+            if existing_state is not None and existing_state.state in TERMINAL_STATES:
+                recovery_result = prepare_task_retry(task_id, run.run_id, self.root, repository=self.repository)
+                if not recovery_result.assessment.can_resume:
+                    return self._blocked_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason=recovery_result.reason or recovery_result.assessment.reason,
+                        attempts=0,
+                    )
 
             baseline_file = self._default_baseline_path(task_id)
             reconcile = self.state_machine.reconcile(
@@ -270,30 +287,57 @@ class TaskPipeline:
                         attempts=attempts,
                     )
 
-                scope_check = self._check_scope_drift(
-                    _load_json_mapping(baseline_file),
-                    task_context.allowlist,
-                )
-                if scope_check is not None:
+                baseline_payload = _load_json_mapping(baseline_file)
+                current_status = self.repository.status()
+                unexpected_paths = self._unexpected_scope_paths(current_status, task_context.allowlist)
+                if unexpected_paths:
+                    scope_summary = self._scope_expansion_reason(task_id, unexpected_paths, task_context.allowlist)
+                    proposal = build_scope_expansion_proposal(
+                        proposal_id=f"{task_id}-{run.run_id}",
+                        run_id=run.run_id,
+                        task_id=task_id,
+                        epic_id=task_context.epic_id,
+                        branch=current_status.branch,
+                        head_sha=current_status.head_sha,
+                        baseline_head_sha=str(baseline_payload.get("head_sha") or current_status.head_sha or ""),
+                        current_allowlist=task_context.allowlist,
+                        files_touched=touched_files,
+                        unexpected_paths=unexpected_paths,
+                        codex_summary=str(
+                            codex_result.result_json.get("summary")
+                            or codex_result.result_json.get("reason")
+                            or ""
+                        ),
+                        codex_notes=tuple(
+                            str(item)
+                            for item in (
+                                codex_result.result_json.get("notes")
+                                or ([codex_result.result_json.get("reason")] if codex_result.result_json.get("reason") else [])
+                                or ([codex_result.result_json.get("blocked_reason")] if codex_result.result_json.get("blocked_reason") else [])
+                            )
+                            if item is not None
+                        ),
+                    )
+                    save_scope_expansion_proposal(proposal, root=self.root)
                     receipt = self._write_receipt(
                         task_context=task_context,
                         run_id=run.run_id,
-                        state=TaskLifecycleState.FAILED,
-                        summary=str(scope_check),
+                        state=TaskLifecycleState.BLOCKED,
+                        summary=scope_summary,
                         files_touched=touched_files,
-                        notes=(str(scope_check),),
-                        agent_outcome=outcome or "failed",
+                        notes=(scope_summary, build_suggested_metadata_change(task_context.allowlist, unexpected_paths)),
+                        agent_outcome="blocked",
                     )
                     self.state_machine.transition(
                         task_id=task_id,
                         run_id=run.run_id,
-                        state=TaskLifecycleState.FAILED,
+                        state=TaskLifecycleState.BLOCKED,
                         tasks_path=task_context.tasks_path,
                         baseline_path=baseline_file,
                         reason=receipt.summary,
                         receipt=receipt,
                     )
-                    return self._failed_result(
+                    return self._blocked_result(
                         run,
                         task_id,
                         task_context=task_context,
@@ -301,6 +345,9 @@ class TaskPipeline:
                         reason=receipt.summary,
                         attempts=attempts,
                     )
+                baseline_check = self._baseline_head_mismatch_reason(baseline_payload, current_status.head_sha)
+                if baseline_check is not None:
+                    raise TaskPipelineError(baseline_check)
 
                 receipt = self._write_receipt(
                     task_context=task_context,
@@ -485,6 +532,16 @@ class TaskPipeline:
                     current_state = TaskLifecycleState.REVIEWED
 
             if current_state in {TaskLifecycleState.REVIEWED, TaskLifecycleState.CLOSED, TaskLifecycleState.COMMITTED}:
+                if current_state == TaskLifecycleState.REVIEWED and not self.config.auto_commit:
+                    return self._paused_result(
+                        run,
+                        task_id,
+                        task_context=task_context,
+                        command_results=command_results,
+                        reason="task validated and ready for human commit",
+                        attempts=attempts,
+                        baseline_path=str(baseline_file),
+                    )
                 current_text = task_context.tasks_path.read_text(encoding="utf-8")
                 if current_state == TaskLifecycleState.REVIEWED:
                     updated_text, checkbox_before, checkbox_after = self._close_task_checkbox(task_context, current_text)
@@ -778,16 +835,38 @@ class TaskPipeline:
             return TaskPipelineError("required checklist items are incomplete:\n" + "\n".join(violations))
         return None
 
-    def _check_scope_drift(self, baseline: dict[str, Any], allowlist: Sequence[str]) -> TaskPipelineError | None:
-        current = self.repository.status()
-        current_paths = sorted(set(current.tracked + current.staged + current.untracked + current.deleted + tuple(old for old, _ in current.renamed) + tuple(new for _, new in current.renamed)))
-        unexpected = [path for path in current_paths if not _path_allowed(path, allowlist)]
-        if unexpected:
-            return TaskPipelineError(f"unexpected paths outside allowlist: {', '.join(unexpected)}")
+    def _unexpected_scope_paths(self, current: repository_module.GitStatus, allowlist: Sequence[str]) -> tuple[str, ...]:
+        current_paths = sorted(
+            set(
+                current.tracked
+                + current.staged
+                + current.untracked
+                + current.deleted
+                + tuple(old for old, _ in current.renamed)
+                + tuple(new for _, new in current.renamed)
+            )
+        )
+        return tuple(path for path in current_paths if not _path_allowed(path, allowlist))
+
+    def _baseline_head_mismatch_reason(self, baseline: dict[str, Any], current_head_sha: str) -> str | None:
         baseline_head = str(baseline.get("head_sha") or "")
-        if baseline_head and current.head_sha and baseline_head != current.head_sha:
-            return TaskPipelineError(f"head SHA changed from baseline {baseline_head!r} to {current.head_sha!r}")
+        if baseline_head and current_head_sha and baseline_head != current_head_sha:
+            return f"head SHA changed from baseline {baseline_head!r} to {current_head_sha!r}"
         return None
+
+    def _scope_expansion_reason(self, task_id: str, unexpected_paths: Sequence[str], allowlist: Sequence[str]) -> str:
+        unexpected_block = "\n".join(f"- {path}" for path in unexpected_paths) or "- none"
+        allowlist_block = "\n".join(f"- {path}" for path in allowlist) or "- none"
+        return "\n".join(
+            [
+                f"scope expansion approval required for {task_id}:",
+                "unexpected paths:",
+                unexpected_block,
+                "declared allowlist:",
+                allowlist_block,
+                "implementation was preserved; no files were discarded",
+            ]
+        )
 
     def _run_validation_commands(
         self,
@@ -948,7 +1027,10 @@ class TaskPipeline:
         task_result: TaskResult,
         last_error: str | None,
     ) -> AutopilotRun:
-        task_results = tuple([*run.task_results, task_result])
+        if run.task_results and run.task_results[-1].task_id == task_result.task_id:
+            task_results = (*run.task_results[:-1], task_result)
+        else:
+            task_results = (*run.task_results, task_result)
         return replace(
             run,
             status=status,
@@ -1032,6 +1114,45 @@ class TaskPipeline:
             baseline_path="",
             allowlist=(),
             validation_commands=(),
+            command_results=tuple(command_results),
+            reason=reason,
+        )
+
+    def _paused_result(
+        self,
+        run: AutopilotRun,
+        task_id: str,
+        command_results: Sequence[CommandResult],
+        *,
+        reason: str,
+        attempts: int,
+        task_context: TaskContext | None = None,
+        baseline_path: str = "",
+    ) -> TaskPipelineResult:
+        task_result = TaskResult(
+            task_id=task_id,
+            status=RunStatus.PAUSED,
+            command_results=tuple(command_results),
+            title=task_context.task_title if task_context is not None else None,
+        )
+        updated_run = self._update_run(
+            run,
+            status=RunStatus.PAUSED,
+            epic_id=run.epic_id,
+            branch_name=run.branch_name,
+            current_task_id=task_id,
+            task_result=task_result,
+            last_error=reason,
+        )
+        save_run_state(updated_run, root=self.root)
+        return TaskPipelineResult(
+            status=RunStatus.PAUSED,
+            run=updated_run,
+            task_result=task_result,
+            attempts=attempts,
+            baseline_path=baseline_path,
+            allowlist=tuple(task_context.allowlist if task_context is not None else ()),
+            validation_commands=tuple(task_context.validation_commands if task_context is not None else ()),
             command_results=tuple(command_results),
             reason=reason,
         )

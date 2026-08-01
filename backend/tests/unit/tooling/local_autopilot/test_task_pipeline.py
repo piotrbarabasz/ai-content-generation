@@ -10,10 +10,12 @@ import pytest
 
 from app.tooling import agent_task_preflight as preflight
 from app.tooling.local_autopilot.config import AutopilotConfig
+from app.tooling.local_autopilot import recovery as recovery_module
 from app.tooling.local_autopilot.models import AutopilotRequest, AutopilotRun, CommandResult, RunMode, RunStatus, ScopeType
 from app.tooling.local_autopilot.process_runner import ProcessResult
+from app.tooling.local_autopilot.scope_proposal import load_scope_expansion_proposal
 from app.tooling.local_autopilot.state_store import load_run_state
-from app.tooling.local_autopilot.task_state_machine import load_task_receipt
+from app.tooling.local_autopilot.task_state_machine import TaskLifecycleState, TaskReceiptRecord, TaskStateRecord, load_task_receipt, load_task_state, save_task_receipt, save_task_state
 from app.tooling.local_autopilot.task_pipeline import TaskPipeline, TaskPipelineError, _parse_preflight_json_document
 
 
@@ -370,7 +372,7 @@ def _setup_repo(
     return implementation_file, test_file, feature_dir / "tasks.md"
 
 
-def _make_run(tmp_path: Path) -> AutopilotRun:
+def _make_run(tmp_path: Path, *, run_id: str = "run-045") -> AutopilotRun:
     request = AutopilotRequest(
         scope_type=ScopeType.EPIC,
         scope_id="E001",
@@ -378,7 +380,7 @@ def _make_run(tmp_path: Path) -> AutopilotRun:
         repo_path=str(tmp_path),
     )
     return AutopilotRun(
-        run_id="run-045",
+        run_id=run_id,
         request=request,
         status=RunStatus.PREFLIGHT,
         created_at="2026-07-23T12:00:00Z",
@@ -388,16 +390,26 @@ def _make_run(tmp_path: Path) -> AutopilotRun:
     )
 
 
-def _config(max_repair_cycles: int = 2) -> AutopilotConfig:
+def _config(
+    max_repair_cycles: int = 2,
+    *,
+    auto_commit: bool = True,
+    auto_push: bool = True,
+    create_draft_pr: bool = True,
+) -> AutopilotConfig:
     return AutopilotConfig(
-        auto_commit=True,
-        auto_push=True,
-        create_draft_pr=True,
+        auto_commit=auto_commit,
+        auto_push=auto_push,
+        create_draft_pr=create_draft_pr,
         auto_merge=False,
         deploy=False,
         max_repair_cycles=max_repair_cycles,
         max_tasks_per_run=20,
         command_timeout_seconds=180,
+        push_timeout_seconds=1200,
+        pre_push_pytest_timeout_seconds=900,
+        ci_pytest_timeout_seconds=900,
+        hook_timeout_buffer_seconds=120,
         codex_timeout_seconds=3600,
         closure_mode="pull_request",
     )
@@ -442,6 +454,93 @@ def _append_second_task_block(tasks_text: str, task_id: str = "T046") -> str:
     return f"{text}{block}"
 
 
+def _write_terminal_task_attempt(
+    tmp_path: Path,
+    *,
+    task_id: str = "T045",
+    run_id: str = "run-045",
+    terminal_state: TaskLifecycleState = TaskLifecycleState.FAILED,
+    branch: str = "feat/local-autopilot-ui",
+    head_sha: str = "a" * 40,
+    baseline_head_sha: str | None = None,
+    dirty_files: tuple[str, ...] = ("backend/app/tooling/local_autopilot/task_pipeline.py", "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py"),
+    include_tasks_md_dirty: bool = False,
+) -> tuple[Path, Path]:
+    _setup_repo(tmp_path)
+    tasks_path = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+    runtime = tmp_path / ".specify" / "runtime" / "task-runs" / task_id
+    baseline_path = runtime / "baseline.json"
+    effective_baseline_head = baseline_head_sha or head_sha
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "task": task_id,
+                "epic": "E001",
+                "branch": branch,
+                "head_sha": effective_baseline_head,
+                "tracked": [],
+                "staged": [],
+                "untracked": [],
+                "deleted": [],
+                "renamed": [],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    state = TaskStateRecord(
+        schema_version=1,
+        run_id=run_id,
+        task_id=task_id,
+        state=terminal_state,
+        updated_at="2026-07-23T12:00:00Z",
+        branch=branch,
+        head_sha=head_sha,
+        baseline_path=str(baseline_path),
+        baseline_branch=branch,
+        baseline_head_sha=effective_baseline_head,
+        tasks_path=str(tasks_path),
+        feature_dir=str(tasks_path.parent),
+        allowlist=("backend/app/tooling/local_autopilot/task_pipeline.py", "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py"),
+        validation_commands=("python -m pytest backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",),
+        task_line=1,
+        reason="terminal task attempt",
+    )
+    receipt = TaskReceiptRecord(
+        schema_version=1,
+        run_id=run_id,
+        task_id=task_id,
+        updated_at="2026-07-23T12:00:00Z",
+        state=terminal_state,
+        agent_outcome="blocked" if terminal_state is TaskLifecycleState.BLOCKED else "failed",
+        summary="terminal task attempt",
+        files_touched=("backend/app/tooling/local_autopilot/task_pipeline.py", "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py"),
+        notes=("terminal attempt",),
+        validation=(),
+        commit_sha="",
+        stages=(),
+        review_verdict="",
+        safe_to_close=False,
+        closure_checkbox_before="",
+        closure_checkbox_after="",
+        closure_task_line=0,
+    )
+    save_task_state(state, root=tmp_path)
+    save_task_receipt(receipt, root=tmp_path)
+    if include_tasks_md_dirty:
+        tasks_path.write_text(tasks_path.read_text(encoding="utf-8") + "\n# dirty\n", encoding="utf-8")
+    for relative_path in dirty_files:
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target.write_text(target.read_text(encoding="utf-8") + "\n# dirty\n", encoding="utf-8")
+        else:
+            target.write_text("# dirty\n", encoding="utf-8")
+    (tmp_path / ".specify" / "runtime" / "active-epic").write_text("E001\n", encoding="utf-8")
+    return state, receipt
+
+
 def test_run_task_happy_path_commits_and_saves_state(tmp_path):
     implementation_file, test_file, tasks_file = _setup_repo(tmp_path)
     runner = ScenarioRunner(tmp_path)
@@ -459,6 +558,35 @@ def test_run_task_happy_path_commits_and_saves_state(tmp_path):
     assert any(command[:3] == ("git", "add", "--") for command in runner.calls)
     assert any(command[:2] == ("git", "commit") for command in runner.calls)
     assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+    assert load_scope_expansion_proposal("T045", root=tmp_path) is None
+
+
+def test_run_task_pauses_after_review_when_auto_commit_is_disabled(tmp_path):
+    _, _, tasks_file = _setup_repo(tmp_path)
+    runner = ScenarioRunner(tmp_path)
+    pipeline = TaskPipeline(
+        tmp_path,
+        config=_config(auto_commit=False),
+        process_runner_fn=runner,
+    )
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.PAUSED
+    assert result.task_result.status == RunStatus.PAUSED
+    assert result.reason == "task validated and ready for human commit"
+    assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.REVIEWED
+    receipt = load_task_receipt("T045", root=tmp_path)
+    assert receipt.state == TaskLifecycleState.REVIEWED
+    assert receipt.safe_to_close is True
+    assert receipt.closure_checkbox_before == ""
+    assert receipt.closure_checkbox_after == ""
+    assert receipt.closure_task_line == 0
+    assert tasks_file.read_text(encoding="utf-8").splitlines()[0].startswith("- [ ] T045")
+    assert not any(command[:2] == ("git", "commit") for command in runner.calls)
+    assert not any(command[:2] == ("git", "add") for command in runner.calls)
+    assert not any(command[:3] == ("git", "commit", "-m") for command in runner.calls)
+    assert load_scope_expansion_proposal("T045", root=tmp_path) is None
 
 
 def test_run_task_restores_tasks_md_before_finalizer_and_filters_tasks_md_from_receipt(tmp_path, monkeypatch):
@@ -626,19 +754,42 @@ def test_run_task_fails_when_files_touched_only_tasks_md(tmp_path, monkeypatch):
 
 
 def test_run_task_fails_on_scope_drift(tmp_path):
-    _setup_repo(tmp_path)
+    implementation_file, _, tasks_file = _setup_repo(tmp_path)
+    original_tasks_text = tasks_file.read_text(encoding="utf-8")
     runner = ScenarioRunner(
         tmp_path,
         scope_drift_paths=("backend/other.py",),
+        codex_json={
+            "task_id": "T045",
+            "agent_outcome": "finished",
+            "summary": "Implementation complete.",
+            "files_touched": [implementation_file.relative_to(tmp_path).as_posix()],
+            "notes": ["Implementation complete.", "Touched outside scope"],
+        },
     )
     pipeline = _build_pipeline(tmp_path, runner)
 
     result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
 
-    assert result.status == RunStatus.FAILED
-    assert "unexpected paths outside allowlist" in (result.reason or "")
+    assert result.status == RunStatus.BLOCKED
+    assert "scope expansion approval required for T045" in (result.reason or "")
+    assert "backend/other.py" in (result.reason or "")
+    assert "declared allowlist" in (result.reason or "")
     assert not any(command[:2] == ("git", "commit") for command in runner.calls)
-    assert load_run_state("run-045", root=tmp_path).status == RunStatus.FAILED
+    assert load_run_state("run-045", root=tmp_path).status == RunStatus.BLOCKED
+    assert tasks_file.read_text(encoding="utf-8") == original_tasks_text
+    proposal = load_scope_expansion_proposal("T045", root=tmp_path)
+    assert proposal is not None
+    assert proposal.status == "pending"
+    assert proposal.task_id == "T045"
+    assert proposal.unexpected_paths == ("backend/other.py",)
+    assert proposal.current_allowlist == (
+        "backend/app/tooling/local_autopilot/task_pipeline.py",
+        "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+    )
+    assert proposal.files_touched == (implementation_file.relative_to(tmp_path).as_posix(),)
+    assert proposal.codex_summary == "Implementation complete."
+    assert proposal.codex_notes == ("Implementation complete.", "Touched outside scope")
 
 
 def test_run_task_rejects_checked_checkbox(tmp_path):
@@ -946,6 +1097,212 @@ def test_run_task_stops_before_validation_on_codex_api_error(tmp_path):
     assert not any(command[:2] == ("git", "commit") for command in runner.calls)
     assert tasks_file.read_text(encoding="utf-8") == original_tasks_text
     assert implementation_file.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_run_task_recovery_resumes_terminal_state_without_codex(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    runner = ScenarioRunner(
+        tmp_path,
+        initial_dirty_paths=(
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+        ),
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is True
+    assert assessment.recovery_mode == recovery_module.DIRTY_IMPLEMENTATION_RESUME
+
+    result = pipeline.run_task(_make_run(tmp_path, run_id="run-046"), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.attempts == 0
+    assert result.task_result.status == RunStatus.COMPLETED
+    assert result.task_result.commit_sha == "b" * 40
+    assert load_run_state("run-046", root=tmp_path).status == RunStatus.COMPLETED
+    assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert load_task_receipt("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+    backup_root = tmp_path / ".specify" / "runtime" / "recovery-backups"
+    assert any(path.name.startswith("T045-") for path in backup_root.iterdir())
+
+
+def test_run_task_recovery_restarts_clean_terminal_state_and_reruns_codex(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED, dirty_files=())
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is True
+    assert assessment.recovery_mode == recovery_module.CLEAN_RESTART
+
+    result = pipeline.run_task(_make_run(tmp_path, run_id="run-046"), task_id="T045")
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.attempts == 1
+    assert result.task_result.status == RunStatus.COMPLETED
+    assert result.task_result.commit_sha == "b" * 40
+    assert load_run_state("run-046", root=tmp_path).status == RunStatus.COMPLETED
+    assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert load_task_receipt("T045", root=tmp_path).state == TaskLifecycleState.COMMITTED
+    assert any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+    backup_root = tmp_path / ".specify" / "runtime" / "recovery-backups"
+    assert any(path.name.startswith("T045-") for path in backup_root.iterdir())
+
+
+def test_run_task_recovery_blocks_on_unexpected_path_and_leaves_files_untouched(tmp_path):
+    _write_terminal_task_attempt(
+        tmp_path,
+        terminal_state=TaskLifecycleState.FAILED,
+        dirty_files=("backend/other.py",),
+    )
+    runner = ScenarioRunner(tmp_path, initial_dirty_paths=("backend/other.py",))
+    pipeline = _build_pipeline(tmp_path, runner)
+    unexpected_file = tmp_path / "backend" / "other.py"
+    original_text = unexpected_file.read_text(encoding="utf-8")
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is False
+    assert assessment.recovery_mode == ""
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.BLOCKED
+    assert "unexpected dirty paths" in (result.reason or "")
+    assert unexpected_file.read_text(encoding="utf-8") == original_text
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_recovery_blocks_on_tasks_md_dirty(tmp_path):
+    _write_terminal_task_attempt(
+        tmp_path,
+        terminal_state=TaskLifecycleState.FAILED,
+        dirty_files=("backend/app/tooling/local_autopilot/task_pipeline.py",),
+        include_tasks_md_dirty=True,
+    )
+    runner = ScenarioRunner(
+        tmp_path,
+        initial_dirty_paths=(
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "specs/001-ai-content-studio/tasks.md",
+        ),
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.BLOCKED
+    assert "unexpected dirty paths" in (result.reason or "")
+    assert "tasks.md" in (result.reason or "")
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_recovery_blocks_on_stale_baseline(tmp_path):
+    _write_terminal_task_attempt(
+        tmp_path,
+        terminal_state=TaskLifecycleState.FAILED,
+        baseline_head_sha="c" * 40,
+    )
+    runner = ScenarioRunner(
+        tmp_path,
+        initial_dirty_paths=(
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+        ),
+    )
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    assessment = recovery_module.assess_task_recovery("T045", "run-045", tmp_path, repository=pipeline.repository)
+    assert assessment.can_resume is False
+    assert assessment.requires_baseline_refresh is True
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.BLOCKED
+    assert "baseline head" in (result.reason or "")
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_run_task_recovery_does_not_retry_when_checkbox_is_checked(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    tasks_path = tmp_path / "specs" / "001-ai-content-studio" / "tasks.md"
+    tasks_path.write_text(_replace_task_checkbox(tasks_path.read_text(encoding="utf-8"), "T045", "X"), encoding="utf-8")
+    runner = ScenarioRunner(tmp_path)
+    pipeline = _build_pipeline(tmp_path, runner)
+
+    assessment = recovery_module.assess_task_recovery("T045", "run-046", tmp_path, repository=pipeline.repository)
+
+    assert assessment.can_resume is False
+    assert assessment.recovery_mode == ""
+    assert "task checkbox is [X]" in assessment.reason
+
+    result = pipeline.run_task(_make_run(tmp_path), task_id="T045")
+
+    assert result.status == RunStatus.FAILED
+    assert "must be unchecked" in (result.reason or "")
+    assert not any(Path(command[0]).name.lower().startswith("codex") and "exec" in command and "--help" not in command for command in runner.calls)
+
+
+def test_prepare_task_retry_archives_terminal_state_and_receipt(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    runner = ScenarioRunner(
+        tmp_path,
+        initial_dirty_paths=(
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+        ),
+    )
+    from app.tooling.local_autopilot.repository import Repository
+
+    repo = Repository(tmp_path, process_runner_fn=runner)
+    result = recovery_module.prepare_task_retry("T045", "run-045", tmp_path, repository=repo)
+
+    assert result.prepared is True
+    assert result.codex_skipped is True
+    assert result.backup_path is not None
+    backup_path = Path(result.backup_path)
+    assert (backup_path / "T045-state.json").is_file()
+    assert (backup_path / "T045-receipt.json").is_file()
+    assert (backup_path / "task-run-T045").is_dir()
+    assert load_task_state("T045", root=tmp_path).state == TaskLifecycleState.IMPLEMENTED
+    assert load_task_receipt("T045", root=tmp_path).state == TaskLifecycleState.IMPLEMENTED
+    assert (tmp_path / ".specify" / "runtime" / "task-runs" / "T045" / "baseline.json").is_file()
+
+
+def test_prepare_task_retry_is_idempotent_after_recovery(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    runner = ScenarioRunner(
+        tmp_path,
+        initial_dirty_paths=(
+            "backend/app/tooling/local_autopilot/task_pipeline.py",
+            "backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py",
+        ),
+    )
+    from app.tooling.local_autopilot.repository import Repository
+
+    repo = Repository(tmp_path, process_runner_fn=runner)
+
+    first = recovery_module.prepare_task_retry("T045", "run-045", tmp_path, repository=repo)
+    second = recovery_module.prepare_task_retry("T045", "run-045", tmp_path, repository=repo)
+
+    assert first.prepared is True
+    assert second.already_prepared is True
+    backup_root = tmp_path / ".specify" / "runtime" / "recovery-backups"
+    assert len(list(backup_root.iterdir())) == 1
+
+
+def test_archive_task_attempt_avoids_backup_collisions(tmp_path):
+    _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+    monkeypatch_timestamp = "2026-07-29T12:00:00Z"
+    original_timestamp = recovery_module._utc_timestamp
+    try:
+        recovery_module._utc_timestamp = lambda: monkeypatch_timestamp  # type: ignore[assignment]
+        first_state = recovery_module.archive_task_attempt("T045", tmp_path, reason="first")
+        _write_terminal_task_attempt(tmp_path, terminal_state=TaskLifecycleState.FAILED)
+        second_state = recovery_module.archive_task_attempt("T045", tmp_path, reason="second")
+    finally:
+        recovery_module._utc_timestamp = original_timestamp  # type: ignore[assignment]
+
+    assert first_state.name == "T045-2026-07-29T12-00-00Z"
+    assert second_state.name.startswith("T045-2026-07-29T12-00-00Z-")
 
 
 def test_parse_preflight_json_document_uses_root_payload(tmp_path):
