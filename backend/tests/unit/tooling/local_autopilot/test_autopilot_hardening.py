@@ -490,7 +490,7 @@ def _write_repo(tmp_path: Path, *, implementation_newline: bool = True, epic2_st
                 "tasks:",
                 "  - T001",
                 "required_checks:",
-                r"  - D:\Projects\ai-content-generation\.venv\Scripts\python.exe -m pytest backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py",
+                "  - python -m pytest backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py",
                 "pr_policy:",
                 "  one_pr_per_epic: true",
                 "  merge_requires_human: true",
@@ -521,7 +521,7 @@ def _write_repo(tmp_path: Path, *, implementation_newline: bool = True, epic2_st
                 "  - T007",
                 "  - T008",
                 "required_checks:",
-                r"  - D:\Projects\ai-content-generation\.venv\Scripts\python.exe -m pytest backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py",
+                "  - python -m pytest backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py",
                 "  - git --no-pager diff --check",
                 "pr_policy:",
                 "  one_pr_per_epic: true",
@@ -649,7 +649,7 @@ def _make_run(
 def test_end_to_end_epic_full_flow_creates_draft_pr(tmp_path):
     _write_repo(tmp_path, epic2_status="planned")
     state = SimState(branch="epic/E002")
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     task_pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
@@ -668,7 +668,7 @@ def test_end_to_end_epic_full_flow_creates_draft_pr(tmp_path):
 def test_end_to_end_resume_after_restart_and_milestone_closure(tmp_path):
     _write_repo(tmp_path, epic2_status="planned")
     state = SimState(branch="epic/E002")
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     task_pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
@@ -775,7 +775,7 @@ def test_epic_pipeline_reuses_existing_pr(tmp_path):
         "headRefOid": state.head_sha,
         "baseRefOid": state.base_sha,
     }
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     task_pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
@@ -791,7 +791,7 @@ def test_epic_pipeline_reuses_existing_pr(tmp_path):
 def test_milestone_pipeline_fails_when_waiting_pr_is_closed_without_merge(tmp_path):
     _write_repo(tmp_path, epic2_status="completed", epic1_status="completed")
     state = SimState(branch="epic/E002")
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
     closed_pr = PullRequestInfo(
@@ -851,7 +851,7 @@ def test_task_pipeline_hardening_matrix(tmp_path, scenario, expected_status, exp
     implementation_newline = scenario.get("diff_checks") != ["FAIL", "PASS"]
     _write_repo(tmp_path, implementation_newline=implementation_newline, epic2_status="active")
     state = SimState(branch="epic/E002", **scenario)
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     cancel_event = None
@@ -871,7 +871,7 @@ def test_task_pipeline_hardening_matrix(tmp_path, scenario, expected_status, exp
 def test_task_pipeline_repairs_blank_eof_then_commits(tmp_path):
     _write_repo(tmp_path, implementation_newline=False, epic2_status="active")
     state = SimState(branch="epic/E002", diff_checks=["FAIL", "PASS"])
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
 
@@ -884,7 +884,7 @@ def test_task_pipeline_repairs_blank_eof_then_commits(tmp_path):
 def test_task_pipeline_fails_on_cached_diff_check(tmp_path):
     _write_repo(tmp_path, epic2_status="active")
     state = SimState(branch="epic/E002", diff_checks=["PASS", "FAIL"])
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
 
@@ -897,7 +897,7 @@ def test_task_pipeline_fails_on_cached_diff_check(tmp_path):
 def test_epic_pipeline_fails_when_master_pull_is_not_ff_only(tmp_path):
     _write_repo(tmp_path, epic2_status="planned")
     state = SimState(branch="epic/E002", pull_fail=True)
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     task_pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
@@ -912,7 +912,7 @@ def test_epic_pipeline_fails_when_master_pull_is_not_ff_only(tmp_path):
 def test_epic_pipeline_fails_when_push_fails(tmp_path):
     _write_repo(tmp_path, epic2_status="planned")
     state = SimState(branch="epic/E002", push_fail=True)
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     task_pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
     github = GitHubAdapter(tmp_path, process_runner_fn=shell)
@@ -934,7 +934,7 @@ def test_epic_pipeline_handles_gh_auth_failure_and_missing_cli(tmp_path):
         case_root = tmp_path / f"case-{index}"
         _write_repo(case_root, epic2_status="planned")
         state = SimState(branch="epic/E002", **scenario)
-        shell = SimulatedShell(case_root, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+        shell = SimulatedShell(case_root, state, python_executable=sys.executable)
         repo = Repository(case_root, process_runner_fn=shell)
         task_pipeline = TaskPipeline(case_root, config=_config(), process_runner_fn=shell, repository=repo)
         github = GitHubAdapter(case_root, process_runner_fn=shell)
@@ -949,7 +949,7 @@ def test_epic_pipeline_handles_gh_auth_failure_and_missing_cli(tmp_path):
 def test_task_pipeline_fails_on_codex_missing(tmp_path):
     _write_repo(tmp_path, epic2_status="active")
     state = SimState(branch="epic/E002", codex_cli_ok=False)
-    shell = SimulatedShell(tmp_path, state, python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe")
+    shell = SimulatedShell(tmp_path, state, python_executable=sys.executable)
     repo = Repository(tmp_path, process_runner_fn=shell)
     pipeline = TaskPipeline(tmp_path, config=_config(), process_runner_fn=shell, repository=repo)
 
