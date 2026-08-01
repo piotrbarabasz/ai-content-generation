@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from contextlib import contextmanager
+import io
 import shutil
 from pathlib import Path
+import wave
 
 from app.domain.content_brief import ContentBrief
 from app.domain.enums import ContentGenre, ContentType, DurationProfile, TargetPlatform, WorkflowPreset
@@ -30,6 +32,11 @@ def _workspace_tempdir(name: str):
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _assert_valid_wav(audio_bytes: bytes) -> tuple[int, int, int]:
+    with wave.open(io.BytesIO(audio_bytes), "rb") as reader:
+        return reader.getnchannels(), reader.getsampwidth(), reader.getframerate()
+
+
 def test_voiceover_module_definition_matches_contract() -> None:
     with _workspace_tempdir("test_t012_definition") as store_root:
         module = VoiceoverModule(
@@ -49,7 +56,8 @@ def test_voiceover_module_definition_matches_contract() -> None:
 def test_voiceover_module_generates_artifact_reference_and_timeline() -> None:
     with _workspace_tempdir("test_t012_voiceover") as store_root:
         store = LocalArtifactStore(store_root)
-        module = VoiceoverModule(tts_provider=MockTTSProvider("mock"), artifact_store=store)
+        tts_provider = MockTTSProvider("mock")
+        module = VoiceoverModule(tts_provider=tts_provider, artifact_store=store)
         brief = ContentBrief.create(
             project_id="project_1",
             topic="Launch teaser",
@@ -75,22 +83,37 @@ def test_voiceover_module_generates_artifact_reference_and_timeline() -> None:
         speech_timeline = result.output["speech_timeline"]
         speech_artifact = result.output["speech_timeline_artifact"]
         stored_manifests = store.list_artifacts()
+        expected_synthesis = tts_provider.synthesize(
+            "Create a polished spoken teaser",
+            {"voice": "narrator", "language": "en", "tone": "neutral", "source_kind": "brief"},
+        )
 
         assert result.status == "completed"
         assert result.output_artifact_ids == ("voiceover.wav", "speech_timeline.json")
         assert voiceover["source_kind"] == "brief"
         assert voiceover["text"] == "Create a polished spoken teaser"
         assert voiceover["provider"] == "mock"
-        assert voiceover["audio_ref"].startswith("mock://tts/")
+        assert voiceover["audio_ref"] == expected_synthesis.metadata["source_ref"]
+        assert voiceover["source_ref"] == expected_synthesis.metadata["source_ref"]
+        assert voiceover["audio_format"] == "wav"
+        assert voiceover["sample_rate"] == expected_synthesis.sample_rate
         assert voiceover["audio_storage_key"].endswith("voiceover.wav")
         assert artifact["name"] == "voiceover.wav"
         assert artifact["artifact_type"] == "voiceover"
+        assert artifact["metadata"]["provider"] == "mock"
+        assert artifact["metadata"]["source_ref"] == expected_synthesis.metadata["source_ref"]
+        assert artifact["metadata"]["sample_rate"] == expected_synthesis.sample_rate
+        assert artifact["metadata"]["audio_format"] == "wav"
         assert speech_timeline["voiceover_storage_key"] == voiceover["audio_storage_key"]
         assert speech_timeline["word_timings"][0]["word"] == "Create"
         assert speech_timeline["provider"] == "mock"
+        assert speech_timeline["source_ref"] == expected_synthesis.metadata["source_ref"]
         assert speech_artifact["name"] == "speech_timeline.json"
         assert {manifest.name for manifest in stored_manifests} == {"voiceover.wav", "speech_timeline.json"}
-        assert store.read_artifact(voiceover["audio_storage_key"]) == voiceover["audio_ref"].encode("utf-8")
+        stored_audio = store.read_artifact(voiceover["audio_storage_key"])
+        assert stored_audio == expected_synthesis.audio_bytes
+        assert stored_audio.startswith(b"RIFF")
+        assert _assert_valid_wav(stored_audio) == (1, 2, expected_synthesis.sample_rate)
 
 
 @dataclass(slots=True)

@@ -10,7 +10,7 @@
       "title": "Ostatni tramwaj",
       "language": "pl",
       "target_duration_minutes": 1,
-      "actual_word_count": 152,
+      "actual_word_count": 157,
       "expected_word_count_range": {
         "min": 120,
         "max": 190
@@ -20,13 +20,14 @@
         "at_165_wpm": 0.92,
         "at_180_wpm": 0.84
       },
-      "sha256": "de521bf4ac0f76a6fa6ed105719e7abff2a72cbc41d9047210e1a56728817c62",
+      "sha256": "48a61e8bcd7a7613e7fd6223243b96ba5108b1638c49e778e34b3c02755b3f68",
       "feature_tags": [
         "polish_diacritics",
         "dialogue",
         "clock_times",
         "quotation_marks",
-        "em_dash"
+        "em_dash",
+        "abbreviation_pkp"
       ]
     },
     {

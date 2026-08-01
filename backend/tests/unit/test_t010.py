@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import wave
+
 from app.providers.interfaces import (
     AssetProvider,
     CaptionProvider,
@@ -16,6 +19,12 @@ from app.providers.mock_storage import MockStorageProvider
 from app.providers.mock_tts import MockTTSProvider
 from app.providers.mock_transcription import MockTranscriptionProvider
 from app.providers.mock_video_renderer import MockVideoRendererProvider
+from app.providers.tts_result import TTSSynthesisResult
+
+
+def _assert_valid_wav(audio_bytes: bytes) -> tuple[int, int, int]:
+    with wave.open(io.BytesIO(audio_bytes), "rb") as reader:
+        return reader.getnchannels(), reader.getsampwidth(), reader.getframerate()
 
 
 def test_mock_providers_implement_their_contracts() -> None:
@@ -57,19 +66,26 @@ def test_mock_tts_transcription_caption_and_renderer_outputs_are_stable() -> Non
 
     synth_1 = tts.synthesize("Hello world", {"voice": "narrator"})
     synth_2 = tts.synthesize("Hello world", {"voice": "narrator"})
-    transcript = transcription.transcribe(synth_1["audio_ref"])
+    source_ref = synth_1.metadata["source_ref"]
+    transcript = transcription.transcribe(source_ref)
     caption_payload = captions.generate_captions(
-        synth_1["audio_ref"],
+        source_ref,
         transcript["transcript_ref"],
     )
     render_payload = renderer.render(
         {"title": "Intro", "scenes": [{"scene": 1}, {"scene": 2}]},
-        audio_ref=synth_1["audio_ref"],
+        audio_ref=source_ref,
         captions_ref=caption_payload["captions_json"][0]["text"],
     )
 
+    assert isinstance(synth_1, TTSSynthesisResult)
     assert synth_1 == synth_2
-    assert synth_1["audio_ref"].startswith("mock://tts/")
+    assert synth_1.provider_name == "mock"
+    assert synth_1.audio_format == "wav"
+    assert synth_1.metadata["source_ref"].startswith("mock://tts/")
+    assert synth_1.audio_bytes == synth_2.audio_bytes
+    assert synth_1.audio_bytes.startswith(b"RIFF")
+    assert _assert_valid_wav(synth_1.audio_bytes) == (1, 2, synth_1.sample_rate)
     assert transcript["transcript"].startswith("Transcript for")
     assert caption_payload["captions_srt"].startswith("1\n00:00:00,000 --> 00:00:02,000\n")
     assert render_payload == {
@@ -78,7 +94,7 @@ def test_mock_tts_transcription_caption_and_renderer_outputs_are_stable() -> Non
         "status": "completed",
         "scene_count": 2,
         "scene_plan_label": "intro",
-        "audio_ref": synth_1["audio_ref"],
+        "audio_ref": source_ref,
         "captions_ref": caption_payload["captions_json"][0]["text"],
     }
 

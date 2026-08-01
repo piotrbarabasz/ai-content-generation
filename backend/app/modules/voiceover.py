@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import io
 from collections.abc import Mapping
 from hashlib import sha256
+import wave
 
 from app.domain.content_brief import ContentBrief
 from app.domain.types import JsonDict
-from app.storage.artifact_store import ArtifactStore
 from app.providers.interfaces import TTSProvider
+from app.providers.tts_result import TTSSynthesisResult
+from app.storage.artifact_store import ArtifactStore
 from app.workflow.execution import ModuleExecutionContext, ModuleResult
 from app.workflow.module import ModuleDefinition
 
@@ -119,6 +122,25 @@ def _word_timings(text: str, duration_seconds: float) -> list[JsonDict]:
     return timings
 
 
+def _validate_wave_bytes(audio_bytes: bytes, *, expected_sample_rate: int) -> None:
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as reader:
+            if reader.getnchannels() != 1:
+                raise ValueError("VoiceoverModule requires mono WAV audio.")
+            if reader.getsampwidth() != 2:
+                raise ValueError("VoiceoverModule requires 16-bit PCM WAV audio.")
+            if reader.getframerate() != expected_sample_rate:
+                raise ValueError(
+                    "VoiceoverModule WAV sample rate does not match the synthesis result."
+                )
+            if reader.getcomptype() != "NONE":
+                raise ValueError("VoiceoverModule requires uncompressed PCM WAV audio.")
+    except (EOFError, wave.Error, ValueError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("VoiceoverModule TTS provider returned invalid WAV audio.") from exc
+
+
 def _stable_text_reference(workflow_run_id: str, text: str, source_kind: str) -> str:
     signature = sha256(
         f"{workflow_run_id}:{source_kind}:{' '.join(text.split())}".encode("utf-8")
@@ -209,12 +231,24 @@ class VoiceoverModule:
         )
 
         synthesis = self._tts_provider.synthesize(normalized_text, voice_config)
-        audio_ref = _optional_text(synthesis.get("audio_ref"))
-        if not audio_ref:
-            raise ValueError("VoiceoverModule TTS provider did not return an audio_ref.")
+        if not isinstance(synthesis, TTSSynthesisResult):
+            raise TypeError("VoiceoverModule TTS provider must return TTSSynthesisResult.")
+        if synthesis.audio_format != "wav":
+            raise ValueError("VoiceoverModule TTS provider must return WAV audio.")
 
-        duration_ms = int(synthesis.get("duration_ms") or max(250, len(normalized_text) * 35))
-        duration_seconds = round(duration_ms / 1000.0, 3)
+        _validate_wave_bytes(synthesis.audio_bytes, expected_sample_rate=synthesis.sample_rate)
+
+        source_ref = _optional_text(
+            _pick(
+                synthesis.metadata,
+                "source_ref",
+                "sourceRef",
+                "audio_ref",
+                "audioRef",
+            )
+        ) or _stable_text_reference(context.workflow_run_id, normalized_text, source_kind)
+
+        duration_seconds = round(float(synthesis.duration_seconds), 3)
         text_reference_id = _optional_text(
             _pick(inputs, "text_reference_id", "textReferenceId")
         ) or _stable_text_reference(context.workflow_run_id, normalized_text, source_kind)
@@ -226,22 +260,28 @@ class VoiceoverModule:
             "voice_config": voice_config,
             "text": normalized_text,
             "source_kind": source_kind,
-            "audio_ref": audio_ref,
+            "audio_ref": source_ref,
+            "source_ref": source_ref,
+            "audio_format": synthesis.audio_format,
+            "sample_rate": synthesis.sample_rate,
             "duration_seconds": duration_seconds,
             "word_count": len(normalized_text.split()),
         }
 
         voiceover_manifest = self._artifact_store.save_artifact(
             self._artifact_name,
-            audio_ref,
+            synthesis.audio_bytes,
             metadata={
                 "workflow_run_id": context.workflow_run_id,
                 "module_name": self.definition.name,
                 "artifact_type": "voiceover",
                 "source_kind": source_kind,
                 "provider": self._tts_provider.provider_name,
-                "text_reference_id": text_reference_id,
+                "source_ref": source_ref,
+                "sample_rate": synthesis.sample_rate,
                 "duration_seconds": duration_seconds,
+                "audio_format": synthesis.audio_format,
+                "text_reference_id": text_reference_id,
                 "voice_config": voice_config,
             },
         )
@@ -254,6 +294,9 @@ class VoiceoverModule:
             "word_timings": _word_timings(normalized_text, duration_seconds),
             "voice_config": voice_config,
             "provider": self._tts_provider.provider_name,
+            "source_ref": source_ref,
+            "sample_rate": synthesis.sample_rate,
+            "audio_format": synthesis.audio_format,
         }
         speech_timeline_manifest = self._artifact_store.save_artifact(
             self._speech_timeline_name,

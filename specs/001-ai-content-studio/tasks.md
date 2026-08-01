@@ -743,7 +743,7 @@ Notes: This remediation task supplies the direct evidence that was not part of t
 
 ## Phase 18: Real TTS foundation and narration fixtures
 
-- [ ] T048 Add and validate fixed Polish narration fixtures
+- [X] T048 Add and validate fixed Polish narration fixtures
 Milestone: M004
 Epic: E007
 Risk: low
@@ -760,7 +760,7 @@ Notes: The planning pack supplies initial fixture content. The task still owns v
 
 ## Phase 18A: Provider-neutral audio result
 
-- [ ] T049 Add an explicit provider-neutral TTS synthesis result model
+- [X] T049 Add an explicit provider-neutral TTS synthesis result model
 Milestone: M004
 Epic: E007
 Risk: medium
@@ -775,7 +775,7 @@ Test requirements: Add construction, validation, serialization/helper and defens
 Parallelizable: no
 Notes: Do not migrate `TTSProvider`, `MockTTSProvider` or `VoiceoverModule` in this task. Keeping T049 additive ensures the repository is green after one commit.
 
-- [ ] T050 Migrate mock TTS and VoiceoverModule to real WAV bytes
+- [X] T050 Migrate mock TTS and VoiceoverModule to real WAV bytes
 Milestone: M004
 Epic: E007
 Risk: high
