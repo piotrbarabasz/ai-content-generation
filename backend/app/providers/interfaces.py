@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
+from app.providers.tts_result import TTSSynthesisResult
 from app.storage.manifest import ArtifactManifest
 
 
@@ -55,8 +56,8 @@ class TTSProvider(Protocol):
         self,
         text: str,
         voice_config: JsonDict | None = None,
-    ) -> JsonDict:
-        """Synthesize deterministic audio metadata for the supplied text."""
+    ) -> TTSSynthesisResult:
+        """Synthesize deterministic audio for the supplied text."""
 
 
 @runtime_checkable

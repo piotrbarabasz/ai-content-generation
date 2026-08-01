@@ -1,0 +1,17 @@
+id: M004
+title: Real TTS Voiceover
+status: planned
+goal: Generate valid provider-swappable Polish voiceover WAV artifacts with XTTS-v2 support, deterministic fixtures, resumable long-text synthesis and benchmark evidence while keeping default tests offline.
+epics:
+  - E007
+  - E008
+  - E009
+completion_criteria:
+  - Mock TTS and VoiceoverModule persist structurally valid WAV bytes instead of string references.
+  - XTTS-v2 is available behind the existing generic TTS provider contract and composed from ProviderConfig without a second provider registry.
+  - Default tests require no network, model download, GPU, PyTorch, private speaker file or generated media.
+  - Fixed Polish narration fixtures cover approximately 1, 5, 8 and 15 minutes.
+  - Long narration supports deterministic technical chunking, per-chunk retry, resume and compatible PCM WAV assembly.
+  - Benchmark and synthesis manifests record provider, model, device, duration, real-time factor, chunks and checksums.
+  - Human review confirms a real one-minute XTTS-v2 smoke result or documents an external environment blocker.
+  - Semantic scene splitting, visual generation, captions, rendering, API redesign and deployment remain out of scope.

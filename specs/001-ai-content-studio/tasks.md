@@ -738,3 +738,195 @@ Acceptance criteria: Tests cover valid models, missing required fields, invalid 
 Test requirements: These are the direct behavioral test cases for this task.
 Parallelizable: yes
 Notes: This remediation task supplies the direct evidence that was not part of the original T005 completion package.
+
+<!-- M004 REAL TTS TASKS EXTENSION START -->
+
+## Phase 18: Real TTS foundation and narration fixtures
+
+- [X] T048 Add and validate fixed Polish narration fixtures
+Milestone: M004
+Epic: E007
+Risk: low
+Implementation files: `backend/tests/fixtures/narrations/story_01_1min.txt`, `backend/tests/fixtures/narrations/story_02_5min.txt`, `backend/tests/fixtures/narrations/story_03_8min.txt`, `backend/tests/fixtures/narrations/story_04_15min.txt`, `backend/tests/fixtures/narrations/metadata.json`
+Test files: `backend/tests/unit/test_t048.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t048.py`
+Final PR review required: yes
+Goal: Establish deterministic Polish narration inputs for repeatable one-, five-, eight- and fifteen-minute TTS comparisons.
+Dependencies: None
+Acceptance criteria: All four UTF-8 fixture files exist; metadata records title, language, target duration, actual word count, expected range and feature tags; validation recalculates word counts; each fixture contains Polish diacritics, punctuation variety, numbers or dates, abbreviations and dialogue; no test invokes an LLM or network service.
+Test requirements: Add direct fixture-discovery, UTF-8, metadata, word-count and required-feature tests. The test must report the failing fixture and field clearly.
+Parallelizable: no
+Notes: The planning pack supplies initial fixture content. The task still owns verification, metadata correction if required and automated validation. Do not rewrite fixtures dynamically during tests.
+
+## Phase 18A: Provider-neutral audio result
+
+- [X] T049 Add an explicit provider-neutral TTS synthesis result model
+Milestone: M004
+Epic: E007
+Risk: medium
+Implementation files: `backend/app/providers/tts_result.py`, `backend/app/providers/__init__.py`
+Test files: `backend/tests/unit/test_t049.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t049.py`
+Final PR review required: yes
+Goal: Define a typed result that can carry actual audio bytes and provider-neutral metadata without changing runtime behavior in this task.
+Dependencies: T048
+Acceptance criteria: `TTSSynthesisResult` is immutable or otherwise protected from accidental mutation; validates non-empty bytes, positive sample rate, non-negative duration, supported normalized audio format and non-empty provider name; metadata is copied defensively; invalid values raise actionable errors; existing provider and voiceover behavior remains compatible until T050.
+Test requirements: Add construction, validation, serialization/helper and defensive-copy tests. Run the full suite because this introduces a shared provider type.
+Parallelizable: no
+Notes: Do not migrate `TTSProvider`, `MockTTSProvider` or `VoiceoverModule` in this task. Keeping T049 additive ensures the repository is green after one commit.
+
+- [X] T050 Migrate mock TTS and VoiceoverModule to real WAV bytes
+Milestone: M004
+Epic: E007
+Risk: high
+Implementation files: `backend/app/providers/interfaces.py`, `backend/app/providers/mock_tts.py`, `backend/app/modules/voiceover.py`, `backend/app/providers/tts_result.py`
+Test files: `backend/tests/unit/test_t010.py`, `backend/tests/unit/test_t012.py`, `backend/tests/unit/test_t050.py`, `backend/tests/unit/test_mock_providers.py`, `backend/tests/integration/test_long_form_workflow.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t010.py backend/tests/unit/test_t012.py backend/tests/unit/test_t050.py backend/tests/unit/test_mock_providers.py backend/tests/integration/test_long_form_workflow.py`
+Final PR review required: yes
+Goal: Make `voiceover.wav` contain valid audio data instead of a string reference while preserving provider abstraction and existing workflow outputs.
+Dependencies: T049
+Acceptance criteria: `TTSProvider.synthesize` returns `TTSSynthesisResult`; `MockTTSProvider` generates deterministic readable mono PCM WAV bytes using standard-library tooling; `VoiceoverModule` persists `audio_bytes`; metadata contains sample rate, duration, provider and source reference; tests prove the stored artifact starts with RIFF/WAVE and can be opened with `wave`; deterministic calls return identical bytes; existing long-form integration remains green; no XTTS import is introduced.
+Test requirements: Add direct regression proving that a path/URI string cannot be silently stored as completed `voiceover.wav`. Update impacted legacy tests in the same task without weakening assertions.
+Parallelizable: no
+Notes: Preserve `voiceover.wav` naming and export compatibility. Do not change `CoreWorkflowEngine`, API routes or semantic speech timing in this task.
+
+## Phase 19: Optional XTTS-v2 runtime
+
+- [ ] T051 Add optional XTTS dependency and runtime hygiene contract
+Milestone: M004
+Epic: E008
+Risk: medium
+Implementation files: `pyproject.toml`, `backend/requirements.txt`, `.gitignore`, `docs/tts/XTTS_SETUP.md`, `docs/INDEX.md`
+Test files: `backend/tests/unit/test_t051.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t051.py`
+Final PR review required: yes
+Goal: Keep the base installation lightweight while documenting a reproducible optional XTTS-v2 environment based on the completed manual spike.
+Dependencies: T050
+Acceptance criteria: Base dependencies do not include PyTorch, torchaudio or Coqui; an optional extra or separate documented install path is added using versions confirmed by the spike rather than guessed versions; documentation separates target-specific PyTorch installation from `coqui-tts`; `.gitignore` excludes private voice samples, generated TTS outputs and model caches; base tests import without optional packages installed.
+Test requirements: Add a lightweight configuration test that parses project metadata and verifies heavy XTTS dependencies are optional, plus ignore-pattern coverage where practical.
+Parallelizable: no
+Notes: Read `docs/tts/MANUAL_SPIKE.md`. If the spike has not produced confirmed versions, stop with an explicit blocker receipt instead of inventing pins. Do not download packages or models during pytest.
+
+- [ ] T052 Implement XTTS-v2 provider behind an injectable backend boundary
+Milestone: M004
+Epic: E008
+Risk: high
+Implementation files: `backend/app/providers/xtts_v2.py`, `backend/app/providers/tts_result.py`, `backend/app/providers/interfaces.py`
+Test files: `backend/tests/unit/test_t052.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t052.py`
+Final PR review required: yes
+Goal: Add a real XTTS-v2 adapter that implements the generic TTS contract while remaining fully testable without importing or loading the model in CI.
+Dependencies: T051
+Acceptance criteria: Provider exposes stable `provider_type` and `provider_name`; default model identifier is `tts_models/multilingual/multi-dataset/xtts_v2`; model/backend loading is lazy and occurs at most once per provider instance; synthesis passes text, language and speaker reference to the backend; WAV output is validated and returned as `TTSSynthesisResult`; missing dependency, invalid speaker file, unsupported device, model-load failure and invalid output produce typed actionable errors; provider module has no import-time model download or GPU initialization.
+Test requirements: Use an injected fake backend/loader to verify lazy load, one-time load, call parameters, errors and valid result conversion. Tests must fail if the real Coqui package is imported unexpectedly.
+Parallelizable: no
+Notes: Do not import this class from workflow or module code. Do not add chunking, scene logic or API changes.
+
+- [ ] T053 Add typed TTS settings and provider factory
+Milestone: M004
+Epic: E008
+Risk: high
+Implementation files: `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `backend/app/providers/__init__.py`, `backend/app/providers/registry.py`
+Test files: `backend/tests/unit/test_t053.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t053.py`
+Final PR review required: yes
+Goal: Compose mock or XTTS-v2 provider instances from the existing ProviderConfig and register them through the existing ProviderRegistry without changing workflow orchestration.
+Dependencies: T052
+Acceptance criteria: TTS-specific settings are parsed from the existing ProviderConfig.settings mapping; defaults are safe and do not point to a committed private file; the composition helper creates `mock` and `xtts_v2` instances; unknown providers fail clearly; XTTS construction does not load the model; created instances are registered and resolved through the existing ProviderRegistry; no second generic registry or competing workflow configuration model is introduced; `CoreWorkflowEngine` and `VoiceoverModule` do not import concrete TTS providers.
+Test requirements: Add factory-selection, settings-validation, unknown-provider, lazy-construction and import-boundary tests.
+Parallelizable: no
+Notes: Keep this as a composition layer around ProviderConfig and ProviderRegistry. Do not duplicate ProviderRegistry resolution logic or redesign other provider categories.
+
+- [ ] T054 Add offline XTTS provider contract and failure tests
+Milestone: M004
+Epic: E008
+Risk: medium
+Implementation files: `none` unless a minimal test seam correction is required in `backend/app/providers/xtts_v2.py`
+Test files: `backend/tests/unit/test_t054.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t054.py`
+Final PR review required: yes
+Goal: Harden the real-provider boundary against accidental model/network usage and common configuration failures.
+Dependencies: T053
+Acceptance criteria: Tests prove default collection does not import Coqui or torch; no HTTP/network call is made; CPU and CUDA requests are forwarded deterministically; a missing optional dependency includes installation guidance; invalid or empty WAV output is rejected; provider reuse does not reload the model; private speaker paths are not included in error snapshots beyond a safe basename or redacted representation.
+Test requirements: Use monkeypatch/fakes only. Add a test that fails if model initialization happens at module import or provider construction.
+Parallelizable: yes
+Notes: Production changes are permitted only when necessary to expose a clean test seam. Do not duplicate T052 behavior tests without adding a regression guarantee.
+
+- [ ] T055 Add a manual one-minute TTS smoke runner and report
+Milestone: M004
+Epic: E008
+Risk: medium
+Implementation files: `backend/app/tooling/__init__.py`, `backend/app/tooling/tts_smoke.py`, `docs/tts/XTTS_SMOKE.md`, `docs/INDEX.md`
+Test files: `backend/tests/unit/test_t055.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t055.py`
+Final PR review required: yes
+Goal: Provide one documented command that converts a fixture to WAV through the configured provider and emits machine-readable evidence.
+Dependencies: T054
+Acceptance criteria: Runner accepts provider, input text file, output WAV, language, device and speaker reference arguments; defaults to the one-minute fixture but never defaults to a private speaker file; creates parent directories safely; writes a JSON report with provider/model/device/text words/generation time/audio duration/sample rate/output checksum; validates the final WAV; returns non-zero on failure; `--help` works without optional XTTS dependencies; runner is excluded from default integration execution and never downloads a model in tests.
+Test requirements: Invoke the command entry function with a fake provider/factory and temporary files. Test success, invalid input, existing-output policy and non-zero failure paths.
+Parallelizable: no
+Notes: Real XTTS execution is manual human evidence and must not be added to CI. Do not wire the runner through API endpoints.
+
+## Phase 20: Long narration reliability
+
+- [ ] T056 Implement deterministic technical narration chunking
+Milestone: M004
+Epic: E009
+Risk: high
+Implementation files: `backend/app/tts/__init__.py`, `backend/app/tts/chunking.py`
+Test files: `backend/tests/unit/test_t056.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t056.py`
+Final PR review required: yes
+Goal: Split long Polish narration into stable TTS-sized chunks without semantic scene analysis or source-text loss.
+Dependencies: T055
+Acceptance criteria: Chunker prefers paragraph then sentence boundaries; emits ordered non-empty chunks with stable ids, indices, source offsets, word counts and text hashes; normalized concatenation equals normalized source; punctuation and Polish characters are preserved; an oversized sentence is handled deterministically and marked; identical input/settings yield identical chunks; 1-, 5-, 8- and 15-minute fixtures satisfy preservation tests.
+Test requirements: Add boundary, repeated sentence, abbreviation, decimal/date, dialogue, oversized sentence, empty input and all-fixture preservation tests.
+Parallelizable: no
+Notes: This is technical request chunking only. Do not introduce `RenderScene`, shot descriptions, image prompts or semantic topic segmentation.
+
+- [ ] T057 Add resumable chunk synthesis and compatible PCM WAV assembly
+Milestone: M004
+Epic: E009
+Risk: high
+Implementation files: `backend/app/tts/assembly.py`, `backend/app/tts/manifest.py`, `backend/app/tts/chunk_synthesis.py`
+Test files: `backend/tests/unit/test_t057.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t057.py`
+Final PR review required: yes
+Goal: Synthesize chunks independently, validate persisted outputs, resume interrupted work and assemble one final WAV without re-encoding.
+Dependencies: T056
+Acceptance criteria: Each chunk receives status, input/config hash, WAV checksum, duration and audio parameters; successful matching chunks are reused; missing, changed, corrupt or incompatible chunks are regenerated or rejected; retry is scoped per chunk; assembly validates channel count, sample width, sample rate and compression type; final frame count equals the sum of chunk frame counts; partial failure never registers a completed final WAV; manifests use relative artifact/runtime references rather than hardcoded machine paths.
+Test requirements: Add simulated interruption/resume, changed text/config, corrupt WAV, mismatched sample rate/channels, retry, partial failure and frame-sum tests using deterministic small WAV fixtures.
+Parallelizable: no
+Notes: Use standard-library PCM WAV assembly for the first slice. Do not add FFmpeg unless the current task demonstrates a requirement that standard `wave` cannot satisfy and records a scope blocker.
+
+- [ ] T058 Add TTS benchmark report generation
+Milestone: M004
+Epic: E009
+Risk: medium
+Implementation files: `backend/app/tts/benchmark.py`, `backend/app/tts/manifest.py`, `backend/app/tooling/tts_smoke.py`
+Test files: `backend/tests/unit/test_t058.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t058.py`
+Final PR review required: yes
+Goal: Produce stable performance evidence for comparing providers, devices and chunk settings without changing synthesis behavior.
+Dependencies: T057
+Acceptance criteria: Report includes provider, model, device, language, text word count, chunk count, generation wall time, audio duration, real-time factor, sample rate, output checksum and failed chunk ids; zero-duration and partial-failure cases are handled explicitly; JSON output is deterministic apart from declared timing/timestamp fields; benchmark collection wraps rather than duplicates synthesis logic.
+Test requirements: Add calculation, rounding, serialization, zero-duration, failure and integration-with-smoke-runner tests.
+Parallelizable: yes
+Notes: Do not introduce cost accounting, dashboards or external telemetry.
+
+- [ ] T059 Integrate resumable long narration with VoiceoverModule
+Milestone: M004
+Epic: E009
+Risk: high
+Implementation files: `backend/app/modules/voiceover.py`, `backend/app/tts/chunking.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/manifest.py`, `backend/app/tts/benchmark.py`
+Test files: `backend/tests/unit/test_t059.py`, `backend/tests/unit/test_t012.py`, `backend/tests/integration/test_long_form_workflow.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t059.py backend/tests/unit/test_t012.py backend/tests/integration/test_long_form_workflow.py`
+Final PR review required: yes
+Goal: Allow `VoiceoverModule` to use either single-request or chunked/resumable synthesis while remaining provider-neutral and export-compatible.
+Dependencies: T058
+Acceptance criteria: Module selects chunked mode through generic configuration based on explicit settings rather than concrete provider type; short text remains supported; final `voiceover.wav`, speech timeline and synthesis manifest are persisted through the artifact store; module output identifies chunk count and benchmark artifact; a simulated interrupted 15-minute fixture run resumes without regenerating valid chunks; mock/fake provider tests complete offline; no workflow engine, API, scene-planning, caption or rendering code is modified.
+Test requirements: Add one-minute direct mode, long fixture chunk mode, resume, provider substitution, failure propagation, artifact metadata and regression integration tests.
+Parallelizable: no
+Notes: If current `VoiceoverModule` dependency rules prevent direct narration execution, make the smallest contract correction and add a regression test; do not refactor workflow presets or fix unrelated short-video dependencies in this milestone.
+
+<!-- M004 REAL TTS TASKS EXTENSION END -->

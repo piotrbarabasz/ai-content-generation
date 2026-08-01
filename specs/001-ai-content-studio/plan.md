@@ -240,3 +240,109 @@ Provider interfaces and expected methods are documented in [contracts/provider-c
 - Add retry policy, logging, contract tests and deterministic mock provider coverage.
 - Refine API responses and artifact metadata.
 - Keep publishing, analytics, billing and collaboration explicitly out of scope.
+
+<!-- M004 REAL TTS PLAN EXTENSION START -->
+
+## Phase 4: Real TTS Voiceover Vertical Slice (M004)
+
+### Scope
+
+M004 converts the existing mock voiceover reference into a real provider-neutral audio contract and adds XTTS-v2 as the first optional real adapter. The milestone stops after stable long-narration WAV generation. Semantic transcript-to-scene segmentation belongs to a later milestone.
+
+### Architecture Decisions
+
+1. **Preserve the existing provider system.** `ProviderConfig` remains the configuration input and `ProviderRegistry` remains the generic provider lookup mechanism. A TTS composition helper may instantiate `mock` or `xtts_v2` providers from `ProviderConfig`, but it must not create a second registry or a competing workflow configuration model.
+2. **Keep workflow code provider-neutral.** `VoiceoverModule` and `CoreWorkflowEngine` depend on `TTSProvider` and a provider-neutral synthesis result only.
+3. **Persist real media bytes.** `voiceover.wav` contains readable WAV bytes. Paths, URIs and temporary filenames are metadata or implementation details, not audio payloads.
+4. **Keep heavy runtime dependencies optional.** Default installation and tests do not require PyTorch, XTTS, a GPU, network access or model downloads. Exact optional versions are documented only after the manual spike in `docs/tts/MANUAL_SPIKE.md` succeeds.
+5. **Introduce one provider-neutral TTS service package.** `backend/app/tts/` owns technical chunking, resumable chunk orchestration, WAV assembly and benchmark/manifests. It must not contain concrete XTTS imports or semantic scene logic.
+6. **Use technical chunking, not scene segmentation.** Paragraph/sentence splitting exists only to keep model requests bounded and recoverable.
+7. **Resume by input identity.** Reuse requires matching normalized text, relevant provider/voice configuration identity and a valid WAV checksum/format.
+
+### Planned Structure
+
+```text
+backend/app/providers/
+├── interfaces.py
+├── mock_tts.py
+├── tts_result.py
+├── tts_settings.py
+├── tts_factory.py
+└── xtts_v2.py
+
+backend/app/tts/
+├── __init__.py
+├── chunking.py
+├── assembly.py
+├── chunk_synthesis.py
+├── manifest.py
+└── benchmark.py
+
+backend/app/tooling/
+└── tts_smoke.py
+
+backend/tests/fixtures/narrations/
+├── story_01_1min.txt
+├── story_02_5min.txt
+├── story_03_8min.txt
+├── story_04_15min.txt
+└── metadata.json
+```
+
+### Epic E007 - TTS Contract and Fixtures
+
+- Validate fixed Polish narration fixtures.
+- Add an explicit provider-neutral TTS result without breaking current behavior.
+- Migrate mock TTS and `VoiceoverModule` to valid deterministic WAV bytes.
+
+**Exit condition**: mock voiceover output is a readable WAV and the complete test suite passes.
+
+### Epic E008 - XTTS-v2 Provider
+
+- Record a human-run environment spike before declaring dependency versions.
+- Keep XTTS/PyTorch optional.
+- Add a lazy XTTS-v2 adapter behind an injectable backend boundary.
+- Compose providers from existing `ProviderConfig` and register them in existing `ProviderRegistry`.
+- Add offline contract tests and a manual one-minute smoke runner.
+
+**Exit condition**: CI proves the adapter contract with fakes and a human can generate or diagnose one real Polish XTTS-v2 WAV.
+
+### Epic E009 - Long Narration Reliability
+
+- Add deterministic technical chunking.
+- Add per-chunk validation, retry and resume.
+- Assemble compatible PCM WAV chunks without re-encoding.
+- Add synthesis and benchmark manifests.
+- Integrate long narration with `VoiceoverModule` without concrete-provider coupling.
+
+**Exit condition**: the fifteen-minute fixture completes with a fake backend, resumes after simulated interruption and produces a valid final WAV plus manifests.
+
+### Testing Boundaries
+
+Default tests use only deterministic fixtures, mock/fake provider backends, temporary directories and small generated PCM WAV payloads. They must fail if they unexpectedly import or initialize the real XTTS runtime. Real-model execution is a manual smoke test and is never part of standard pytest or CI.
+
+### Runtime Hygiene
+
+The implementation must ignore private and generated paths such as:
+
+```text
+.runtime/tts/
+.runtime/voices/
+.runtime/model-cache/
+data/tts-smoke/
+*.speaker.wav
+```
+
+### Out of Scope
+
+- semantic scene splitting,
+- visual scene descriptions or image prompts,
+- image generation,
+- captions,
+- video rendering,
+- API redesign,
+- database work,
+- deployment,
+- automatic model downloads in tests.
+
+<!-- M004 REAL TTS PLAN EXTENSION END -->

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import wave
+
 from app.providers.interfaces import (
     AssetProvider,
     CaptionProvider,
@@ -16,6 +19,12 @@ from app.providers.mock_storage import MockStorageProvider
 from app.providers.mock_tts import MockTTSProvider
 from app.providers.mock_transcription import MockTranscriptionProvider
 from app.providers.mock_video_renderer import MockVideoRendererProvider
+from app.providers.tts_result import TTSSynthesisResult
+
+
+def _assert_valid_wav(audio_bytes: bytes) -> tuple[int, int, int]:
+    with wave.open(io.BytesIO(audio_bytes), "rb") as reader:
+        return reader.getnchannels(), reader.getsampwidth(), reader.getframerate()
 
 
 def test_mock_providers_implement_their_protocols() -> None:
@@ -49,14 +58,15 @@ def test_mock_providers_return_deterministic_outputs_for_the_same_inputs() -> No
 
     tts_audio_a = tts.synthesize("Hello world", {"voice": "narrator"})
     tts_audio_b = tts.synthesize("Hello world", {"voice": "narrator"})
-    transcript_a = transcription.transcribe(tts_audio_a["audio_ref"])
-    transcript_b = transcription.transcribe(tts_audio_a["audio_ref"])
+    source_ref = tts_audio_a.metadata["source_ref"]
+    transcript_a = transcription.transcribe(source_ref)
+    transcript_b = transcription.transcribe(source_ref)
     captions_a = captions.generate_captions(
-        tts_audio_a["audio_ref"],
+        source_ref,
         transcript_a["transcript_ref"],
     )
     captions_b = captions.generate_captions(
-        tts_audio_a["audio_ref"],
+        source_ref,
         transcript_a["transcript_ref"],
     )
     assets_a = assets.find_assets("urban skyline")
@@ -65,20 +75,26 @@ def test_mock_providers_return_deterministic_outputs_for_the_same_inputs() -> No
     prepared_b = assets.prepare_asset(assets_a[0]["asset_ref"])
     render_a = renderer.render(
         {"title": "Intro", "scenes": [{"scene": 1}, {"scene": 2}]},
-        audio_ref=tts_audio_a["audio_ref"],
+        audio_ref=source_ref,
         captions_ref=captions_a["captions_json"][0]["text"],
     )
     render_b = renderer.render(
         {"title": "Intro", "scenes": [{"scene": 1}, {"scene": 2}]},
-        audio_ref=tts_audio_a["audio_ref"],
+        audio_ref=source_ref,
         captions_ref=captions_a["captions_json"][0]["text"],
     )
 
     assert llm_text_a == llm_text_b
     assert llm_text_a.startswith("mock-llm:write-an-intro:")
     assert llm_structured_a == llm_structured_b
+    assert isinstance(tts_audio_a, TTSSynthesisResult)
     assert tts_audio_a == tts_audio_b
-    assert tts_audio_a["audio_ref"].startswith("mock://tts/")
+    assert tts_audio_a.provider_name == "mock"
+    assert tts_audio_a.audio_format == "wav"
+    assert tts_audio_a.metadata["source_ref"].startswith("mock://tts/")
+    assert tts_audio_a.audio_bytes == tts_audio_b.audio_bytes
+    assert tts_audio_a.audio_bytes.startswith(b"RIFF")
+    assert _assert_valid_wav(tts_audio_a.audio_bytes) == (1, 2, tts_audio_a.sample_rate)
     assert transcript_a == transcript_b
     assert captions_a == captions_b
     assert assets_a == assets_b

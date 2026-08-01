@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "language": "pl",
+  "encoding": "utf-8",
+  "word_count_rule": "Unicode word tokens; hyphenated and apostrophe-connected forms count as one token.",
+  "duration_note": "Actual XTTS duration depends on the cloned voice, punctuation, speed and chunk settings. Target labels are comparison profiles, not hard timing guarantees.",
+  "fixtures": [
+    {
+      "file": "story_01_1min.txt",
+      "title": "Ostatni tramwaj",
+      "language": "pl",
+      "target_duration_minutes": 1,
+      "actual_word_count": 157,
+      "expected_word_count_range": {
+        "min": 120,
+        "max": 190
+      },
+      "estimated_duration_minutes": {
+        "at_150_wpm": 1.01,
+        "at_165_wpm": 0.92,
+        "at_180_wpm": 0.84
+      },
+      "sha256": "48a61e8bcd7a7613e7fd6223243b96ba5108b1638c49e778e34b3c02755b3f68",
+      "feature_tags": [
+        "polish_diacritics",
+        "dialogue",
+        "clock_times",
+        "quotation_marks",
+        "em_dash",
+        "abbreviation_pkp"
+      ]
+    },
+    {
+      "file": "story_02_5min.txt",
+      "title": "Zegarmistrz z ulicy Siennej",
+      "language": "pl",
+      "target_duration_minutes": 5,
+      "actual_word_count": 777,
+      "expected_word_count_range": {
+        "min": 650,
+        "max": 900
+      },
+      "estimated_duration_minutes": {
+        "at_150_wpm": 5.18,
+        "at_165_wpm": 4.71,
+        "at_180_wpm": 4.32
+      },
+      "sha256": "232aadf2d04afa3c7a06fe8e1a9ea1d922981b4f76b25b08159f9d21f92d3905",
+      "feature_tags": [
+        "polish_diacritics",
+        "dialogue",
+        "dates",
+        "clock_times",
+        "abbreviation_ai",
+        "quotation_marks",
+        "em_dash"
+      ]
+    },
+    {
+      "file": "story_03_8min.txt",
+      "title": "Latarnia na Wyspie Północnej",
+      "language": "pl",
+      "target_duration_minutes": 8,
+      "actual_word_count": 1389,
+      "expected_word_count_range": {
+        "min": 1200,
+        "max": 1500
+      },
+      "estimated_duration_minutes": {
+        "at_150_wpm": 9.26,
+        "at_165_wpm": 8.42,
+        "at_180_wpm": 7.72
+      },
+      "sha256": "8ad9f9f440f9e239e226b0e585093891b740f71b52b130800bf6046533f51860",
+      "feature_tags": [
+        "polish_diacritics",
+        "dialogue",
+        "dates",
+        "clock_times",
+        "decimal_frequency",
+        "abbreviations_mhz_gps",
+        "quotation_marks",
+        "em_dash"
+      ]
+    },
+    {
+      "file": "story_04_15min.txt",
+      "title": "Miasto, które zapomniało deszczu",
+      "language": "pl",
+      "target_duration_minutes": 15,
+      "actual_word_count": 2506,
+      "expected_word_count_range": {
+        "min": 2200,
+        "max": 2700
+      },
+      "estimated_duration_minutes": {
+        "at_150_wpm": 16.71,
+        "at_165_wpm": 15.19,
+        "at_180_wpm": 13.92
+      },
+      "sha256": "6fe5dd5fc8dac8dd2979231a6ba29e2759982258b8284a84ab1baf6ef602d4ca",
+      "feature_tags": [
+        "polish_diacritics",
+        "dialogue",
+        "dates",
+        "clock_times",
+        "decimal_frequency",
+        "abbreviations_ai_api_gpu_wifi",
+        "quotation_marks",
+        "em_dash"
+      ]
+    }
+  ]
+}

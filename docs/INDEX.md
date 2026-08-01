@@ -24,3 +24,11 @@
 - `specs/001-ai-content-studio/data-model.md`
 - `specs/001-ai-content-studio/tasks.md`
 - `specs/001-ai-content-studio/quickstart.md`
+
+<!-- M004 TTS DOCS INDEX START -->
+
+## TTS
+
+- `docs/tts/MANUAL_SPIKE.md`
+
+<!-- M004 TTS DOCS INDEX END -->
