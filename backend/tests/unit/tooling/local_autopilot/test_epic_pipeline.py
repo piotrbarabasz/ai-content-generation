@@ -422,7 +422,7 @@ class FakeReviewReceipt:
 
 
 class FakeProcessRunner:
-    def __init__(self, repo: FakeRepository, *, python_executable: str = r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe", base_sha: str = "b" * 40) -> None:
+    def __init__(self, repo: FakeRepository, *, python_executable: str = sys.executable, base_sha: str = "b" * 40) -> None:
         self.repo = repo
         self.python_executable = python_executable
         self.base_sha = base_sha
@@ -1011,7 +1011,7 @@ def test_run_epic_happy_path_stop_before_push_activates_branch_and_completes(tmp
     assert receipt.writes and receipt.validations
     written_checks = receipt.writes[0]["required_checks"]
     assert [check["command"] for check in written_checks] == ["python -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py", "git --no-pager diff --check"]
-    assert written_checks[0]["executed_command"] == r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py"
+    assert written_checks[0]["executed_command"] == f"{sys.executable} -m pytest backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py"
     assert written_checks[1]["executed_command"] == "git --no-pager diff --check"
     assert not repo.pushed_branches
     assert not github.calls
@@ -2365,7 +2365,7 @@ def test_retry_push_uses_validation_receipt_without_rerunning_tasks_or_codex(tmp
     validation_receipt_module.write_validation_receipt(
         head_sha="2" * 40,
         branch="feature/E002",
-        python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe",
+        python_executable=sys.executable,
         python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         status="PASS",
         checks=[
@@ -2410,7 +2410,7 @@ def test_validation_receipt_rejects_stale_head_after_sync(tmp_path):
     receipt_path = validation_receipt_module.write_validation_receipt(
         head_sha="1" * 40,
         branch="feature/E002",
-        python_executable=r"D:\Projects\ai-content-generation\.venv\Scripts\python.exe",
+        python_executable=sys.executable,
         python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         status="PASS",
         checks=[

@@ -5,7 +5,7 @@ milestone: M004
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E007-tts-contract-fixtures
-status: active
+status: completed
 risk: high
 depends_on: []
 tasks:
