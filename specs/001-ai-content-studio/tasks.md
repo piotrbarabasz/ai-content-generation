@@ -852,7 +852,7 @@ Test requirements: Use monkeypatches and fake backends only.
 Parallelizable: yes
 Notes: Do not duplicate T052 behavior tests without adding a regression guarantee.
 
-- [ ] T055 Add manual Chatterbox V3 smoke runner and report
+- [X] T055 Add manual Chatterbox V3 smoke runner and report
 Milestone: M004
 Epic: E008
 Risk: medium
