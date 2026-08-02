@@ -12,6 +12,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from app.tts.benchmark import build_benchmark_report
+from app.tts.manifest import AudioParameters, ChunkManifest, SynthesisManifest
+
 
 class TTSSmokeError(RuntimeError):
     """An actionable smoke-runner failure."""
@@ -98,13 +101,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise TTSSmokeError("Provider did not return WAV audio.")
     args.output.write_bytes(result.audio_bytes)
     sample_rate, duration_seconds = _validate_wav(args.output)
-    report = {
-        "provider": result.provider_name, "model_variant": "v3", "device": args.device,
-        "language": args.language, "word_count": len(text.split()),
-        "generation_seconds": round(generation_seconds, 6), "audio_duration_seconds": round(duration_seconds, 6),
-        "sample_rate": sample_rate, "checksum_sha256": hashlib.sha256(result.audio_bytes).hexdigest(),
-        "voice": result.metadata.get("voice", "builtin"), "output_wav": str(args.output),
-    }
+    checksum = hashlib.sha256(result.audio_bytes).hexdigest()
+    parameters = AudioParameters(1, 2, sample_rate, "NONE", round(duration_seconds * sample_rate))
+    chunk = ChunkManifest("smoke-0001", 0, "completed", "smoke", "smoke", "smoke", checksum, duration_seconds, parameters)
+    manifest = SynthesisManifest(
+        config_hash="smoke", chunks={chunk.chunk_id: chunk}, final_status="completed",
+        final_checksum=checksum, final_duration_seconds=duration_seconds, final_audio_parameters=parameters,
+    )
+    report = build_benchmark_report(
+        manifest, provider=result.provider_name, model="v3", device=args.device,
+        language=args.language, word_count=len(text.split()), generation_wall_time_seconds=generation_seconds,
+    ).to_payload()
+    report.update({
+        "model_variant": "v3", "generation_seconds": report["generation_wall_time_seconds"],
+        "checksum_sha256": checksum, "voice": result.metadata.get("voice", "builtin"),
+        "output_wav": str(args.output),
+    })
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 

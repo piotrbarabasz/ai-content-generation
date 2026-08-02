@@ -899,7 +899,7 @@ Test requirements: Add simulated interruption/resume, changed text/config, corru
 Parallelizable: no
 Notes: Use standard-library PCM WAV assembly for the first slice. Do not add FFmpeg unless the current task demonstrates a requirement that standard `wave` cannot satisfy and records a scope blocker.
 
-- [ ] T058 Add TTS benchmark report generation
+- [X] T058 Add TTS benchmark report generation
 Milestone: M004
 Epic: E009
 Risk: medium
