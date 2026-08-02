@@ -869,7 +869,7 @@ Notes: Real Chatterbox execution is manual human evidence and must not be added 
 
 ## Phase 20: Long narration reliability
 
-- [ ] T056 Implement deterministic technical narration chunking
+- [X] T056 Implement deterministic technical narration chunking
 Milestone: M004
 Epic: E009
 Risk: high
@@ -884,7 +884,7 @@ Test requirements: Add boundary, repeated sentence, abbreviation, decimal/date, 
 Parallelizable: no
 Notes: This is technical request chunking only. Do not introduce `RenderScene`, shot descriptions, image prompts or semantic topic segmentation.
 
-- [ ] T057 Add resumable chunk synthesis and compatible PCM WAV assembly
+- [X] T057 Add resumable chunk synthesis and compatible PCM WAV assembly
 Milestone: M004
 Epic: E009
 Risk: high
@@ -899,7 +899,7 @@ Test requirements: Add simulated interruption/resume, changed text/config, corru
 Parallelizable: no
 Notes: Use standard-library PCM WAV assembly for the first slice. Do not add FFmpeg unless the current task demonstrates a requirement that standard `wave` cannot satisfy and records a scope blocker.
 
-- [ ] T058 Add TTS benchmark report generation
+- [X] T058 Add TTS benchmark report generation
 Milestone: M004
 Epic: E009
 Risk: medium
@@ -914,7 +914,7 @@ Test requirements: Add calculation, rounding, serialization, zero-duration, fail
 Parallelizable: yes
 Notes: Do not introduce cost accounting, dashboards or external telemetry.
 
-- [ ] T059 Integrate resumable long narration with VoiceoverModule
+- [X] T059 Integrate resumable long narration with VoiceoverModule
 Milestone: M004
 Epic: E009
 Risk: high

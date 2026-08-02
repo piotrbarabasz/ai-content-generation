@@ -5,7 +5,7 @@ milestone: M004
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E009-long-narration-reliability
-status: planned
+status: active
 risk: high
 depends_on:
   - E008
