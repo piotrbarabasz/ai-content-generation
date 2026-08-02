@@ -807,7 +807,7 @@ Test requirements: Add or update lightweight planning validation only where exis
 Parallelizable: no
 Notes: Read `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`. Do not download packages or models during pytest.
 
-- [ ] T052 Implement Chatterbox Multilingual V3 provider adapter
+- [X] T052 Implement Chatterbox Multilingual V3 provider adapter
 Milestone: M004
 Epic: E008
 Risk: high
