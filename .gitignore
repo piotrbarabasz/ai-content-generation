@@ -14,6 +14,7 @@
 secrets/
 credentials/
 .local/
+.runtime/
 
 # Python
 __pycache__/
@@ -46,6 +47,13 @@ temp/
 *.mp3
 *.ass
 *.srt
+
+# Local Chatterbox runtime state (weights, generated audio and private voices)
+.cache/huggingface/
+huggingface/
+models/
+voice-references/
+speaker-references/
 
 # IDE
 .vscode/

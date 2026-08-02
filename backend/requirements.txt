@@ -2,3 +2,7 @@ fastapi>=0.115
 pydantic>=2.7
 PyYAML>=6.0
 pytest>=8.0
+
+# The Chatterbox Multilingual V3 runtime is deliberately optional.  Install it
+# from the pinned ``chatterbox-v3`` project extra and choose torch/torchaudio
+# for the local device as documented in docs/tts/CHATTERBOX_SETUP.md.

@@ -31,7 +31,7 @@
 
 - `docs/tts/MANUAL_SPIKE.md`
 - `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`
-- Planned in T051: `docs/tts/CHATTERBOX_SETUP.md`
+- `docs/tts/CHATTERBOX_SETUP.md`
 - Planned in T055: `docs/tts/CHATTERBOX_SMOKE.md`
 
 <!-- M004 TTS DOCS INDEX END -->

@@ -14,6 +14,16 @@ dependencies = [
   "pytest>=8.0",
 ]
 
+[project.optional-dependencies]
+# Keep the real local TTS runtime out of the default application and CI install.
+# Select torch and torchaudio separately for the target CPU/CUDA device; see
+# docs/tts/CHATTERBOX_SETUP.md for the validated CUDA 12.4 combination.
+chatterbox-v3 = [
+  "chatterbox-tts==0.1.7",
+  "resemble-perth==1.0.1",
+  "setuptools<81",
+]
+
 [tool.setuptools]
 package-dir = {"" = "backend"}
 

@@ -792,7 +792,7 @@ Notes: Preserve `voiceover.wav` naming and export compatibility. Do not change `
 
 ## Phase 19: Optional Chatterbox Multilingual V3 runtime
 
-- [ ] T051 Add optional Chatterbox dependency and runtime hygiene contract
+- [X] T051 Add optional Chatterbox dependency and runtime hygiene contract
 Milestone: M004
 Epic: E008
 Risk: medium
