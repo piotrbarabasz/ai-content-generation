@@ -792,7 +792,7 @@ Notes: Preserve `voiceover.wav` naming and export compatibility. Do not change `
 
 ## Phase 19: Optional Chatterbox Multilingual V3 runtime
 
-- [ ] T051 Add optional Chatterbox dependency and runtime hygiene contract
+- [X] T051 Add optional Chatterbox dependency and runtime hygiene contract
 Milestone: M004
 Epic: E008
 Risk: medium
@@ -807,7 +807,7 @@ Test requirements: Add or update lightweight planning validation only where exis
 Parallelizable: no
 Notes: Read `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`. Do not download packages or models during pytest.
 
-- [ ] T052 Implement Chatterbox Multilingual V3 provider adapter
+- [X] T052 Implement Chatterbox Multilingual V3 provider adapter
 Milestone: M004
 Epic: E008
 Risk: high
@@ -822,7 +822,7 @@ Test requirements: Use injected fake loaders/backends only. Tests must fail if r
 Parallelizable: no
 Notes: Do not import this class from workflow or module code. Do not add chunking, scene logic or API changes.
 
-- [ ] T053 Add typed TTS settings and provider factory
+- [X] T053 Add typed TTS settings and provider factory
 Milestone: M004
 Epic: E008
 Risk: high
@@ -837,7 +837,7 @@ Test requirements: Add factory-selection, settings-validation, unknown-provider,
 Parallelizable: no
 Notes: Keep this as a composition layer around ProviderConfig and ProviderRegistry. Do not duplicate ProviderRegistry resolution logic or redesign other provider categories.
 
-- [ ] T054 Add offline Chatterbox provider contract and failure tests
+- [X] T054 Add offline Chatterbox provider contract and failure tests
 Milestone: M004
 Epic: E008
 Risk: medium
@@ -852,7 +852,7 @@ Test requirements: Use monkeypatches and fake backends only.
 Parallelizable: yes
 Notes: Do not duplicate T052 behavior tests without adding a regression guarantee.
 
-- [ ] T055 Add manual Chatterbox V3 smoke runner and report
+- [X] T055 Add manual Chatterbox V3 smoke runner and report
 Milestone: M004
 Epic: E008
 Risk: medium
