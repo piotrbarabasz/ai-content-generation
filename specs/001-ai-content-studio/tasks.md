@@ -837,7 +837,7 @@ Test requirements: Add factory-selection, settings-validation, unknown-provider,
 Parallelizable: no
 Notes: Keep this as a composition layer around ProviderConfig and ProviderRegistry. Do not duplicate ProviderRegistry resolution logic or redesign other provider categories.
 
-- [ ] T054 Add offline Chatterbox provider contract and failure tests
+- [X] T054 Add offline Chatterbox provider contract and failure tests
 Milestone: M004
 Epic: E008
 Risk: medium
