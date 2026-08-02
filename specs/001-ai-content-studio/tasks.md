@@ -869,7 +869,7 @@ Notes: Real Chatterbox execution is manual human evidence and must not be added 
 
 ## Phase 20: Long narration reliability
 
-- [ ] T056 Implement deterministic technical narration chunking
+- [X] T056 Implement deterministic technical narration chunking
 Milestone: M004
 Epic: E009
 Risk: high
