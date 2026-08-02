@@ -785,40 +785,40 @@ Validation commands: `python -m pytest backend/tests/unit/test_t010.py backend/t
 Final PR review required: yes
 Goal: Make `voiceover.wav` contain valid audio data instead of a string reference while preserving provider abstraction and existing workflow outputs.
 Dependencies: T049
-Acceptance criteria: `TTSProvider.synthesize` returns `TTSSynthesisResult`; `MockTTSProvider` generates deterministic readable mono PCM WAV bytes using standard-library tooling; `VoiceoverModule` persists `audio_bytes`; metadata contains sample rate, duration, provider and source reference; tests prove the stored artifact starts with RIFF/WAVE and can be opened with `wave`; deterministic calls return identical bytes; existing long-form integration remains green; no XTTS import is introduced.
+Acceptance criteria: `TTSProvider.synthesize` returns `TTSSynthesisResult`; `MockTTSProvider` generates deterministic readable mono PCM WAV bytes using standard-library tooling; `VoiceoverModule` persists `audio_bytes`; metadata contains sample rate, duration, provider and source reference; tests prove the stored artifact starts with RIFF/WAVE and can be opened with `wave`; deterministic calls return identical bytes; existing long-form integration remains green; no Chatterbox import is introduced.
 Test requirements: Add direct regression proving that a path/URI string cannot be silently stored as completed `voiceover.wav`. Update impacted legacy tests in the same task without weakening assertions.
 Parallelizable: no
 Notes: Preserve `voiceover.wav` naming and export compatibility. Do not change `CoreWorkflowEngine`, API routes or semantic speech timing in this task.
 
-## Phase 19: Optional XTTS-v2 runtime
+## Phase 19: Optional Chatterbox Multilingual V3 runtime
 
-- [ ] T051 Add optional XTTS dependency and runtime hygiene contract
+- [ ] T051 Add optional Chatterbox dependency and runtime hygiene contract
 Milestone: M004
 Epic: E008
 Risk: medium
-Implementation files: `pyproject.toml`, `backend/requirements.txt`, `.gitignore`, `docs/tts/XTTS_SETUP.md`, `docs/INDEX.md`
+Implementation files: `pyproject.toml`, `backend/requirements.txt`, `.gitignore`, `docs/tts/CHATTERBOX_SETUP.md`, `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`, `docs/INDEX.md`
 Test files: `backend/tests/unit/test_t051.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t051.py`
 Final PR review required: yes
-Goal: Keep the base installation lightweight while documenting a reproducible optional XTTS-v2 environment based on the completed manual spike.
+Goal: Document and declare an optional local Chatterbox Multilingual V3 runtime without making it part of the default CI or application import path.
 Dependencies: T050
-Acceptance criteria: Base dependencies do not include PyTorch, torchaudio or Coqui; an optional extra or separate documented install path is added using versions confirmed by the spike rather than guessed versions; documentation separates target-specific PyTorch installation from `coqui-tts`; `.gitignore` excludes private voice samples, generated TTS outputs and model caches; base tests import without optional packages installed.
-Test requirements: Add a lightweight configuration test that parses project metadata and verifies heavy XTTS dependencies are optional, plus ignore-pattern coverage where practical.
+Acceptance criteria: Python 3.11 is documented; Chatterbox dependencies are optional; compatible PyTorch and torchaudio are selected per device outside the default dependency set; the Chatterbox source/version is pinned deterministically; the `setuptools<81` requirement is documented and pinned in the optional environment; normal project tests do not require CUDA; `.gitignore` excludes model caches, generated WAV files and local voice references; the successful manual spike is recorded; the built-in voice requires no speaker reference; optional speaker-reference cloning may be supported later; no private file path or model weight is committed.
+Test requirements: Add or update lightweight planning validation only where existing coverage validates dependency metadata, ignore patterns or documentation references; base tests must import without optional packages installed.
 Parallelizable: no
-Notes: Read `docs/tts/MANUAL_SPIKE.md`. If the spike has not produced confirmed versions, stop with an explicit blocker receipt instead of inventing pins. Do not download packages or models during pytest.
+Notes: Read `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`. Do not download packages or models during pytest.
 
-- [ ] T052 Implement XTTS-v2 provider behind an injectable backend boundary
+- [ ] T052 Implement Chatterbox Multilingual V3 provider adapter
 Milestone: M004
 Epic: E008
 Risk: high
-Implementation files: `backend/app/providers/xtts_v2.py`, `backend/app/providers/tts_result.py`, `backend/app/providers/interfaces.py`
+Implementation files: `backend/app/providers/chatterbox_v3.py`, `backend/app/providers/tts_result.py`, `backend/app/providers/interfaces.py`
 Test files: `backend/tests/unit/test_t052.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t052.py`
 Final PR review required: yes
-Goal: Add a real XTTS-v2 adapter that implements the generic TTS contract while remaining fully testable without importing or loading the model in CI.
+Goal: Implement a real Chatterbox Multilingual V3 adapter behind the existing generic TTS contract.
 Dependencies: T051
-Acceptance criteria: Provider exposes stable `provider_type` and `provider_name`; default model identifier is `tts_models/multilingual/multi-dataset/xtts_v2`; model/backend loading is lazy and occurs at most once per provider instance; synthesis passes text, language and speaker reference to the backend; WAV output is validated and returned as `TTSSynthesisResult`; missing dependency, invalid speaker file, unsupported device, model-load failure and invalid output produce typed actionable errors; provider module has no import-time model download or GPU initialization.
-Test requirements: Use an injected fake backend/loader to verify lazy load, one-time load, call parameters, errors and valid result conversion. Tests must fail if the real Coqui package is imported unexpectedly.
+Acceptance criteria: Provider exposes stable `provider_type` and `provider_name`; it selects multilingual V3 explicitly with `t3_model="v3"`; language safely defaults to `pl` only where appropriate; the built-in voice works without speaker audio; optional `audio_prompt_path` may be accepted but cannot be required; model/backend loading is lazy and occurs at most once per provider instance; there is no import-time torch, CUDA, network or model initialization; output WAV is validated at 24 kHz; valid output returns `TTSSynthesisResult`; typed actionable errors cover missing optional dependency, unsupported device, unavailable CUDA, model-load failure, generation failure, a configured-but-missing optional audio prompt, and invalid or empty WAV output; errors do not expose private absolute paths.
+Test requirements: Use injected fake loaders/backends only. Tests must fail if real Chatterbox is imported unexpectedly.
 Parallelizable: no
 Notes: Do not import this class from workflow or module code. Do not add chunking, scene logic or API changes.
 
@@ -830,42 +830,42 @@ Implementation files: `backend/app/providers/tts_settings.py`, `backend/app/prov
 Test files: `backend/tests/unit/test_t053.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t053.py`
 Final PR review required: yes
-Goal: Compose mock or XTTS-v2 provider instances from the existing ProviderConfig and register them through the existing ProviderRegistry without changing workflow orchestration.
+Goal: Add typed Chatterbox TTS settings and compose mock or `chatterbox_v3` provider instances from the existing ProviderConfig through the existing ProviderRegistry without changing workflow orchestration.
 Dependencies: T052
-Acceptance criteria: TTS-specific settings are parsed from the existing ProviderConfig.settings mapping; defaults are safe and do not point to a committed private file; the composition helper creates `mock` and `xtts_v2` instances; unknown providers fail clearly; XTTS construction does not load the model; created instances are registered and resolved through the existing ProviderRegistry; no second generic registry or competing workflow configuration model is introduced; `CoreWorkflowEngine` and `VoiceoverModule` do not import concrete TTS providers.
+Acceptance criteria: Settings support `provider`, `device`, `language_id`, `model_variant`, `audio_prompt_path`, `exaggeration`, `cfg_weight`, `temperature`, `repetition_penalty`, `min_p` and `top_p`; the provider remains `mock` unless explicitly configured; device does not assume CUDA; `language_id` may default to `pl` for `chatterbox_v3`; `model_variant` must be `v3`; `audio_prompt_path` defaults to null and no committed private path is used; constructing the provider does not load the model; the factory supports `mock` and `chatterbox_v3`; no second generic provider registry or competing workflow configuration model is introduced; `CoreWorkflowEngine` and `VoiceoverModule` do not import concrete TTS providers.
 Test requirements: Add factory-selection, settings-validation, unknown-provider, lazy-construction and import-boundary tests.
 Parallelizable: no
 Notes: Keep this as a composition layer around ProviderConfig and ProviderRegistry. Do not duplicate ProviderRegistry resolution logic or redesign other provider categories.
 
-- [ ] T054 Add offline XTTS provider contract and failure tests
+- [ ] T054 Add offline Chatterbox provider contract and failure tests
 Milestone: M004
 Epic: E008
 Risk: medium
-Implementation files: `none` unless a minimal test seam correction is required in `backend/app/providers/xtts_v2.py`
+Implementation files: `none` unless a minimal test seam correction is required in `backend/app/providers/chatterbox_v3.py`
 Test files: `backend/tests/unit/test_t054.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t054.py`
 Final PR review required: yes
-Goal: Harden the real-provider boundary against accidental model/network usage and common configuration failures.
+Goal: Harden the Chatterbox provider boundary against accidental model/network usage and common configuration failures.
 Dependencies: T053
-Acceptance criteria: Tests prove default collection does not import Coqui or torch; no HTTP/network call is made; CPU and CUDA requests are forwarded deterministically; a missing optional dependency includes installation guidance; invalid or empty WAV output is rejected; provider reuse does not reload the model; private speaker paths are not included in error snapshots beyond a safe basename or redacted representation.
-Test requirements: Use monkeypatch/fakes only. Add a test that fails if model initialization happens at module import or provider construction.
+Acceptance criteria: Tests prove default collection does not import torch or Chatterbox; no network or Hugging Face call is made; provider construction does not initialize a model; CPU and CUDA device choices are forwarded deterministically; `t3_model="v3"` and `language_id="pl"` are forwarded; built-in voice generation works without `audio_prompt_path`; optional `audio_prompt_path` is forwarded when configured; provider reuse does not reload the model; missing dependencies include installation guidance; invalid or empty WAV output is rejected; private paths are redacted from errors; model initialization never occurs at module import time.
+Test requirements: Use monkeypatches and fake backends only.
 Parallelizable: yes
-Notes: Production changes are permitted only when necessary to expose a clean test seam. Do not duplicate T052 behavior tests without adding a regression guarantee.
+Notes: Do not duplicate T052 behavior tests without adding a regression guarantee.
 
-- [ ] T055 Add a manual one-minute TTS smoke runner and report
+- [ ] T055 Add manual Chatterbox V3 smoke runner and report
 Milestone: M004
 Epic: E008
 Risk: medium
-Implementation files: `backend/app/tooling/__init__.py`, `backend/app/tooling/tts_smoke.py`, `docs/tts/XTTS_SMOKE.md`, `docs/INDEX.md`
+Implementation files: `backend/app/tooling/__init__.py`, `backend/app/tooling/tts_smoke.py`, `docs/tts/CHATTERBOX_SMOKE.md`, `docs/INDEX.md`
 Test files: `backend/tests/unit/test_t055.py`
 Validation commands: `python -m pytest backend/tests/unit/test_t055.py`
 Final PR review required: yes
 Goal: Provide one documented command that converts a fixture to WAV through the configured provider and emits machine-readable evidence.
 Dependencies: T054
-Acceptance criteria: Runner accepts provider, input text file, output WAV, language, device and speaker reference arguments; defaults to the one-minute fixture but never defaults to a private speaker file; creates parent directories safely; writes a JSON report with provider/model/device/text words/generation time/audio duration/sample rate/output checksum; validates the final WAV; returns non-zero on failure; `--help` works without optional XTTS dependencies; runner is excluded from default integration execution and never downloads a model in tests.
+Acceptance criteria: Runner accepts provider, input text file, output WAV, language, device, optional audio prompt and Chatterbox generation settings; the default provider remains mock and `chatterbox_v3` is selected explicitly; model variant is V3; no private speaker file is the default and the built-in voice is the default Chatterbox voice path; it creates parent directories safely; it writes a machine-readable JSON report with provider, model variant, device, language, text word count, generation time, audio duration, sample rate, output checksum and whether the built-in or reference voice was used; it validates the final WAV; it returns non-zero on failure; `--help` works without optional dependencies; tests never download the model; the runner is excluded from normal integration execution.
 Test requirements: Invoke the command entry function with a fake provider/factory and temporary files. Test success, invalid input, existing-output policy and non-zero failure paths.
 Parallelizable: no
-Notes: Real XTTS execution is manual human evidence and must not be added to CI. Do not wire the runner through API endpoints.
+Notes: Real Chatterbox execution is manual human evidence and must not be added to CI. Do not wire the runner through API endpoints.
 
 ## Phase 20: Long narration reliability
 

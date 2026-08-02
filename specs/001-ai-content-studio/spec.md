@@ -236,20 +236,20 @@ A user or reviewer wants to inspect generated artifacts such as script, scene pl
 
 ### User Story 5 - Generate provider-swappable Polish voiceover (Priority: P1)
 
-A developer wants to provide a fixed Polish narration and receive a playable WAV artifact through either the deterministic mock provider or XTTS-v2 without changing workflow orchestration.
+A developer wants to provide a fixed Polish narration and receive a playable WAV artifact through either the deterministic mock provider or Chatterbox Multilingual V3 without changing workflow orchestration.
 
 **Independent Test**: The one-minute narration fixture produces a valid RIFF/WAVE artifact through the provider-neutral voiceover path, while default tests remain offline and GPU-free.
 
 **Acceptance Scenarios**:
 
 1. **Given** a fixed narration and the mock TTS provider, **When** voiceover synthesis runs, **Then** the artifact store receives valid deterministic WAV bytes rather than a path or URI saved as a `.wav` file.
-2. **Given** an XTTS-v2 `ProviderConfig`, **When** provider composition runs, **Then** an XTTS-v2 implementation is registered behind the existing `TTSProvider` and `ProviderRegistry` contracts without importing the concrete provider from `VoiceoverModule` or `CoreWorkflowEngine`.
-3. **Given** a valid speaker reference and optional XTTS runtime, **When** the manual smoke runner is executed, **Then** it creates a playable Polish WAV and a JSON evidence report or exits non-zero with an actionable error.
+2. **Given** a Chatterbox Multilingual V3 `ProviderConfig`, **When** provider composition runs, **Then** a Chatterbox Multilingual V3 implementation is registered behind the existing `TTSProvider` and `ProviderRegistry` contracts without importing the concrete provider from `VoiceoverModule` or `CoreWorkflowEngine`.
+3. **Given** the optional Chatterbox runtime, **When** the manual smoke runner is executed with its built-in voice or an optional approved speaker reference, **Then** it creates a playable Polish WAV and a JSON evidence report or exits non-zero with an actionable error.
 4. **Given** a long narration, **When** chunked synthesis is interrupted and resumed, **Then** valid matching chunks are reused and only missing, changed or corrupt chunks are regenerated.
 
 ### Additional Edge Cases
 
-- XTTS optional dependencies are not installed.
+- Chatterbox optional dependencies are not installed.
 - `device=cuda` is requested but CUDA is unavailable.
 - A private speaker reference is missing, invalid or accidentally placed under a tracked path.
 - A provider returns empty bytes, non-WAV bytes or incompatible WAV parameters.
@@ -272,13 +272,13 @@ A developer wants to provide a fixed Polish narration and receive a playable WAV
 - **FR-060**: The mock TTS provider MUST generate deterministic, readable PCM WAV data using lightweight local code.
 - **FR-061**: Existing artifact naming and export compatibility for `voiceover.wav` MUST be preserved.
 
-#### XTTS-v2 Composition
+#### Chatterbox Multilingual V3 Composition
 
-- **FR-062**: XTTS-v2 MUST implement the existing `TTSProvider` abstraction.
+- **FR-062**: Chatterbox Multilingual V3 MUST implement the existing `TTSProvider` abstraction.
 - **FR-063**: Concrete TTS providers MUST be created from the existing `ProviderConfig` settings and registered in the existing `ProviderRegistry`; the implementation MUST NOT introduce a second generic provider registry.
-- **FR-064**: XTTS-v2 loading MUST be lazy and occur at most once per provider instance.
-- **FR-065**: Default tests MUST NOT import the real XTTS runtime, download weights, access the network or require a GPU.
-- **FR-066**: Heavy XTTS/PyTorch dependencies MUST remain optional and MUST use versions confirmed by the manual environment spike.
+- **FR-064**: Chatterbox Multilingual V3 loading MUST be lazy and occur at most once per provider instance.
+- **FR-065**: Default tests MUST NOT import the real Chatterbox runtime, download weights, access the network or require a GPU.
+- **FR-066**: Heavy Chatterbox/PyTorch dependencies MUST remain optional and MUST use versions confirmed by the manual environment spike.
 - **FR-067**: Missing dependencies, unsupported devices, invalid speaker references and invalid audio output MUST produce actionable errors.
 
 #### Long Narration Reliability
@@ -300,7 +300,7 @@ A developer wants to provide a fixed Polish narration and receive a playable WAV
 ### Additional Success Criteria
 
 - **SC-007**: The deterministic mock path stores a valid readable WAV and the complete existing test suite remains green.
-- **SC-008**: A human can run one documented command to generate a one-minute Polish XTTS-v2 WAV after supplying an approved speaker reference.
+- **SC-008**: A human can run one documented command to generate a one-minute Polish Chatterbox Multilingual V3 WAV using its built-in voice or an optional approved speaker reference.
 - **SC-009**: The fifteen-minute fixture completes with a fake backend, supports simulated interruption/resume and produces a final WAV plus synthesis and benchmark manifests.
 - **SC-010**: No task in M004 implements semantic scene splitting, image generation, captions, rendering, API redesign or deployment.
 

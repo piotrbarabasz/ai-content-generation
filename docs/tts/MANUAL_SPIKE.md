@@ -1,6 +1,8 @@
 # Manual XTTS-v2 Environment Spike
 
-This document records the human-run environment experiment required before task T051 pins or documents any optional XTTS dependency versions.
+This document preserves historical evidence from the former XTTS-v2 version of Epic E008. It is no longer a prerequisite for the current T051 task.
+
+> Historical result: XTTS-v2 was technically executable, but it was not selected because manual Polish voice-quality validation failed.
 
 ## Purpose
 
@@ -49,4 +51,4 @@ result: "PASS-or-FAIL"
 notes: ""
 ```
 
-Task T051 must treat `completed: false` or missing confirmed versions as a blocker. It must not invent dependency pins.
+In the former XTTS-oriented plan, T051 treated `completed: false` or missing confirmed versions as a blocker. This rule is retained only as historical context and does not apply to the current Chatterbox-oriented T051.
