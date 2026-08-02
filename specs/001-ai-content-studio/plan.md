@@ -247,15 +247,15 @@ Provider interfaces and expected methods are documented in [contracts/provider-c
 
 ### Scope
 
-M004 converts the existing mock voiceover reference into a real provider-neutral audio contract and adds XTTS-v2 as the first optional real adapter. The milestone stops after stable long-narration WAV generation. Semantic transcript-to-scene segmentation belongs to a later milestone.
+M004 converts the existing mock voiceover reference into a real provider-neutral audio contract and adds Chatterbox Multilingual V3 as the first optional real adapter. The milestone stops after stable long-narration WAV generation. Semantic transcript-to-scene segmentation belongs to a later milestone.
 
 ### Architecture Decisions
 
-1. **Preserve the existing provider system.** `ProviderConfig` remains the configuration input and `ProviderRegistry` remains the generic provider lookup mechanism. A TTS composition helper may instantiate `mock` or `xtts_v2` providers from `ProviderConfig`, but it must not create a second registry or a competing workflow configuration model.
+1. **Preserve the existing provider system.** `ProviderConfig` remains the configuration input and `ProviderRegistry` remains the generic provider lookup mechanism. A TTS composition helper may instantiate `mock` or `chatterbox_v3` providers from `ProviderConfig`, but it must not create a second registry or a competing workflow configuration model.
 2. **Keep workflow code provider-neutral.** `VoiceoverModule` and `CoreWorkflowEngine` depend on `TTSProvider` and a provider-neutral synthesis result only.
 3. **Persist real media bytes.** `voiceover.wav` contains readable WAV bytes. Paths, URIs and temporary filenames are metadata or implementation details, not audio payloads.
-4. **Keep heavy runtime dependencies optional.** Default installation and tests do not require PyTorch, XTTS, a GPU, network access or model downloads. Exact optional versions are documented only after the manual spike in `docs/tts/MANUAL_SPIKE.md` succeeds.
-5. **Introduce one provider-neutral TTS service package.** `backend/app/tts/` owns technical chunking, resumable chunk orchestration, WAV assembly and benchmark/manifests. It must not contain concrete XTTS imports or semantic scene logic.
+4. **Keep heavy runtime dependencies optional.** Default installation and tests do not require PyTorch, Chatterbox, a GPU, network access or model downloads. Exact optional versions are documented in `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`.
+5. **Introduce one provider-neutral TTS service package.** `backend/app/tts/` owns technical chunking, resumable chunk orchestration, WAV assembly and benchmark/manifests. It must not contain concrete provider imports or semantic scene logic.
 6. **Use technical chunking, not scene segmentation.** Paragraph/sentence splitting exists only to keep model requests bounded and recoverable.
 7. **Resume by input identity.** Reuse requires matching normalized text, relevant provider/voice configuration identity and a valid WAV checksum/format.
 
@@ -268,7 +268,7 @@ backend/app/providers/
 ├── tts_result.py
 ├── tts_settings.py
 ├── tts_factory.py
-└── xtts_v2.py
+└── chatterbox_v3.py
 
 backend/app/tts/
 ├── __init__.py
@@ -297,15 +297,15 @@ backend/tests/fixtures/narrations/
 
 **Exit condition**: mock voiceover output is a readable WAV and the complete test suite passes.
 
-### Epic E008 - XTTS-v2 Provider
+### Epic E008 - Chatterbox Multilingual V3 Provider
 
-- Record a human-run environment spike before declaring dependency versions.
-- Keep XTTS/PyTorch optional.
-- Add a lazy XTTS-v2 adapter behind an injectable backend boundary.
+- Record the successful human-run Chatterbox environment spike and deterministic optional dependency constraints.
+- Keep Chatterbox/PyTorch/CUDA optional.
+- Add a lazy Chatterbox Multilingual V3 adapter behind an injectable backend boundary.
 - Compose providers from existing `ProviderConfig` and register them in existing `ProviderRegistry`.
 - Add offline contract tests and a manual one-minute smoke runner.
 
-**Exit condition**: CI proves the adapter contract with fakes and a human can generate or diagnose one real Polish XTTS-v2 WAV.
+**Exit condition**: CI proves the adapter contract with fakes and a human can generate or diagnose one real Polish Chatterbox Multilingual V3 WAV.
 
 ### Epic E009 - Long Narration Reliability
 
@@ -319,7 +319,7 @@ backend/tests/fixtures/narrations/
 
 ### Testing Boundaries
 
-Default tests use only deterministic fixtures, mock/fake provider backends, temporary directories and small generated PCM WAV payloads. They must fail if they unexpectedly import or initialize the real XTTS runtime. Real-model execution is a manual smoke test and is never part of standard pytest or CI.
+Default tests use only deterministic fixtures, mock/fake provider backends, temporary directories and small generated PCM WAV payloads. They must fail if they unexpectedly import or initialize the real Chatterbox runtime. Real-model execution is a manual smoke test and is never part of standard pytest or CI.
 
 ### Runtime Hygiene
 

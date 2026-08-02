@@ -1,10 +1,10 @@
 id: E008
-title: XTTS-v2 Provider
+title: Chatterbox Multilingual V3 Provider
 # Part of M004 Real TTS Voiceover.
 milestone: M004
 feature: specs/001-ai-content-studio
 base_branch: master
-branch: epic/E008-xtts-v2-provider
+branch: epic/E008-chatterbox-v3-provider
 status: planned
 risk: high
 depends_on:
