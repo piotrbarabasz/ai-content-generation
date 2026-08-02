@@ -884,7 +884,7 @@ Test requirements: Add boundary, repeated sentence, abbreviation, decimal/date, 
 Parallelizable: no
 Notes: This is technical request chunking only. Do not introduce `RenderScene`, shot descriptions, image prompts or semantic topic segmentation.
 
-- [ ] T057 Add resumable chunk synthesis and compatible PCM WAV assembly
+- [X] T057 Add resumable chunk synthesis and compatible PCM WAV assembly
 Milestone: M004
 Epic: E009
 Risk: high
