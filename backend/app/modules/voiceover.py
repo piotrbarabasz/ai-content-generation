@@ -6,6 +6,8 @@ import json
 import io
 from collections.abc import Mapping
 from hashlib import sha256
+from pathlib import Path
+from time import monotonic
 import wave
 
 from app.domain.content_brief import ContentBrief
@@ -13,6 +15,9 @@ from app.domain.types import JsonDict
 from app.providers.interfaces import TTSProvider
 from app.providers.tts_result import TTSSynthesisResult
 from app.storage.artifact_store import ArtifactStore
+from app.tts.benchmark import build_benchmark_report
+from app.tts.chunk_synthesis import ResumableChunkSynthesizer
+from app.tts.chunking import NarrationChunkingSettings, chunk_narration
 from app.workflow.execution import ModuleExecutionContext, ModuleResult
 from app.workflow.module import ModuleDefinition
 
@@ -97,6 +102,9 @@ def _voice_config_payload(
     voice_config.setdefault("language", _optional_text(_pick(inputs, "language")) or default_language)
     voice_config.setdefault("tone", _optional_text(_pick(inputs, "tone")) or default_tone)
     voice_config.setdefault("source_kind", source_kind)
+    resumable_chunking = _pick(inputs, "resumable_chunking", "resumableChunking")
+    if resumable_chunking is not None:
+        voice_config.setdefault("resumable_chunking", resumable_chunking)
     return voice_config
 
 
@@ -148,6 +156,34 @@ def _stable_text_reference(workflow_run_id: str, text: str, source_kind: str) ->
     return f"text_ref_{signature}"
 
 
+def _resumable_settings(voice_config: Mapping[str, object]) -> tuple[int, int] | None:
+    """Read provider-neutral chunking controls without selecting a provider."""
+    value = _pick(voice_config, "resumable_chunking", "resumableChunking")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("VoiceoverModule resumable_chunking must be an object.")
+    if value.get("enabled", True) is False:
+        return None
+    max_words = value.get("max_words", value.get("maxWords", 120))
+    max_attempts = value.get("max_attempts", value.get("maxAttempts", 2))
+    if not isinstance(max_words, int) or isinstance(max_words, bool):
+        raise ValueError("VoiceoverModule resumable_chunking.max_words must be an integer.")
+    if not isinstance(max_attempts, int) or isinstance(max_attempts, bool) or max_attempts < 1:
+        raise ValueError("VoiceoverModule resumable_chunking.max_attempts must be a positive integer.")
+    NarrationChunkingSettings(max_words=max_words)
+    return max_words, max_attempts
+
+
+def _provider_voice_config(voice_config: Mapping[str, object]) -> JsonDict:
+    """Do not leak orchestration controls into a provider request."""
+    return {
+        key: value
+        for key, value in voice_config.items()
+        if key not in {"resumable_chunking", "resumableChunking"}
+    }
+
+
 class VoiceoverModule:
     """Generate deterministic mock voiceover artifacts from supplied text."""
 
@@ -164,6 +200,7 @@ class VoiceoverModule:
                 "text": {"type": "string"},
                 "narration": {"type": "string"},
                 "voice_config": {"type": "object"},
+                "resumable_chunking": {"type": "object"},
                 "voice": {"type": "string"},
                 "language": {"type": "string"},
                 "tone": {"type": "string"},
@@ -176,6 +213,8 @@ class VoiceoverModule:
                 "artifact": {"type": "object"},
                 "speech_timeline": {"type": "object"},
                 "speech_timeline_artifact": {"type": "object"},
+                "synthesis_manifest_artifact": {"type": "object"},
+                "benchmark_artifact": {"type": "object"},
                 "workflow_snapshot": {"type": "object"},
                 "source_kind": {"type": "string"},
             },
@@ -193,7 +232,12 @@ class VoiceoverModule:
         disabled_behavior="skip",
         enabled_by_default=False,
         retry_limit=2,
-        artifact_outputs=("voiceover.wav", "speech_timeline.json"),
+        artifact_outputs=(
+            "voiceover.wav",
+            "speech_timeline.json",
+            "synthesis-manifest.json",
+            "tts-benchmark.json",
+        ),
         error_behavior="request_missing_fields",
     )
 
@@ -207,6 +251,7 @@ class VoiceoverModule:
         default_tone: str = "neutral",
         artifact_name: str = "voiceover.wav",
         speech_timeline_name: str = "speech_timeline.json",
+        resumable_runtime_dir: Path | str | None = None,
     ) -> None:
         self._tts_provider = tts_provider
         self._artifact_store = artifact_store
@@ -216,6 +261,19 @@ class VoiceoverModule:
         self._artifact_name = _optional_text(artifact_name) or "voiceover.wav"
         self._speech_timeline_name = (
             _optional_text(speech_timeline_name) or "speech_timeline.json"
+        )
+        self._resumable_runtime_dir = (
+            Path(resumable_runtime_dir) if resumable_runtime_dir is not None else None
+        )
+
+    def _runtime_dir(self, workflow_run_id: str) -> Path:
+        if self._resumable_runtime_dir is not None:
+            return self._resumable_runtime_dir / workflow_run_id
+        root = getattr(self._artifact_store, "root", None)
+        if isinstance(root, Path):
+            return root / ".tts-runs" / workflow_run_id
+        raise ValueError(
+            "VoiceoverModule chunked synthesis requires resumable_runtime_dir with this artifact store."
         )
 
     def execute(self, context: ModuleExecutionContext) -> ModuleResult:
@@ -230,17 +288,56 @@ class VoiceoverModule:
             source_kind=source_kind,
         )
 
-        synthesis = self._tts_provider.synthesize(normalized_text, voice_config)
-        if not isinstance(synthesis, TTSSynthesisResult):
-            raise TypeError("VoiceoverModule TTS provider must return TTSSynthesisResult.")
-        if synthesis.audio_format != "wav":
-            raise ValueError("VoiceoverModule TTS provider must return WAV audio.")
+        provider_voice_config = _provider_voice_config(voice_config)
+        resumable = _resumable_settings(voice_config)
+        synthesis_manifest_payload: JsonDict | None = None
+        benchmark_payload: JsonDict | None = None
+        if resumable is None:
+            synthesis = self._tts_provider.synthesize(normalized_text, provider_voice_config)
+            if not isinstance(synthesis, TTSSynthesisResult):
+                raise TypeError("VoiceoverModule TTS provider must return TTSSynthesisResult.")
+            if synthesis.audio_format != "wav":
+                raise ValueError("VoiceoverModule TTS provider must return WAV audio.")
+            audio_bytes = synthesis.audio_bytes
+            sample_rate = synthesis.sample_rate
+            duration_seconds = round(float(synthesis.duration_seconds), 3)
+            source_metadata = synthesis.metadata
+            chunk_count = 1
+        else:
+            max_words, max_attempts = resumable
+            started = monotonic()
+            chunks = chunk_narration(normalized_text, NarrationChunkingSettings(max_words=max_words))
+            result = ResumableChunkSynthesizer(self._tts_provider, max_attempts=max_attempts).synthesize(
+                chunks,
+                runtime_dir=self._runtime_dir(context.workflow_run_id),
+                voice_config=provider_voice_config,
+            )
+            if not result.completed or result.final_wav is None:
+                failed = ", ".join(result.manifest.failed_chunk_ids) or "unknown chunk"
+                raise RuntimeError(f"VoiceoverModule chunked synthesis failed: {failed}.")
+            audio_bytes = result.final_wav.audio_bytes
+            sample_rate = result.final_wav.audio_parameters.sample_rate
+            duration_seconds = round(result.final_wav.duration_seconds, 3)
+            source_metadata = {}
+            chunk_count = len(chunks)
+            synthesis_manifest_payload = result.manifest.to_payload()
+            benchmark_payload = build_benchmark_report(
+                result.manifest,
+                provider=self._tts_provider.provider_name,
+                model=_optional_text(provider_voice_config.get("model_variant")) or "default",
+                device=_optional_text(provider_voice_config.get("device")) or "default",
+                language=_optional_text(provider_voice_config.get("language_id"))
+                or _optional_text(provider_voice_config.get("language"))
+                or self._default_language,
+                word_count=len(normalized_text.split()),
+                generation_wall_time_seconds=monotonic() - started,
+            ).to_payload()
 
-        _validate_wave_bytes(synthesis.audio_bytes, expected_sample_rate=synthesis.sample_rate)
+        _validate_wave_bytes(audio_bytes, expected_sample_rate=sample_rate)
 
         source_ref = _optional_text(
             _pick(
-                synthesis.metadata,
+                source_metadata,
                 "source_ref",
                 "sourceRef",
                 "audio_ref",
@@ -248,7 +345,6 @@ class VoiceoverModule:
             )
         ) or _stable_text_reference(context.workflow_run_id, normalized_text, source_kind)
 
-        duration_seconds = round(float(synthesis.duration_seconds), 3)
         text_reference_id = _optional_text(
             _pick(inputs, "text_reference_id", "textReferenceId")
         ) or _stable_text_reference(context.workflow_run_id, normalized_text, source_kind)
@@ -262,15 +358,16 @@ class VoiceoverModule:
             "source_kind": source_kind,
             "audio_ref": source_ref,
             "source_ref": source_ref,
-            "audio_format": synthesis.audio_format,
-            "sample_rate": synthesis.sample_rate,
+            "audio_format": "wav",
+            "sample_rate": sample_rate,
             "duration_seconds": duration_seconds,
             "word_count": len(normalized_text.split()),
+            "chunk_count": chunk_count,
         }
 
         voiceover_manifest = self._artifact_store.save_artifact(
             self._artifact_name,
-            synthesis.audio_bytes,
+            audio_bytes,
             metadata={
                 "workflow_run_id": context.workflow_run_id,
                 "module_name": self.definition.name,
@@ -278,9 +375,9 @@ class VoiceoverModule:
                 "source_kind": source_kind,
                 "provider": self._tts_provider.provider_name,
                 "source_ref": source_ref,
-                "sample_rate": synthesis.sample_rate,
+                "sample_rate": sample_rate,
                 "duration_seconds": duration_seconds,
-                "audio_format": synthesis.audio_format,
+                "audio_format": "wav",
                 "text_reference_id": text_reference_id,
                 "voice_config": voice_config,
             },
@@ -295,8 +392,8 @@ class VoiceoverModule:
             "voice_config": voice_config,
             "provider": self._tts_provider.provider_name,
             "source_ref": source_ref,
-            "sample_rate": synthesis.sample_rate,
-            "audio_format": synthesis.audio_format,
+            "sample_rate": sample_rate,
+            "audio_format": "wav",
         }
         speech_timeline_manifest = self._artifact_store.save_artifact(
             self._speech_timeline_name,
@@ -311,10 +408,28 @@ class VoiceoverModule:
             },
         )
 
+        synthesis_manifest_artifact = None
+        benchmark_artifact = None
+        if synthesis_manifest_payload is not None and benchmark_payload is not None:
+            synthesis_manifest_artifact = self._artifact_store.save_artifact(
+                "synthesis-manifest.json",
+                json.dumps(synthesis_manifest_payload, indent=2, sort_keys=True),
+                metadata={"workflow_run_id": context.workflow_run_id, "module_name": self.definition.name, "artifact_type": "tts_synthesis_manifest"},
+            )
+            benchmark_artifact = self._artifact_store.save_artifact(
+                "tts-benchmark.json",
+                json.dumps(benchmark_payload, indent=2, sort_keys=True),
+                metadata={"workflow_run_id": context.workflow_run_id, "module_name": self.definition.name, "artifact_type": "tts_benchmark"},
+            )
+
         return ModuleResult(
             module_name=self.definition.name,
             status="completed",
-            output_artifact_ids=self.definition.artifact_outputs,
+            output_artifact_ids=(
+                self.definition.artifact_outputs
+                if synthesis_manifest_payload is not None
+                else self.definition.artifact_outputs[:2]
+            ),
             output={
                 "voiceover": {
                     **voiceover_payload,
@@ -323,6 +438,8 @@ class VoiceoverModule:
                 "artifact": voiceover_manifest.to_payload(),
                 "speech_timeline": speech_timeline_payload,
                 "speech_timeline_artifact": speech_timeline_manifest.to_payload(),
+                **({"synthesis_manifest_artifact": synthesis_manifest_artifact.to_payload()} if synthesis_manifest_artifact else {}),
+                **({"benchmark_artifact": benchmark_artifact.to_payload()} if benchmark_artifact else {}),
                 "workflow_snapshot": {
                     "workflow_run_id": context.workflow_run_id,
                     "workflow_config_id": context.workflow_config_id,

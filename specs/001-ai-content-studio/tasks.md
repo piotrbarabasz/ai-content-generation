@@ -914,7 +914,7 @@ Test requirements: Add calculation, rounding, serialization, zero-duration, fail
 Parallelizable: yes
 Notes: Do not introduce cost accounting, dashboards or external telemetry.
 
-- [ ] T059 Integrate resumable long narration with VoiceoverModule
+- [X] T059 Integrate resumable long narration with VoiceoverModule
 Milestone: M004
 Epic: E009
 Risk: high

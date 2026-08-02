@@ -49,7 +49,12 @@ def test_voiceover_module_definition_matches_contract() -> None:
         assert module.definition.enabled_by_default is False
         assert module.definition.disabled_behavior == "skip"
         assert module.definition.retry_limit == 2
-        assert module.definition.artifact_outputs == ("voiceover.wav", "speech_timeline.json")
+        assert module.definition.artifact_outputs == (
+            "voiceover.wav",
+            "speech_timeline.json",
+            "synthesis-manifest.json",
+            "tts-benchmark.json",
+        )
         assert module.definition.config_schema["properties"]["default_voice"]["type"] == "string"
 
 
