@@ -995,7 +995,7 @@ Test requirements: Add cache miss, partial reuse, full reuse, failed chunk, actu
 Parallelizable: no
 Notes: Do not add cost accounting, dashboards, telemetry, network upload or provider-specific logic to VoiceoverModule.
 
-- [ ] T064 Add 15-minute interruption and resume acceptance coverage
+- [X] T064 Add 15-minute interruption and resume acceptance coverage
 Milestone: M005
 Epic: E010
 Risk: high
