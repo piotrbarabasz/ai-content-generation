@@ -935,7 +935,7 @@ Notes: If current `VoiceoverModule` dependency rules prevent direct narration ex
 
 ## Phase 21: TTS runtime hardening
 
-- [ ] T060 Add effective TTS synthesis identity and settings propagation
+- [X] T060 Add effective TTS synthesis identity and settings propagation
 Milestone: M005
 Epic: E010
 Risk: high
@@ -950,7 +950,7 @@ Test requirements: Add fake-provider tests for stable identity, changed device, 
 Parallelizable: no
 Notes: Do not add provider-specific checks to VoiceoverModule and do not introduce a second provider registry.
 
-- [ ] T061 Harden cache identity and prune stale narration chunks
+- [X] T061 Harden cache identity and prune stale narration chunks
 Milestone: M005
 Epic: E010
 Risk: high
@@ -965,7 +965,7 @@ Test requirements: Add full-cache-hit, partial text change, shortened narration,
 Parallelizable: no
 Notes: Cache invalidation must be deterministic and local. Do not add timestamps, databases or external cache services.
 
-- [ ] T062 Make manifest lifecycle and WAV finalization crash-safe
+- [X] T062 Make manifest lifecycle and WAV finalization crash-safe
 Milestone: M005
 Epic: E010
 Risk: high
@@ -980,7 +980,7 @@ Test requirements: Simulate interruption after partial chunk completion, interru
 Parallelizable: no
 Notes: Standard-library PCM WAV handling remains the default. Do not add FFmpeg or platform-specific file locking.
 
-- [ ] T063 Make benchmark and smoke evidence reflect actual synthesis
+- [X] T063 Make benchmark and smoke evidence reflect actual synthesis
 Milestone: M005
 Epic: E010
 Risk: high
@@ -995,7 +995,7 @@ Test requirements: Add cache miss, partial reuse, full reuse, failed chunk, actu
 Parallelizable: no
 Notes: Do not add cost accounting, dashboards, telemetry, network upload or provider-specific logic to VoiceoverModule.
 
-- [ ] T064 Add 15-minute interruption and resume acceptance coverage
+- [X] T064 Add 15-minute interruption and resume acceptance coverage
 Milestone: M005
 Epic: E010
 Risk: high

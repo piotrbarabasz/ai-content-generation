@@ -7,13 +7,13 @@ import hashlib
 import json
 import sys
 import time
-import wave
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from app.tts.benchmark import build_benchmark_report
-from app.tts.manifest import AudioParameters, ChunkManifest, SynthesisManifest
+from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
+from app.tts.manifest import ChunkManifest, SynthesisManifest, sanitize_synthesis_identity
 
 
 class TTSSmokeError(RuntimeError):
@@ -44,16 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _validate_wav(path: Path) -> tuple[int, float]:
+def _validate_wav(path: Path):
     try:
-        with wave.open(str(path), "rb") as wav_file:
-            sample_rate = wav_file.getframerate()
-            frames = wav_file.getnframes()
-    except (EOFError, OSError, wave.Error) as exc:
+        parameters, _ = inspect_pcm_wav(path.read_bytes())
+    except (OSError, WavAssemblyError) as exc:
         raise TTSSmokeError(f"Output is not a valid WAV file: {path}") from exc
-    if sample_rate <= 0 or frames <= 0:
+    if parameters.frame_count <= 0:
         raise TTSSmokeError("Output WAV must have a positive sample rate and at least one frame.")
-    return sample_rate, frames / sample_rate
+    return parameters
 
 
 def _create_provider(args: argparse.Namespace) -> Any:
@@ -66,6 +64,29 @@ def _create_provider(args: argparse.Namespace) -> Any:
     return ChatterboxV3Provider(
         "chatterbox_v3", device=args.device, language_id=args.language, audio_prompt_path=args.audio_prompt
     )
+
+
+def _effective_synthesis_identity(
+    provider: Any,
+    voice_config: dict[str, Any],
+    *,
+    provider_name: str,
+    model_variant: str,
+    device: str,
+    language: str,
+) -> dict[str, Any]:
+    """Return a provider identity when supported, otherwise a compatibility fallback."""
+    effective_identity = getattr(provider, "effective_synthesis_identity", None)
+    if callable(effective_identity):
+        identity = effective_identity(voice_config)
+        if isinstance(identity, dict):
+            return identity
+    return {
+        "provider": provider_name,
+        "model_variant": model_variant,
+        "device": device,
+        "language_id": language,
+    }
 
 
 def _read_text(args: argparse.Namespace) -> str:
@@ -95,27 +116,45 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         voice_config["audio_prompt_path"] = str(args.audio_prompt)
     voice_config.update({name: getattr(args, name) for name in _KNOBS if getattr(args, name) is not None})
     started = time.perf_counter()
-    result = _create_provider(args).synthesize(text, voice_config)
+    provider = _create_provider(args)
+    effective_identity = _effective_synthesis_identity(
+        provider,
+        voice_config,
+        provider_name=args.provider,
+        model_variant=args.model_variant,
+        device=args.device,
+        language=args.language,
+    )
+    result = provider.synthesize(text, voice_config)
     generation_seconds = time.perf_counter() - started
     if result.audio_format != "wav":
         raise TTSSmokeError("Provider did not return WAV audio.")
     args.output.write_bytes(result.audio_bytes)
-    sample_rate, duration_seconds = _validate_wav(args.output)
+    parameters = _validate_wav(args.output)
+    duration_seconds = parameters.duration_seconds
     checksum = hashlib.sha256(result.audio_bytes).hexdigest()
-    parameters = AudioParameters(1, 2, sample_rate, "NONE", round(duration_seconds * sample_rate))
     chunk = ChunkManifest("smoke-0001", 0, "completed", "smoke", "smoke", "smoke", checksum, duration_seconds, parameters)
     manifest = SynthesisManifest(
         config_hash="smoke", chunks={chunk.chunk_id: chunk}, final_status="completed",
         final_checksum=checksum, final_duration_seconds=duration_seconds, final_audio_parameters=parameters,
+        effective_synthesis_identity=sanitize_synthesis_identity(effective_identity),
+        generated_chunk_count=1,
     )
     report = build_benchmark_report(
-        manifest, provider=result.provider_name, model="v3", device=args.device,
-        language=args.language, word_count=len(text.split()), generation_wall_time_seconds=generation_seconds,
+        manifest, word_count=len(text.split()), generation_wall_time_seconds=generation_seconds,
     ).to_payload()
     report.update({
-        "model_variant": "v3", "generation_seconds": report["generation_wall_time_seconds"],
+        # Keep the legacy field aligned with the effective identity-backed
+        # benchmark model; CLI selection must not overwrite reported identity.
+        "model_variant": report["model"], "generation_seconds": report["generation_wall_time_seconds"],
         "checksum_sha256": checksum, "voice": result.metadata.get("voice", "builtin"),
         "output_wav": str(args.output),
+        "channels": parameters.channels,
+        "sample_width": parameters.sample_width,
+        "sample_rate": parameters.sample_rate,
+        "compression_type": parameters.compression_type,
+        "frame_count": parameters.frame_count,
+        "duration_seconds": parameters.duration_seconds,
     })
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report

@@ -11,9 +11,22 @@ from typing import Any
 from app.providers.interfaces import TTSProvider
 from app.providers.tts_result import TTSSynthesisResult
 
-from .assembly import WavAssemblyError, WavAssemblyResult, assemble_pcm_wav, inspect_pcm_wav
+from .assembly import (
+    WavAssemblyError,
+    WavAssemblyResult,
+    assemble_pcm_wav,
+    inspect_pcm_wav,
+    persist_pcm_wav_atomically,
+)
 from .chunking import NarrationChunk
-from .manifest import AudioParameters, ChunkManifest, SynthesisManifest, relative_reference, stable_hash
+from .manifest import (
+    AudioParameters,
+    ChunkManifest,
+    SynthesisManifest,
+    relative_reference,
+    sanitize_synthesis_identity,
+    stable_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,20 +57,50 @@ class ResumableChunkSynthesizer:
         """Synthesize all chunks, then assemble only a fully valid chunk set."""
         root = Path(runtime_dir)
         config = dict(voice_config or {})
-        config_hash = stable_hash({"provider": self._provider.provider_name, "voice_config": config})
-        manifest_path = root / manifest_name
-        manifest = SynthesisManifest.load(manifest_path, config_hash=config_hash)
         root.mkdir(parents=True, exist_ok=True)
+        effective_identity = self._effective_identity(config)
+        config_hash = self._config_hash_from_identity(effective_identity)
+        manifest_path = self._runtime_path(root, manifest_name)
+        final_path = self._runtime_path(root, final_name)
+        manifest = SynthesisManifest.load(manifest_path, config_hash=config_hash)
+        manifest.effective_synthesis_identity = sanitize_synthesis_identity(effective_identity)
+        ordered_chunks = sorted(chunks, key=lambda item: item.index)
+        self._prune_stale_chunks(manifest, ordered_chunks, root)
+        previous_final_refs = (manifest.final_artifact_ref, relative_reference(final_path, root))
+        # A persisted running state is the first observable action of every
+        # run.  It makes an interrupted rerun unable to advertise prior final
+        # output as the result of the work now in progress.
+        manifest.final_status = "running"
+        manifest.final_artifact_ref = None
+        manifest.final_checksum = None
+        manifest.final_duration_seconds = None
+        manifest.final_audio_parameters = None
+        manifest.failed_chunk_ids = []
+        manifest.generated_chunk_count = 0
+        manifest.reused_chunk_count = 0
+        manifest.failed_chunk_count = 0
+        manifest.save(manifest_path)
+        try:
+            self._remove_previous_finals(root, previous_final_refs)
+        except OSError as exc:
+            self._mark_final_failed(manifest)
+            manifest.save(manifest_path)
+            return ChunkSynthesisResult(manifest, False, None)
         failed: list[str] = []
         outputs: list[bytes] = []
         baseline: AudioParameters | None = None
-        for chunk in sorted(chunks, key=lambda item: item.index):
+        for chunk in ordered_chunks:
             record = self._record_for(chunk, config_hash, manifest)
             payload = self._reuse_if_valid(record, root)
             if payload is None:
                 payload = self._synthesize_chunk(chunk, config, record, root)
+                if payload is not None:
+                    manifest.generated_chunk_count += 1
+            else:
+                manifest.reused_chunk_count += 1
             if payload is None:
                 failed.append(chunk.id)
+                manifest.failed_chunk_count += 1
                 manifest.chunks[chunk.id] = record
                 manifest.save(manifest_path)
                 continue
@@ -78,31 +121,134 @@ class ResumableChunkSynthesizer:
             manifest.save(manifest_path)
         manifest.failed_chunk_ids = failed
         if failed or len(outputs) != len(chunks):
-            manifest.final_status = "failed"
-            manifest.final_artifact_ref = None
-            manifest.final_checksum = None
-            manifest.final_duration_seconds = None
-            manifest.final_audio_parameters = None
+            self._mark_final_failed(manifest)
             manifest.save(manifest_path)
             return ChunkSynthesisResult(manifest, False, None)
         try:
-            final_path = root / final_name
             final = assemble_pcm_wav(outputs, final_path)
+            persisted = final_path.read_bytes()
+            persisted_parameters, _ = inspect_pcm_wav(persisted)
+            if (
+                sha256(persisted).hexdigest() != final.checksum
+                or persisted_parameters != final.audio_parameters
+                or persisted_parameters.frame_count != final.audio_parameters.frame_count
+            ):
+                raise WavAssemblyError("Published final WAV does not match its completion evidence.")
             manifest.final_status = "completed"
             manifest.final_artifact_ref = relative_reference(final_path, root)
             manifest.final_checksum = final.checksum
             manifest.final_duration_seconds = final.duration_seconds
             manifest.final_audio_parameters = final.audio_parameters
         except (OSError, WavAssemblyError) as exc:
-            manifest.final_status = "failed"
-            manifest.final_artifact_ref = None
-            manifest.final_checksum = None
-            manifest.final_duration_seconds = None
-            manifest.final_audio_parameters = None
+            # An error detected after replacement (for example a failed
+            # post-write verification) must not leave an unreferenced output
+            # that could be mistaken for a completed final WAV.
+            try:
+                self._remove_previous_finals(root, (relative_reference(final_path, root),))
+            except OSError:
+                pass
+            self._mark_final_failed(manifest)
             manifest.save(manifest_path)
             return ChunkSynthesisResult(manifest, False, None)
         manifest.save(manifest_path)
         return ChunkSynthesisResult(manifest, True, final)
+
+    @staticmethod
+    def _runtime_path(root: Path, reference: str) -> Path:
+        """Resolve a configured artifact name only after proving root safety."""
+        path = root / reference
+        relative_reference(path, root)
+        return path
+
+    @staticmethod
+    def _mark_final_failed(manifest: SynthesisManifest) -> None:
+        manifest.final_status = "failed"
+        manifest.final_artifact_ref = None
+        manifest.final_checksum = None
+        manifest.final_duration_seconds = None
+        manifest.final_audio_parameters = None
+
+    @staticmethod
+    def _remove_previous_finals(root: Path, references: tuple[str | None, ...]) -> None:
+        """Remove only prior final files proven to be under the runtime root."""
+        resolved_root = root.resolve()
+        seen: set[Path] = set()
+        for reference in references:
+            if not reference:
+                continue
+            path = root / reference
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(resolved_root)
+            except (OSError, ValueError) as exc:
+                raise OSError("TTS final artifact path is outside the runtime root.") from exc
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if path.exists():
+                path.unlink()
+
+    def _effective_identity(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Read the provider-neutral effective identity once per invocation."""
+        identity = self._provider.effective_synthesis_identity(config)
+        if not isinstance(identity, Mapping):
+            raise ValueError("TTS provider effective synthesis identity must be a mapping.")
+        return dict(identity)
+
+    def _config_hash(self, config: dict[str, Any]) -> str:
+        """Return the cache identity for a caller-supplied provider config."""
+        return self._config_hash_from_identity(self._effective_identity(config))
+
+    def _config_hash_from_identity(self, identity: Mapping[str, Any]) -> str:
+        """Hash provider-neutral effective inputs without persisting raw values."""
+        return stable_hash(
+            {
+                "provider": self._provider.provider_name,
+                "effective_synthesis_identity": dict(identity),
+            }
+        )
+
+    @staticmethod
+    def _prune_stale_chunks(
+        manifest: SynthesisManifest,
+        chunks: Sequence[NarrationChunk],
+        root: Path,
+    ) -> None:
+        """Keep only current records and controlled orphan WAVs under ``root``."""
+        current_ids = {chunk.id for chunk in chunks}
+        manifest.chunks = {
+            chunk_id: record
+            for chunk_id, record in manifest.chunks.items()
+            if chunk_id in current_ids
+        }
+
+        chunk_directory = root / "chunks"
+        try:
+            resolved_root = root.resolve()
+            resolved_chunk_directory = chunk_directory.resolve()
+            resolved_chunk_directory.relative_to(resolved_root)
+        except (OSError, ValueError):
+            return
+        if not chunk_directory.is_dir():
+            return
+
+        active_names = {f"{chunk_id}.wav" for chunk_id in current_ids}
+        try:
+            candidates = tuple(chunk_directory.iterdir())
+        except OSError:
+            return
+        for candidate in candidates:
+            if candidate.name in active_names or candidate.suffix != ".wav":
+                continue
+            try:
+                # Refuse a symlinked directory or file that resolves beyond
+                # the runtime chunk directory.  Only direct WAV children may
+                # be unlinked as stale runtime artifacts.
+                if candidate.resolve().parent != resolved_chunk_directory:
+                    continue
+                candidate.unlink()
+            except OSError:
+                continue
 
     def _record_for(self, chunk: NarrationChunk, config_hash: str, manifest: SynthesisManifest) -> ChunkManifest:
         input_hash = sha256(chunk.text.encode("utf-8")).hexdigest()
@@ -139,12 +285,12 @@ class ResumableChunkSynthesizer:
                 if parameters.sample_rate != synthesis.sample_rate:
                     raise WavAssemblyError("Chunk WAV sample rate differs from its synthesis result.")
                 path = root / "chunks" / f"{chunk.id}.wav"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(synthesis.audio_bytes)
+                relative_reference(path, root)
+                persisted = persist_pcm_wav_atomically(synthesis.audio_bytes, path)
                 record.status = "completed"
-                record.wav_checksum = sha256(synthesis.audio_bytes).hexdigest()
-                record.duration_seconds = parameters.duration_seconds
-                record.audio_parameters = parameters
+                record.wav_checksum = persisted.checksum
+                record.duration_seconds = persisted.duration_seconds
+                record.audio_parameters = persisted.audio_parameters
                 record.artifact_ref = relative_reference(path, root)
                 record.error = None
                 return synthesis.audio_bytes

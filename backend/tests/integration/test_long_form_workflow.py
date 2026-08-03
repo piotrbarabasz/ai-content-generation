@@ -79,6 +79,7 @@ def _run_long_form_workflow(
     workflow_run_id: str,
     topic: str,
     disabled_modules: tuple[str, ...],
+    resumable_chunking: dict[str, object] | None = None,
 ) -> tuple[object, LocalArtifactStore, dict[str, object]]:
     store = LocalArtifactStore(store_root)
     modules = _build_modules(store)
@@ -94,6 +95,11 @@ def _run_long_form_workflow(
         provider_config={
             "LLMProvider": {"providerName": "mock", "enabled": True},
             "StorageProvider": {"providerName": "mock", "enabled": True},
+            **(
+                {"TTSProvider": {"providerName": "mock", "enabled": True}}
+                if "voiceover" not in disabled_modules
+                else {}
+            ),
         },
     )
     workflow_config = WorkflowConfig.from_payload(workflow_config_payload)
@@ -124,6 +130,7 @@ def _run_long_form_workflow(
                 "status": "running",
                 "current_stage": "export",
             },
+            **({"resumable_chunking": resumable_chunking} if resumable_chunking is not None else {}),
         },
     )
 
@@ -238,3 +245,26 @@ def test_long_form_workflow_executes_without_research_or_voiceover() -> None:
             "manifest.json",
         }
         assert workflow_config_payload["disabledModules"] == ["research", "dossier", "voiceover"]
+
+
+def test_long_form_workflow_exports_chunked_voiceover_evidence() -> None:
+    with _workspace_tempdir("test_long_form_workflow_chunked_voiceover") as store_root:
+        result, store, _ = _run_long_form_workflow(
+            store_root,
+            project_id="project_chunked_voiceover",
+            workflow_run_id="workflow_run_chunked_voiceover",
+            topic="Launch teaser",
+            disabled_modules=(),
+            resumable_chunking={"max_words": 5, "max_attempts": 1},
+        )
+
+        export_manifest = result.module_results["export"].output["manifest"]
+        voiceover_result = result.module_results["voiceover"]
+        assert result.status == "completed"
+        assert voiceover_result.status == "completed"
+        assert {"voiceover.wav", "speech_timeline.json", "synthesis-manifest.json", "tts-benchmark.json"} <= set(
+            export_manifest["artifactReferences"]
+        )
+        assert {"voiceover.wav", "speech_timeline.json", "synthesis-manifest.json", "tts-benchmark.json"} <= {
+            artifact.name for artifact in store.list_artifacts()
+        }

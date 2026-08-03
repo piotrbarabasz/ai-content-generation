@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 
@@ -117,12 +119,22 @@ class SynthesisManifest:
     final_duration_seconds: float | None = None
     final_audio_parameters: AudioParameters | None = None
     failed_chunk_ids: list[str] = field(default_factory=list)
+    # These fields describe one invocation, rather than cumulative work kept
+    # in the reusable chunk records.  They are reset when a new invocation
+    # starts so a resumed run can report what it actually did.
+    effective_synthesis_identity: dict[str, Any] = field(default_factory=dict)
+    generated_chunk_count: int = 0
+    reused_chunk_count: int = 0
+    failed_chunk_count: int = 0
     schema_version: int = 1
 
     def to_payload(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "config_hash": self.config_hash,
+            # This is derived instead of persisted as mutable state so the
+            # manifest can never report records removed during a resumed run.
+            "chunk_count": self.chunk_count,
             "chunks": [self.chunks[key].to_payload() for key in sorted(self.chunks, key=lambda key: self.chunks[key].index)],
             "final_status": self.final_status,
             "final_artifact_ref": self.final_artifact_ref,
@@ -130,6 +142,10 @@ class SynthesisManifest:
             "final_duration_seconds": self.final_duration_seconds,
             "final_audio_parameters": self.final_audio_parameters.to_payload() if self.final_audio_parameters else None,
             "failed_chunk_ids": list(self.failed_chunk_ids),
+            "effective_synthesis_identity": self.effective_synthesis_identity,
+            "generated_chunk_count": self.generated_chunk_count,
+            "reused_chunk_count": self.reused_chunk_count,
+            "failed_chunk_count": self.failed_chunk_count,
         }
 
     @classmethod
@@ -149,8 +165,19 @@ class SynthesisManifest:
             final_duration_seconds=float(payload["final_duration_seconds"]) if payload.get("final_duration_seconds") is not None else None,
             final_audio_parameters=AudioParameters.from_payload(audio) if isinstance(audio, Mapping) else None,
             failed_chunk_ids=[str(value) for value in payload.get("failed_chunk_ids", [])],
+            effective_synthesis_identity=sanitize_synthesis_identity(
+                payload.get("effective_synthesis_identity", {})
+            ),
+            generated_chunk_count=int(payload.get("generated_chunk_count", 0)),
+            reused_chunk_count=int(payload.get("reused_chunk_count", 0)),
+            failed_chunk_count=int(payload.get("failed_chunk_count", 0)),
             schema_version=int(payload.get("schema_version", 1)),
         )
+
+    @property
+    def chunk_count(self) -> int:
+        """Return the number of chunk records currently in this manifest."""
+        return len(self.chunks)
 
     @classmethod
     def load(cls, path: Path, *, config_hash: str) -> "SynthesisManifest":
@@ -167,10 +194,69 @@ class SynthesisManifest:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(self.to_payload(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        payload = json.dumps(self.to_payload(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        # Parse the exact data before replacing an existing manifest.  A
+        # uniquely named sibling temp file avoids exposing a truncated JSON
+        # sidecar if the process is interrupted mid-write.
+        json.loads(payload)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                temporary.write(payload)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            Path(temporary_name).replace(path)
+        finally:
+            if temporary_name is not None:
+                try:
+                    Path(temporary_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
+
+
+def sanitize_synthesis_identity(identity: object) -> dict[str, Any]:
+    """Return a JSON-compatible provider identity without local path details."""
+    if not isinstance(identity, Mapping):
+        raise ValueError("TTS provider effective synthesis identity must be a mapping.")
+
+    hidden = object()
+
+    def sanitize(value: object, *, key: str = "") -> object:
+        normalized_key = key.lower()
+        if normalized_key == "path" or normalized_key.endswith("_path"):
+            return hidden
+        if isinstance(value, Path):
+            return hidden
+        if isinstance(value, Mapping):
+            return {
+                str(item_key): clean
+                for item_key, item_value in value.items()
+                if (clean := sanitize(item_value, key=str(item_key))) is not hidden
+            }
+        if isinstance(value, (list, tuple)):
+            return [clean for item in value if (clean := sanitize(item)) is not hidden]
+        if isinstance(value, str):
+            # Paths may originate on a different operating system, so handle
+            # both native and Windows drive-qualified forms without resolving
+            # or touching the provider's local files.
+            candidate = Path(value)
+            if candidate.is_absolute() or (len(value) > 2 and value[1:3] in (":\\", ":/")):
+                return hidden
+            return value
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        return str(value)
+
+    sanitized = sanitize(identity)
+    assert isinstance(sanitized, dict)
+    # Verify exactly the form that will be persisted is JSON-compatible.
+    json.dumps(sanitized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sanitized
