@@ -19,7 +19,14 @@ from .assembly import (
     persist_pcm_wav_atomically,
 )
 from .chunking import NarrationChunk
-from .manifest import AudioParameters, ChunkManifest, SynthesisManifest, relative_reference, stable_hash
+from .manifest import (
+    AudioParameters,
+    ChunkManifest,
+    SynthesisManifest,
+    relative_reference,
+    sanitize_synthesis_identity,
+    stable_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,10 +58,12 @@ class ResumableChunkSynthesizer:
         root = Path(runtime_dir)
         config = dict(voice_config or {})
         root.mkdir(parents=True, exist_ok=True)
-        config_hash = self._config_hash(config)
+        effective_identity = self._effective_identity(config)
+        config_hash = self._config_hash_from_identity(effective_identity)
         manifest_path = self._runtime_path(root, manifest_name)
         final_path = self._runtime_path(root, final_name)
         manifest = SynthesisManifest.load(manifest_path, config_hash=config_hash)
+        manifest.effective_synthesis_identity = sanitize_synthesis_identity(effective_identity)
         ordered_chunks = sorted(chunks, key=lambda item: item.index)
         self._prune_stale_chunks(manifest, ordered_chunks, root)
         previous_final_refs = (manifest.final_artifact_ref, relative_reference(final_path, root))
@@ -67,6 +76,9 @@ class ResumableChunkSynthesizer:
         manifest.final_duration_seconds = None
         manifest.final_audio_parameters = None
         manifest.failed_chunk_ids = []
+        manifest.generated_chunk_count = 0
+        manifest.reused_chunk_count = 0
+        manifest.failed_chunk_count = 0
         manifest.save(manifest_path)
         try:
             self._remove_previous_finals(root, previous_final_refs)
@@ -82,8 +94,13 @@ class ResumableChunkSynthesizer:
             payload = self._reuse_if_valid(record, root)
             if payload is None:
                 payload = self._synthesize_chunk(chunk, config, record, root)
+                if payload is not None:
+                    manifest.generated_chunk_count += 1
+            else:
+                manifest.reused_chunk_count += 1
             if payload is None:
                 failed.append(chunk.id)
+                manifest.failed_chunk_count += 1
                 manifest.chunks[chunk.id] = record
                 manifest.save(manifest_path)
                 continue
@@ -171,11 +188,19 @@ class ResumableChunkSynthesizer:
             if path.exists():
                 path.unlink()
 
-    def _config_hash(self, config: dict[str, Any]) -> str:
-        """Hash only provider-neutral, effective inputs without persisting them."""
+    def _effective_identity(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Read the provider-neutral effective identity once per invocation."""
         identity = self._provider.effective_synthesis_identity(config)
         if not isinstance(identity, Mapping):
             raise ValueError("TTS provider effective synthesis identity must be a mapping.")
+        return dict(identity)
+
+    def _config_hash(self, config: dict[str, Any]) -> str:
+        """Return the cache identity for a caller-supplied provider config."""
+        return self._config_hash_from_identity(self._effective_identity(config))
+
+    def _config_hash_from_identity(self, identity: Mapping[str, Any]) -> str:
+        """Hash provider-neutral effective inputs without persisting raw values."""
         return stable_hash(
             {
                 "provider": self._provider.provider_name,

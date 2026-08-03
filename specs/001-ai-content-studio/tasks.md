@@ -980,7 +980,7 @@ Test requirements: Simulate interruption after partial chunk completion, interru
 Parallelizable: no
 Notes: Standard-library PCM WAV handling remains the default. Do not add FFmpeg or platform-specific file locking.
 
-- [ ] T063 Make benchmark and smoke evidence reflect actual synthesis
+- [X] T063 Make benchmark and smoke evidence reflect actual synthesis
 Milestone: M005
 Epic: E010
 Risk: high

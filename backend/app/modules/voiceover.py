@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import io
 from collections.abc import Mapping
 from hashlib import sha256
 from pathlib import Path
 from time import monotonic
-import wave
 
 from app.domain.content_brief import ContentBrief
 from app.domain.types import JsonDict
@@ -16,6 +14,7 @@ from app.providers.interfaces import TTSProvider
 from app.providers.tts_result import TTSSynthesisResult
 from app.storage.artifact_store import ArtifactStore
 from app.tts.benchmark import build_benchmark_report
+from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
 from app.tts.chunk_synthesis import ResumableChunkSynthesizer
 from app.tts.chunking import NarrationChunkingSettings, chunk_narration
 from app.workflow.execution import ModuleExecutionContext, ModuleResult
@@ -132,21 +131,16 @@ def _word_timings(text: str, duration_seconds: float) -> list[JsonDict]:
 
 def _validate_wave_bytes(audio_bytes: bytes, *, expected_sample_rate: int) -> None:
     try:
-        with wave.open(io.BytesIO(audio_bytes), "rb") as reader:
-            if reader.getnchannels() != 1:
-                raise ValueError("VoiceoverModule requires mono WAV audio.")
-            if reader.getsampwidth() != 2:
-                raise ValueError("VoiceoverModule requires 16-bit PCM WAV audio.")
-            if reader.getframerate() != expected_sample_rate:
-                raise ValueError(
-                    "VoiceoverModule WAV sample rate does not match the synthesis result."
-                )
-            if reader.getcomptype() != "NONE":
-                raise ValueError("VoiceoverModule requires uncompressed PCM WAV audio.")
-    except (EOFError, wave.Error, ValueError) as exc:
-        if isinstance(exc, ValueError):
-            raise
-        raise ValueError("VoiceoverModule TTS provider returned invalid WAV audio.") from exc
+        parameters, _ = inspect_pcm_wav(audio_bytes)
+    except WavAssemblyError as exc:
+        # Use the same PCM validation and rejection reason as chunk assembly.
+        raise ValueError(str(exc)) from exc
+    if parameters.channels != 1:
+        raise ValueError("VoiceoverModule requires mono WAV audio.")
+    if parameters.sample_width != 2:
+        raise ValueError("VoiceoverModule requires 16-bit PCM WAV audio.")
+    if parameters.sample_rate != expected_sample_rate:
+        raise ValueError("VoiceoverModule WAV sample rate does not match the synthesis result.")
 
 
 def _stable_text_reference(workflow_run_id: str, text: str, source_kind: str) -> str:
@@ -323,12 +317,6 @@ class VoiceoverModule:
             synthesis_manifest_payload = result.manifest.to_payload()
             benchmark_payload = build_benchmark_report(
                 result.manifest,
-                provider=self._tts_provider.provider_name,
-                model=_optional_text(provider_voice_config.get("model_variant")) or "default",
-                device=_optional_text(provider_voice_config.get("device")) or "default",
-                language=_optional_text(provider_voice_config.get("language_id"))
-                or _optional_text(provider_voice_config.get("language"))
-                or self._default_language,
                 word_count=len(normalized_text.split()),
                 generation_wall_time_seconds=monotonic() - started,
             ).to_payload()
