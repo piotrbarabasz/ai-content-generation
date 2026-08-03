@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import struct
 import wave
@@ -56,6 +57,38 @@ class MockTTSProvider(TTSProvider):
 
     def __init__(self, provider_name: str = "mock") -> None:
         self.provider_name = provider_name
+
+    def effective_synthesis_identity(
+        self,
+        voice_config: JsonDict | None = None,
+    ) -> JsonDict:
+        """Return the stable effective configuration used by the mock generator."""
+
+        normalized_voice_config = _coerce_json_dict(voice_config)
+        # Round-trip through JSON so callers can persist the identity without
+        # depending on the particular values passed by an in-process caller.
+        effective_config = json.loads(_stable_signature(normalized_voice_config))
+        return {
+            "provider": self.provider_name,
+            "model_variant": "mock",
+            "device": "cpu",
+            "language_id": effective_config.get("language_id", effective_config.get("language")),
+            "generation_settings": {
+                key: effective_config.get(key)
+                for key in (
+                    "exaggeration",
+                    "cfg_weight",
+                    "temperature",
+                    "repetition_penalty",
+                    "min_p",
+                    "top_p",
+                )
+            },
+            "voice": {
+                "mode": "mock",
+                "config": effective_config,
+            },
+        }
 
     def synthesize(
         self,

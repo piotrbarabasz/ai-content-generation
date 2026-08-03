@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import wave
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -13,6 +14,16 @@ from app.domain.types import JsonDict
 
 from .interfaces import TTSProvider, _coerce_json_dict
 from .tts_result import TTSSynthesisResult
+
+
+_GENERATION_FIELDS = (
+    "exaggeration",
+    "cfg_weight",
+    "temperature",
+    "repetition_penalty",
+    "min_p",
+    "top_p",
+)
 
 
 class ChatterboxV3Error(RuntimeError):
@@ -118,6 +129,12 @@ class ChatterboxV3Provider(TTSProvider):
         device: str = "cpu",
         language_id: str | None = "pl",
         audio_prompt_path: str | Path | None = None,
+        exaggeration: float | None = None,
+        cfg_weight: float | None = None,
+        temperature: float | None = None,
+        repetition_penalty: float | None = None,
+        min_p: float | None = None,
+        top_p: float | None = None,
         model_loader: Callable[[str], Any] | None = None,
     ) -> None:
         self.provider_name = provider_name
@@ -125,6 +142,14 @@ class ChatterboxV3Provider(TTSProvider):
         self.t3_model = "v3"
         self.language_id = language_id or "pl"
         self.audio_prompt_path = audio_prompt_path
+        self._generation_defaults = {
+            "exaggeration": exaggeration,
+            "cfg_weight": cfg_weight,
+            "temperature": temperature,
+            "repetition_penalty": repetition_penalty,
+            "min_p": min_p,
+            "top_p": top_p,
+        }
         self._model_loader = model_loader or _load_runtime_backend
         self._backend: Any | None = None
 
@@ -154,20 +179,58 @@ class ChatterboxV3Provider(TTSProvider):
             )
         return str(path)
 
+    def _effective_configuration(
+        self,
+        voice_config: JsonDict | None,
+    ) -> tuple[str, dict[str, Any], str | None]:
+        config: Mapping[str, Any] = _coerce_json_dict(voice_config)
+        language_id = config.get("language_id", self.language_id) or self.language_id
+        generation_settings = {
+            field: config[field] if field in config else self._generation_defaults[field]
+            for field in _GENERATION_FIELDS
+        }
+        audio_prompt_path = self._audio_prompt(
+            config.get("audio_prompt_path", self.audio_prompt_path)
+        )
+        return language_id, generation_settings, audio_prompt_path
+
+    def effective_synthesis_identity(
+        self,
+        voice_config: JsonDict | None = None,
+    ) -> JsonDict:
+        """Return the effective configuration without loading optional runtime code."""
+
+        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+            voice_config
+        )
+        voice: JsonDict = {"mode": "builtin"}
+        if audio_prompt_path is not None:
+            with open(audio_prompt_path, "rb") as reference_file:
+                voice = {
+                    "mode": "reference",
+                    "content_checksum": hashlib.sha256(reference_file.read()).hexdigest(),
+                }
+        return {
+            "provider": self.provider_name,
+            "model_variant": self.t3_model,
+            "device": self.device,
+            "language_id": language_id,
+            "generation_settings": generation_settings,
+            "voice": voice,
+        }
+
     def synthesize(
         self, text: str, voice_config: JsonDict | None = None
     ) -> TTSSynthesisResult:
         if not isinstance(text, str) or not text.strip():
             raise ChatterboxGenerationError("Chatterbox requires non-empty synthesis text.")
-        config: Mapping[str, Any] = _coerce_json_dict(voice_config)
-        language_id = config.get("language_id", self.language_id) or "pl"
-        audio_prompt_path = self._audio_prompt(
-            config.get("audio_prompt_path", self.audio_prompt_path)
+        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+            voice_config
         )
         generation_kwargs = {
-            key: config[key]
-            for key in ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p")
-            if key in config
+            key: value
+            for key, value in generation_settings.items()
+            if value is not None
         }
         generation_kwargs["language_id"] = language_id
         if audio_prompt_path is not None:

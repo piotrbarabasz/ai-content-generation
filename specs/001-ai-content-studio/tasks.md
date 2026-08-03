@@ -935,7 +935,7 @@ Notes: If current `VoiceoverModule` dependency rules prevent direct narration ex
 
 ## Phase 21: TTS runtime hardening
 
-- [ ] T060 Add effective TTS synthesis identity and settings propagation
+- [X] T060 Add effective TTS synthesis identity and settings propagation
 Milestone: M005
 Epic: E010
 Risk: high

@@ -59,6 +59,12 @@ class TTSProvider(Protocol):
     ) -> TTSSynthesisResult:
         """Synthesize deterministic audio for the supplied text."""
 
+    def effective_synthesis_identity(
+        self,
+        voice_config: JsonDict | None = None,
+    ) -> JsonDict:
+        """Describe the effective, JSON-compatible synthesis configuration."""
+
 
 @runtime_checkable
 class TranscriptionProvider(Protocol):

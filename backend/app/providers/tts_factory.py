@@ -42,6 +42,12 @@ def build_tts_provider(
             device=settings.device,
             language_id=settings.language_id or "pl",
             audio_prompt_path=settings.audio_prompt_path,
+            exaggeration=settings.exaggeration,
+            cfg_weight=settings.cfg_weight,
+            temperature=settings.temperature,
+            repetition_penalty=settings.repetition_penalty,
+            min_p=settings.min_p,
+            top_p=settings.top_p,
         )
     else:  # TTSSettings validates this branch; retain an actionable factory boundary.
         raise TTSFactoryError(f"Unknown TTS provider: {settings.provider}.")
