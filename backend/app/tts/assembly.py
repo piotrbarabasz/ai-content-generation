@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import io
+import os
 from pathlib import Path
+import tempfile
 import wave
 
 from .manifest import AudioParameters
@@ -74,6 +76,50 @@ def assemble_pcm_wav(chunks: list[bytes] | tuple[bytes, ...], output_path: Path 
         raise WavAssemblyError("Assembled WAV frame count does not equal the chunk frame sum.")
     result = WavAssemblyResult(audio_bytes, sha256(audio_bytes).hexdigest(), parameters.duration_seconds, parameters)
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(result.audio_bytes)
+        _write_validated_wav_atomically(output_path, result)
     return result
+
+
+def persist_pcm_wav_atomically(audio_bytes: bytes, output_path: Path) -> WavAssemblyResult:
+    """Validate and atomically publish one PCM WAV payload."""
+    parameters, _ = inspect_pcm_wav(audio_bytes)
+    result = WavAssemblyResult(
+        audio_bytes=audio_bytes,
+        checksum=sha256(audio_bytes).hexdigest(),
+        duration_seconds=parameters.duration_seconds,
+        audio_parameters=parameters,
+    )
+    _write_validated_wav_atomically(output_path, result)
+    return result
+
+
+def _write_validated_wav_atomically(output_path: Path, result: WavAssemblyResult) -> None:
+    """Publish a complete, validated WAV without exposing a partial output."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=output_path.parent, prefix=f".{output_path.name}.", suffix=".tmp", delete=False
+        ) as temporary:
+            temporary_name = temporary.name
+            temporary.write(result.audio_bytes)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        temporary_path = Path(temporary_name)
+        persisted = temporary_path.read_bytes()
+        parameters, _ = inspect_pcm_wav(persisted)
+        if (
+            sha256(persisted).hexdigest() != result.checksum
+            or parameters != result.audio_parameters
+            or parameters.frame_count != result.audio_parameters.frame_count
+        ):
+            raise WavAssemblyError("Temporary assembled WAV does not match its expected evidence.")
+        temporary_path.replace(output_path)
+    except OSError as exc:
+        raise WavAssemblyError(f"Unable to atomically persist WAV output: {output_path}") from exc
+    finally:
+        if temporary_name is not None:
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass

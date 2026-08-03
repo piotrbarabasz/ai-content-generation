@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 
@@ -175,9 +177,28 @@ class SynthesisManifest:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(self.to_payload(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        payload = json.dumps(self.to_payload(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        # Parse the exact data before replacing an existing manifest.  A
+        # uniquely named sibling temp file avoids exposing a truncated JSON
+        # sidecar if the process is interrupted mid-write.
+        json.loads(payload)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                temporary.write(payload)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            Path(temporary_name).replace(path)
+        finally:
+            if temporary_name is not None:
+                try:
+                    Path(temporary_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def _optional_str(value: object) -> str | None:

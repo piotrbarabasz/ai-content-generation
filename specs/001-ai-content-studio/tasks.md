@@ -965,7 +965,7 @@ Test requirements: Add full-cache-hit, partial text change, shortened narration,
 Parallelizable: no
 Notes: Cache invalidation must be deterministic and local. Do not add timestamps, databases or external cache services.
 
-- [ ] T062 Make manifest lifecycle and WAV finalization crash-safe
+- [X] T062 Make manifest lifecycle and WAV finalization crash-safe
 Milestone: M005
 Epic: E010
 Risk: high
