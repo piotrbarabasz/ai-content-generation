@@ -14,7 +14,7 @@ def test_mock_smoke_writes_valid_wav_and_report(tmp_path):
     report = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
     assert output.exists()
     assert report["provider"] == "mock"
-    assert report["model_variant"] == "v3"
+    assert report["model_variant"] == "mock"
     assert report["word_count"] == 3
     assert report["sample_rate"] == 24_000
     assert report["voice"] == "builtin"
