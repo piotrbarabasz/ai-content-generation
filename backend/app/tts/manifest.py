@@ -123,6 +123,9 @@ class SynthesisManifest:
         return {
             "schema_version": self.schema_version,
             "config_hash": self.config_hash,
+            # This is derived instead of persisted as mutable state so the
+            # manifest can never report records removed during a resumed run.
+            "chunk_count": self.chunk_count,
             "chunks": [self.chunks[key].to_payload() for key in sorted(self.chunks, key=lambda key: self.chunks[key].index)],
             "final_status": self.final_status,
             "final_artifact_ref": self.final_artifact_ref,
@@ -151,6 +154,11 @@ class SynthesisManifest:
             failed_chunk_ids=[str(value) for value in payload.get("failed_chunk_ids", [])],
             schema_version=int(payload.get("schema_version", 1)),
         )
+
+    @property
+    def chunk_count(self) -> int:
+        """Return the number of chunk records currently in this manifest."""
+        return len(self.chunks)
 
     @classmethod
     def load(cls, path: Path, *, config_hash: str) -> "SynthesisManifest":

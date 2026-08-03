@@ -950,7 +950,7 @@ Test requirements: Add fake-provider tests for stable identity, changed device, 
 Parallelizable: no
 Notes: Do not add provider-specific checks to VoiceoverModule and do not introduce a second provider registry.
 
-- [ ] T061 Harden cache identity and prune stale narration chunks
+- [X] T061 Harden cache identity and prune stale narration chunks
 Milestone: M005
 Epic: E010
 Risk: high
