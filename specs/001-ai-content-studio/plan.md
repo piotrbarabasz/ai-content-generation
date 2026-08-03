@@ -346,3 +346,7 @@ data/tts-smoke/
 - automatic model downloads in tests.
 
 <!-- M004 REAL TTS PLAN EXTENSION END -->
+
+## M005 TTS Runtime Hardening
+
+M005 contains only E010, Long Narration Cache and Resume Integrity. It hardens the provider-neutral effective synthesis identity so cache reuse is correct across provider configuration and voice identity changes, prunes stale chunk records and artifacts, and makes manifest recovery and WAV finalization crash-safe and atomic. Benchmark and smoke evidence must report the actual synthesis configuration and distinguish generated, reused and failed chunks. The milestone adds an offline 15-minute interruption/resume acceptance path using deterministic fakes; CI must not execute a real model or access the network.

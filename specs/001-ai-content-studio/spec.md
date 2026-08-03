@@ -305,3 +305,28 @@ A developer wants to provide a fixed Polish narration and receive a playable WAV
 - **SC-010**: No task in M004 implements semantic scene splitting, image generation, captions, rendering, API redesign or deployment.
 
 <!-- M004 REAL TTS EXTENSION END -->
+
+<!-- M005 TTS RUNTIME HARDENING EXTENSION START -->
+
+## TTS Runtime Integrity
+
+### Additional Functional Requirements
+
+- **FR-074**: The system MUST derive a deterministic, provider-neutral effective synthesis identity that covers the provider, model, execution device, effective language, generation settings and voice identity, without persisting private absolute paths.
+- **FR-075**: The system MUST reuse a cached narration chunk only when its normalized text and complete effective synthesis identity match the current synthesis request.
+- **FR-076**: Before a narration run begins, the system MUST persist a running lifecycle state that cannot present a prior completed final WAV as the result of the new or interrupted run.
+- **FR-077**: The system MUST validate and atomically finalize chunk and final PCM WAV artifacts before recording successful completion evidence.
+- **FR-078**: The system MUST remove stale chunk records and safely remove orphaned runtime chunk artifacts that are not part of the current narration, without touching files outside the configured runtime root.
+- **FR-079**: The system MUST report benchmark evidence from the effective synthesis identity and distinguish chunks generated, reused and failed in the current run.
+- **FR-080**: Smoke validation and workflow voiceover validation MUST apply a compatible PCM WAV inspection contract and report the observed audio parameters.
+- **FR-081**: The system MUST prove offline, using a deterministic fake provider and the fifteen-minute narration fixture, that an interrupted run resumes valid chunks and produces one consistent final WAV and artifact set.
+
+### Additional Non-Functional Requirements
+
+- **NFR-016**: Default TTS runtime-integrity tests MUST require no network access, model download, GPU, PyTorch, Chatterbox runtime or private speaker-reference file.
+
+### Additional Success Criteria
+
+- **SC-011**: An interrupted fifteen-minute offline narration run cannot expose stale success, resumes only valid compatible chunks, and publishes a validated final PCM WAV with truthful benchmark evidence.
+
+<!-- M005 TTS RUNTIME HARDENING EXTENSION END -->
