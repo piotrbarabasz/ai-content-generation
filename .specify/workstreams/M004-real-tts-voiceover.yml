@@ -1,6 +1,6 @@
 id: M004
 title: Real TTS Voiceover
-status: planned
+status: completed
 goal: Generate valid provider-swappable Polish voiceover WAV artifacts with Chatterbox Multilingual V3 support, deterministic fixtures, resumable long-text synthesis and benchmark evidence while keeping default tests offline.
 epics:
   - E007

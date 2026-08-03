@@ -930,3 +930,84 @@ Parallelizable: no
 Notes: If current `VoiceoverModule` dependency rules prevent direct narration execution, make the smallest contract correction and add a regression test; do not refactor workflow presets or fix unrelated short-video dependencies in this milestone.
 
 <!-- M004 REAL TTS TASKS EXTENSION END -->
+
+<!-- M005 TTS RUNTIME HARDENING TASKS EXTENSION START -->
+
+## Phase 21: TTS runtime hardening
+
+- [ ] T060 Add effective TTS synthesis identity and settings propagation
+Milestone: M005
+Epic: E010
+Risk: high
+Implementation files: `backend/app/providers/interfaces.py`, `backend/app/providers/mock_tts.py`, `backend/app/providers/chatterbox_v3.py`, `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`
+Test files: `backend/tests/unit/test_t060.py`, `backend/tests/unit/test_t052.py`, `backend/tests/unit/test_t053.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t060.py backend/tests/unit/test_t052.py backend/tests/unit/test_t053.py`
+Final PR review required: yes
+Goal: Expose a stable provider-neutral description of the effective synthesis configuration and forward all configured Chatterbox generation defaults.
+Dependencies: T059
+Acceptance criteria: TTSProvider exposes a JSON-compatible deterministic synthesis identity contract; MockTTSProvider and ChatterboxV3Provider implement it; Chatterbox identity includes provider name, model variant, device, effective language, effective generation settings and built-in or reference voice mode; reference voice identity uses a content checksum rather than an absolute path; missing reference files produce an actionable typed error without exposing the private path; settings from TTSSettings are forwarded by build_tts_provider as provider defaults; request-level voice_config values override defaults deterministically; model_variant remains v3; identity calculation does not import torch, torchaudio or Chatterbox and performs no network or model initialization.
+Test requirements: Add fake-provider tests for stable identity, changed device, language, generation values, built-in voice, changed reference-file content, request overrides, settings propagation and lazy optional imports.
+Parallelizable: no
+Notes: Do not add provider-specific checks to VoiceoverModule and do not introduce a second provider registry.
+
+- [ ] T061 Harden cache identity and prune stale narration chunks
+Milestone: M005
+Epic: E010
+Risk: high
+Implementation files: `backend/app/tts/manifest.py`, `backend/app/tts/chunk_synthesis.py`
+Test files: `backend/tests/unit/test_t061.py`, `backend/tests/unit/test_t057.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t061.py backend/tests/unit/test_t057.py`
+Final PR review required: yes
+Goal: Reuse persisted chunks only when the complete effective synthesis identity matches and keep manifests limited to the current narration.
+Dependencies: T060
+Acceptance criteria: ResumableChunkSynthesizer obtains the effective synthesis identity from the provider contract; config_hash includes the normalized provider identity and effective request configuration; identical effective configuration reuses valid chunks; changes to provider, model, device, language, generation defaults, request overrides or reference-audio content invalidate incompatible cache entries; absolute private paths are not stored in the manifest; records not present in the current ordered chunk set are removed before synthesis; orphaned chunk WAV files under the controlled runtime chunk directory are removed safely; files outside the runtime root are never touched; manifest chunk_count reflects only the current narration; changing one chunk without changing the effective provider identity regenerates only affected chunks where stable chunk identities still match.
+Test requirements: Add full-cache-hit, partial text change, shortened narration, changed provider identity, changed reference-content checksum, stale-record pruning, orphan cleanup and path-boundary tests.
+Parallelizable: no
+Notes: Cache invalidation must be deterministic and local. Do not add timestamps, databases or external cache services.
+
+- [ ] T062 Make manifest lifecycle and WAV finalization crash-safe
+Milestone: M005
+Epic: E010
+Risk: high
+Implementation files: `backend/app/tts/assembly.py`, `backend/app/tts/manifest.py`, `backend/app/tts/chunk_synthesis.py`
+Test files: `backend/tests/unit/test_t062.py`, `backend/tests/unit/test_t057.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t062.py backend/tests/unit/test_t057.py`
+Final PR review required: yes
+Goal: Ensure an interrupted or failed rerun cannot expose stale completion evidence or a partially written WAV.
+Dependencies: T061
+Acceptance criteria: At the beginning of a synthesis run the manifest transitions to running and clears final status fields from the previous run; the transition is persisted before chunk processing begins; a previous final WAV is removed or quarantined before the current run can be considered active; chunk WAV writes use a temporary file, validation and atomic replace; final assembly writes to a temporary path, validates parameters, frame count and checksum, and performs atomic replace only after success; final_status becomes completed only after the final file exists and matches recorded evidence; failure leaves final_status failed with no final artifact reference and no completed final WAV for the current run; a stale running manifest can be resumed; successfully completed chunks remain reusable after interruption; manifest writes remain atomic.
+Test requirements: Simulate interruption after partial chunk completion, interruption before manifest finalization, failure during final write, stale completed output, corrupt temporary files, stale running recovery and successful atomic replacement.
+Parallelizable: no
+Notes: Standard-library PCM WAV handling remains the default. Do not add FFmpeg or platform-specific file locking.
+
+- [ ] T063 Make benchmark and smoke evidence reflect actual synthesis
+Milestone: M005
+Epic: E010
+Risk: high
+Implementation files: `backend/app/tts/benchmark.py`, `backend/app/tts/manifest.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/assembly.py`, `backend/app/tooling/tts_smoke.py`, `backend/app/modules/voiceover.py`
+Test files: `backend/tests/unit/test_t063.py`, `backend/tests/unit/test_t058.py`, `backend/tests/unit/test_t059.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t063.py backend/tests/unit/test_t058.py backend/tests/unit/test_t059.py`
+Final PR review required: yes
+Goal: Produce benchmark and smoke reports from actual provider identity, WAV parameters and per-run cache behavior.
+Dependencies: T062
+Acceptance criteria: Benchmark provider, model, device, language and voice mode come from the effective synthesis identity rather than guessed voice_config defaults; report includes generated_chunk_count, reused_chunk_count and failed_chunk_count; a full cache hit is explicitly distinguishable from model generation; real_time_factor is documented as current-run wall time divided by final audio duration; synthesis manifest records enough current-run evidence to build the report without inspecting private provider fields; VoiceoverModule uses provider-neutral manifest and identity data; tts_smoke uses the shared PCM WAV inspector and records actual channels, sample width, sample rate, compression type, frame count and duration; smoke and VoiceoverModule reject the same incompatible WAV formats; reports do not expose private absolute speaker-reference paths; JSON remains deterministic apart from declared timing fields.
+Test requirements: Add cache miss, partial reuse, full reuse, failed chunk, actual identity, PCM parameter, smoke mismatch, path-redaction and VoiceoverModule benchmark regression tests.
+Parallelizable: no
+Notes: Do not add cost accounting, dashboards, telemetry, network upload or provider-specific logic to VoiceoverModule.
+
+- [ ] T064 Add 15-minute interruption and resume acceptance coverage
+Milestone: M005
+Epic: E010
+Risk: high
+Implementation files: `backend/app/modules/voiceover.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/manifest.py`, `backend/app/tts/benchmark.py`
+Test files: `backend/tests/unit/test_t064.py`, `backend/tests/unit/test_t059.py`, `backend/tests/integration/test_long_form_workflow.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t064.py backend/tests/unit/test_t059.py backend/tests/integration/test_long_form_workflow.py`
+Final PR review required: yes
+Goal: Prove offline that a real long narration workflow survives interruption, resumes valid work and exports one consistent final WAV.
+Dependencies: T063
+Acceptance criteria: The existing 15-minute Polish narration fixture is processed through VoiceoverModule with deterministic chunking and a fake local provider; the first run fails after a controlled number of successful chunks and does not expose a completed final WAV; a second run with the same workflow_run_id and effective synthesis identity reuses every valid completed chunk and generates only missing chunks; final WAV is valid mono 16-bit uncompressed PCM and its frame count equals the sum of current chunks; final manifest contains exactly the current ordered chunks; benchmark counts generated, reused and failed chunks correctly; changing provider identity invalidates incompatible reuse; changing reference-audio content invalidates incompatible reuse; an integration workflow executes with VoiceoverModule enabled and makes voiceover, timeline, synthesis manifest and benchmark artifacts available to export; existing one-request short narration behavior remains unchanged; all tests run without torch, Chatterbox, CUDA, network access or model downloads.
+Test requirements: Use story_04_15min.txt, a deterministic fake provider and controlled temporary runtime directories. Test interruption, resume, provider substitution, reference identity change, artifact export and direct-mode regression.
+Parallelizable: no
+Notes: This is technical long-narration reliability testing. Do not introduce semantic scene splitting, captions, image generation, rendering or real Chatterbox execution in CI.
+
+<!-- M005 TTS RUNTIME HARDENING TASKS EXTENSION END -->

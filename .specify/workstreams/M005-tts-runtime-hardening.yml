@@ -1,0 +1,18 @@
+id: M005
+title: TTS Runtime Hardening
+status: planned
+goal: Harden provider identity, cache reuse, manifest recovery, WAV finalization and benchmark evidence for long local TTS narration without introducing online services or model execution in CI.
+epics:
+  - E010
+completion_criteria:
+  - Effective TTS synthesis identity includes provider, model, device, language, generation settings and voice identity without exposing private paths.
+  - Provider settings declared through ProviderConfig are forwarded deterministically to the real TTS provider.
+  - Cached chunks are reused only when their text and full effective synthesis identity match.
+  - Stale manifest records and orphaned chunk artifacts cannot affect the current narration run.
+  - A restarted or failed run cannot expose an earlier final WAV as the result of the current run.
+  - Chunk and final WAV writes are validated and finalized atomically.
+  - Benchmark evidence distinguishes generated, reused and failed chunks and reports the actual provider configuration.
+  - Smoke validation and workflow validation use one compatible PCM WAV inspection contract.
+  - An offline 15-minute fixture test proves interruption, partial reuse, resume and final assembly.
+  - Default tests require no network, model download, GPU, PyTorch, Chatterbox runtime or private speaker file.
+  - Semantic scene splitting, captions, visual generation, rendering, deployment and external telemetry remain out of scope.
