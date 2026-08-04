@@ -23,6 +23,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv-tts311/
+.venv-ci311/
 venv/
 dist/
 build/

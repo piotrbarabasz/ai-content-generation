@@ -86,7 +86,14 @@ class _RuntimeBackend:
     def generate(self, text: str, **kwargs: Any) -> bytes:
         audio = self._model.generate(text, **kwargs)
         buffer = io.BytesIO()
-        self._torchaudio.save(buffer, audio, 24_000, format="wav")
+        self._torchaudio.save(
+            buffer,
+            audio,
+            24_000,
+            format="wav",
+            encoding="PCM_S",
+            bits_per_sample=16,
+        )
         return buffer.getvalue()
 
 
