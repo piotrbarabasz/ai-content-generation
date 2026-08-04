@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
+from app.providers.tts_capabilities import TTSCapabilities
 from app.providers.tts_result import TTSSynthesisResult
 from app.storage.manifest import ArtifactManifest
 
@@ -51,6 +52,9 @@ class LLMProvider(Protocol):
 class TTSProvider(Protocol):
     provider_type: ProviderType
     provider_name: str
+
+    def capabilities(self) -> TTSCapabilities:
+        """Describe deterministic capability metadata without loading optional runtimes."""
 
     def synthesize(
         self,

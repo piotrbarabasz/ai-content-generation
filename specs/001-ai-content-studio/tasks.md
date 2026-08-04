@@ -1046,7 +1046,7 @@ Test requirements: Add static tests for path resolution, explicit interpreter us
 Parallelizable: no
 Notes: PowerShell is the validated Windows path. A POSIX equivalent may be added later but is not required by this task.
 
-- [ ] T067 Add provider capability and usage-policy contracts
+- [X] T067 Add provider capability and usage-policy contracts
 Milestone: M006
 Epic: E011
 Risk: high

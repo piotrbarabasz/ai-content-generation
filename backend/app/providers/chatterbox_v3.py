@@ -14,6 +14,12 @@ from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 
 from .interfaces import TTSProvider, _coerce_json_dict
+from .tts_capabilities import (
+    TTSCapabilities,
+    request_uses_speaking_rate,
+    resolve_language_id,
+    resolve_voice_mode,
+)
 from .tts_result import TTSSynthesisResult
 
 
@@ -205,6 +211,16 @@ class ChatterboxV3Provider(TTSProvider):
         self._model_loader = model_loader or _load_runtime_backend
         self._backend: Any | None = None
 
+    def capabilities(self) -> TTSCapabilities:
+        return TTSCapabilities(
+            provider_name=self.provider_name,
+            supported_languages=("en", "pl"),
+            voice_modes=("builtin", "reference"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+
     def _get_backend(self) -> Any:
         normalized_device = self.device.lower()
         if not (normalized_device == "cpu" or normalized_device.startswith("cuda")):
@@ -234,17 +250,25 @@ class ChatterboxV3Provider(TTSProvider):
     def _effective_configuration(
         self,
         voice_config: JsonDict | None,
-    ) -> tuple[str, dict[str, Any], str | None]:
+    ) -> tuple[str, dict[str, Any], str | None, str]:
         config: Mapping[str, Any] = _coerce_json_dict(voice_config)
-        language_id = config.get("language_id", self.language_id) or self.language_id
+        audio_prompt_path = self._audio_prompt(config.get("audio_prompt_path", self.audio_prompt_path))
+        language_id = resolve_language_id(config, default_language_id=self.language_id) or self.language_id
+        voice_mode = resolve_voice_mode(
+            config,
+            default_voice_mode="reference" if audio_prompt_path is not None else "builtin",
+        )
+        self.capabilities().validate_request(
+            language_id=language_id,
+            voice_mode=voice_mode,
+            reference_audio_present=audio_prompt_path is not None,
+            speaking_rate_requested=request_uses_speaking_rate(config),
+        )
         generation_settings = {
             field: config[field] if field in config else self._generation_defaults[field]
             for field in _GENERATION_FIELDS
         }
-        audio_prompt_path = self._audio_prompt(
-            config.get("audio_prompt_path", self.audio_prompt_path)
-        )
-        return language_id, generation_settings, audio_prompt_path
+        return language_id, generation_settings, audio_prompt_path, voice_mode
 
     def effective_synthesis_identity(
         self,
@@ -252,10 +276,10 @@ class ChatterboxV3Provider(TTSProvider):
     ) -> JsonDict:
         """Return the effective configuration without loading optional runtime code."""
 
-        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+        language_id, generation_settings, audio_prompt_path, voice_mode = self._effective_configuration(
             voice_config
         )
-        voice: JsonDict = {"mode": "builtin"}
+        voice: JsonDict = {"mode": voice_mode}
         if audio_prompt_path is not None:
             try:
                 with open(audio_prompt_path, "rb") as reference_file:
@@ -281,7 +305,7 @@ class ChatterboxV3Provider(TTSProvider):
     ) -> TTSSynthesisResult:
         if not isinstance(text, str) or not text.strip():
             raise ChatterboxGenerationError("Chatterbox requires non-empty synthesis text.")
-        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+        language_id, generation_settings, audio_prompt_path, _voice_mode = self._effective_configuration(
             voice_config
         )
         generation_kwargs = {

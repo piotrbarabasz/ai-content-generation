@@ -1,3 +1,4 @@
+import json
 import io
 import sys
 import wave
@@ -11,6 +12,7 @@ from app.providers.chatterbox_v3 import ChatterboxAudioPromptError, ChatterboxV3
 from app.providers.interfaces import TTSProvider
 from app.providers.mock_tts import MockTTSProvider
 from app.providers.tts_factory import build_tts_provider
+from app.providers.tts_capabilities import TTSCapabilityError
 
 
 def _wav() -> bytes:
@@ -134,3 +136,39 @@ def test_synthesis_uses_the_same_effective_generation_settings() -> None:
     provider.synthesize("tekst", {"temperature": 0.8})
 
     assert backend.calls == [{"temperature": 0.8, "top_p": 0.6, "language_id": "pl"}]
+
+
+def test_capabilities_are_deterministic_and_json_compatible() -> None:
+    mock_capabilities = MockTTSProvider().capabilities().to_payload()
+    chatterbox_capabilities = ChatterboxV3Provider().capabilities().to_payload()
+
+    assert json.dumps(mock_capabilities, sort_keys=True)
+    assert json.dumps(chatterbox_capabilities, sort_keys=True)
+    assert mock_capabilities == {
+        "provider_name": "mock",
+        "supported_languages": ["*"],
+        "voice_modes": ["mock"],
+        "reference_audio_required": False,
+        "speaking_rate_supported": False,
+        "usage_policy": "production",
+    }
+    assert chatterbox_capabilities == {
+        "provider_name": "chatterbox_v3",
+        "supported_languages": ["en", "pl"],
+        "voice_modes": ["builtin", "reference"],
+        "reference_audio_required": False,
+        "speaking_rate_supported": False,
+        "usage_policy": "production",
+    }
+
+
+def test_chatterbox_rejects_unsupported_capabilities_before_backend_loading() -> None:
+    provider = ChatterboxV3Provider(
+        model_loader=lambda _: (_ for _ in ()).throw(AssertionError("backend should not load"))
+    )
+
+    with pytest.raises(TTSCapabilityError, match="language_id 'fr'"):
+        provider.synthesize("tekst", {"language_id": "fr"})
+
+    with pytest.raises(TTSCapabilityError, match="voice mode 'mock'"):
+        provider.effective_synthesis_identity({"voice_mode": "mock"})
