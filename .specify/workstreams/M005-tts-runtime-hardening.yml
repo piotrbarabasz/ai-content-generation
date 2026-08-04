@@ -1,6 +1,6 @@
 id: M005
 title: TTS Runtime Hardening
-status: planned
+status: completed
 goal: Harden provider identity, cache reuse, manifest recovery, WAV finalization and benchmark evidence for long local TTS narration without introducing online services or model execution in CI.
 epics:
   - E010
