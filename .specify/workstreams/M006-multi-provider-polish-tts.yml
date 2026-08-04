@@ -1,0 +1,19 @@
+id: M006
+title: Multi-Provider Polish TTS
+status: planned
+goal: Add selectable local Polish TTS providers for Chatterbox Multilingual V3, Piper and an evaluation-only XTTS-v2 integration while preserving provider-neutral orchestration, isolated optional runtimes, truthful synthesis identity, offline CI and explicit usage-policy boundaries.
+epics:
+  - E011
+  - E012
+  - E013
+completion_criteria:
+  - The existing Chatterbox Multilingual V3 runtime is reproducibly installable, loads the intended V3 model and emits valid mono 16-bit PCM WAV output.
+  - TTS providers expose provider-neutral capability metadata covering languages, voice modes, required assets, supported controls and usage policy.
+  - Piper is available as an optional local provider with a curated Polish voice catalog, deterministic model identity and speaking-rate controls.
+  - XTTS-v2 is available only as an explicitly evaluation-only provider that requires approved reference audio and cannot be selected in production mode without a separate policy decision.
+  - Provider selection is performed through the existing ProviderConfig, TTSSettings, TTS factory and provider registry rather than provider-specific workflow branches.
+  - Chatterbox, Piper and XTTS-v2 provider identities invalidate incompatible cached chunks and never persist private reference-audio paths.
+  - A manual comparison runner can generate the same Polish narration across selected providers and voices and write WAV files plus machine-readable benchmark evidence.
+  - Default tests and CI require no network, model download, GPU, PyTorch, Chatterbox, Piper, XTTS or private speaker-reference file.
+  - Optional runtime environments remain isolated from the agent and CI interpreter.
+  - Model training, a graphical provider picker, cloud TTS services, automatic model downloads in tests, video rendering and production deployment remain out of scope.
