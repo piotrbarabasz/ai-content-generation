@@ -4,7 +4,7 @@ milestone: M006
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E011-tts-runtime-baseline-capabilities
-status: active
+status: completed
 risk: high
 depends_on:
   - E010
