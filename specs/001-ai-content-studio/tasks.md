@@ -1016,7 +1016,7 @@ Notes: This is technical long-narration reliability testing. Do not introduce se
 
 ## Phase 22: TTS runtime baseline and provider capabilities
 
-- [ ] T065 Reproduce and lock Chatterbox Multilingual V3 runtime compatibility
+- [X] T065 Reproduce and lock Chatterbox Multilingual V3 runtime compatibility
 Milestone: M006
 Epic: E011
 Risk: high

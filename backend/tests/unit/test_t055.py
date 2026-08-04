@@ -16,7 +16,12 @@ def test_mock_smoke_writes_valid_wav_and_report(tmp_path):
     assert report["provider"] == "mock"
     assert report["model_variant"] == "mock"
     assert report["word_count"] == 3
+    assert report["channels"] == 1
+    assert report["sample_width"] == 2
     assert report["sample_rate"] == 24_000
+    assert report["compression_type"] == "NONE"
+    assert report["frame_count"] > 0
+    assert report["duration_seconds"] > 0
     assert report["voice"] == "builtin"
 
 
