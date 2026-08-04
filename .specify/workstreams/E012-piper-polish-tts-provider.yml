@@ -4,7 +4,7 @@ milestone: M006
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E012-piper-polish-tts-provider
-status: planned
+status: active
 risk: high
 depends_on:
   - E011
