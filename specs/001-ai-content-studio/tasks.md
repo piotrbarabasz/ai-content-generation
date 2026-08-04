@@ -1031,7 +1031,7 @@ Test requirements: Use fake modules to verify API-signature mismatch, V3 argumen
 Parallelizable: no
 Notes: Do not silently fall back to the legacy multilingual model. Do not place a moving Git branch in production dependencies; pin an immutable revision or validated release.
 
-- [ ] T066 Add isolated TTS runtime profiles, setup scripts and health checks
+- [X] T066 Add isolated TTS runtime profiles, setup scripts and health checks
 Milestone: M006
 Epic: E011
 Risk: medium

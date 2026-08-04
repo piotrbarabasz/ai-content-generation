@@ -25,6 +25,8 @@ __pycache__/
 .venv/
 .venv-tts311/
 .venv-ci311/
+.venv-piper311/
+.venv-xtts311/
 venv/
 dist/
 build/
@@ -56,6 +58,7 @@ huggingface/
 models/
 voice-references/
 speaker-references/
+reference-audio/
 
 # IDE
 .vscode/
