@@ -1063,7 +1063,7 @@ Notes: Do not encode a UI schema and do not add a second registry.
 
 ## Phase 23: Piper Polish provider
 
-- [ ] T068 Add an optional lazy Piper TTS provider
+- [X] T068 Add an optional lazy Piper TTS provider
 Milestone: M006
 Epic: E012
 Risk: high

@@ -1,5 +1,7 @@
 import inspect
 import sys
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +9,7 @@ from app.domain.enums import ProviderType
 from app.domain.provider_config import ProviderConfig
 from app.providers.chatterbox_v3 import ChatterboxV3Provider
 from app.providers.mock_tts import MockTTSProvider
+from app.providers.piper_tts import PiperTTSProvider
 from app.providers.registry import ProviderRegistry
 from app.providers.tts_factory import TTSFactoryError, build_tts_provider
 from app.providers.tts_settings import TTSSettings, TTSSettingsError
@@ -53,6 +56,34 @@ def test_settings_accept_precise_chatterbox_fields_and_policy_mode() -> None:
     assert settings.top_p == 0.9
 
 
+def test_settings_accept_piper_model_key_and_path_selection() -> None:
+    with TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp_dir:
+        model_path = Path(temp_dir) / "pl_PL-gosia-medium.onnx"
+        model_path.write_bytes(b"piper-model")
+
+        key_settings = TTSSettings.from_mapping({"model_key": "pl_PL-gosia-medium"}, provider="piper")
+        path_settings = TTSSettings.from_mapping({"model_path": model_path}, provider="piper")
+
+        assert key_settings.provider == "piper"
+        assert key_settings.model_key == "pl_PL-gosia-medium"
+        assert key_settings.model_path is None
+        assert path_settings.model_key is None
+        assert path_settings.model_path == model_path
+
+
+@pytest.mark.parametrize("provider_name", ["mock", "chatterbox_v3"])
+def test_settings_reject_piper_fields_for_other_providers(provider_name: str) -> None:
+    with TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp_dir:
+        model_path = Path(temp_dir) / "pl_PL-gosia-medium.onnx"
+        model_path.write_bytes(b"piper-model")
+
+        with pytest.raises(TTSSettingsError):
+            TTSSettings.from_mapping({"model_path": model_path}, provider=provider_name)
+
+    with pytest.raises(TTSSettingsError):
+        TTSSettings.from_mapping({"model_key": "pl_PL-gosia-medium"}, provider=provider_name)
+
+
 @pytest.mark.parametrize(
     "values",
     [
@@ -89,6 +120,21 @@ def test_factory_selects_chatterbox_lazily_without_optional_runtime_import() -> 
     assert provider.capabilities().usage_policy == "production"
     assert "torch" not in sys.modules
     assert "chatterbox" not in sys.modules
+
+
+def test_factory_selects_piper_lazily_without_optional_runtime_import() -> None:
+    with TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp_dir:
+        model_path = Path(temp_dir) / "pl_PL-gosia-medium.onnx"
+        model_path.write_bytes(b"piper-model")
+        sys.modules.pop("piper", None)
+        sys.modules.pop("piper.voice", None)
+
+        provider = build_tts_provider(_config("piper", {"model_path": model_path}))
+
+        assert isinstance(provider, PiperTTSProvider)
+        assert provider.model_path == model_path
+        assert provider._backend is None
+        assert "piper" not in sys.modules
 
 
 def test_factory_rejects_unknown_and_wrong_type_configs() -> None:

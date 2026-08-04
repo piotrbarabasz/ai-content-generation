@@ -6,6 +6,7 @@ from app.domain.enums import ProviderType
 from app.domain.provider_config import ProviderConfig
 
 from .chatterbox_v3 import ChatterboxV3Provider
+from .piper_tts import PiperConfigurationError, PiperTTSProvider
 from .interfaces import TTSProvider
 from .mock_tts import MockTTSProvider
 from .registry import ProviderRegistry, ProviderRegistryError
@@ -50,6 +51,17 @@ def build_tts_provider(
             min_p=settings.min_p,
             top_p=settings.top_p,
         )
+    elif settings.provider == "piper":
+        try:
+            provider = PiperTTSProvider(
+                settings.provider,
+                device=settings.device,
+                language_id=settings.language_id or "pl",
+                model_key=settings.model_key,
+                model_path=settings.model_path,
+            )
+        except PiperConfigurationError as exc:
+            raise TTSFactoryError(str(exc)) from exc
     else:  # TTSSettings validates this branch; retain an actionable factory boundary.
         raise TTSFactoryError(f"Unknown TTS provider: {settings.provider}.")
 
