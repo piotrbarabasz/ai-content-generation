@@ -39,7 +39,7 @@ def test_input_text_file_and_settings_are_forwarded(tmp_path, monkeypatch):
             captured["voice_config"] = voice_config
             from app.providers.mock_tts import MockTTSProvider
 
-            return MockTTSProvider().synthesize(text, voice_config)
+            return MockTTSProvider("chatterbox_v3").synthesize(text, {})
 
     monkeypatch.setattr(tts_smoke, "_create_provider", lambda args: FakeProvider())
     assert tts_smoke.main([

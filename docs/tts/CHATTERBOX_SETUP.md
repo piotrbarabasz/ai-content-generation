@@ -53,3 +53,13 @@ local reference directories are ignored by this repository.
 
 See [the recorded manual spike](CHATTERBOX_MANUAL_SPIKE.md) for the successful
 Windows/CUDA configuration and Polish V3 quality result.
+
+## Exact validated package pins
+
+The manually validated Windows CUDA runtime used:
+
+- `torch==2.6.0+cu124`
+- `torchaudio==2.6.0+cu124`
+
+These packages must remain a matching pair and are installed only in the
+isolated Chatterbox runtime environment.
