@@ -13,6 +13,13 @@ from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 
 from .interfaces import TTSProvider, _coerce_json_dict, _slugify, _stable_signature
+from .tts_capabilities import (
+    TTSCapabilities,
+    request_uses_reference_audio,
+    request_uses_speaking_rate,
+    resolve_language_id,
+    resolve_voice_mode,
+)
 from .tts_result import TTSSynthesisResult
 
 
@@ -58,6 +65,16 @@ class MockTTSProvider(TTSProvider):
     def __init__(self, provider_name: str = "mock") -> None:
         self.provider_name = provider_name
 
+    def capabilities(self) -> TTSCapabilities:
+        return TTSCapabilities(
+            provider_name=self.provider_name,
+            supported_languages=("*",),
+            voice_modes=("mock",),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+
     def effective_synthesis_identity(
         self,
         voice_config: JsonDict | None = None,
@@ -65,6 +82,13 @@ class MockTTSProvider(TTSProvider):
         """Return the stable effective configuration used by the mock generator."""
 
         normalized_voice_config = _coerce_json_dict(voice_config)
+        voice_mode = resolve_voice_mode(normalized_voice_config, default_voice_mode="mock")
+        self.capabilities().validate_request(
+            language_id=resolve_language_id(normalized_voice_config),
+            voice_mode=voice_mode,
+            reference_audio_present=request_uses_reference_audio(normalized_voice_config),
+            speaking_rate_requested=request_uses_speaking_rate(normalized_voice_config),
+        )
         # Round-trip through JSON so callers can persist the identity without
         # depending on the particular values passed by an in-process caller.
         effective_config = json.loads(_stable_signature(normalized_voice_config))
@@ -85,7 +109,7 @@ class MockTTSProvider(TTSProvider):
                 )
             },
             "voice": {
-                "mode": "mock",
+                "mode": voice_mode,
                 "config": effective_config,
             },
         }
@@ -96,6 +120,13 @@ class MockTTSProvider(TTSProvider):
         voice_config: JsonDict | None = None,
     ) -> TTSSynthesisResult:
         normalized_voice_config = _coerce_json_dict(voice_config)
+        voice_mode = resolve_voice_mode(normalized_voice_config, default_voice_mode="mock")
+        self.capabilities().validate_request(
+            language_id=resolve_language_id(normalized_voice_config),
+            voice_mode=voice_mode,
+            reference_audio_present=request_uses_reference_audio(normalized_voice_config),
+            speaking_rate_requested=request_uses_speaking_rate(normalized_voice_config),
+        )
         signature = _stable_signature(
             {
                 "provider": self.provider_name,

@@ -9,6 +9,7 @@ from .chatterbox_v3 import ChatterboxV3Provider
 from .interfaces import TTSProvider
 from .mock_tts import MockTTSProvider
 from .registry import ProviderRegistry, ProviderRegistryError
+from .tts_capabilities import TTSCapabilityError
 from .tts_settings import TTSSettings, TTSSettingsError
 
 
@@ -51,6 +52,23 @@ def build_tts_provider(
         )
     else:  # TTSSettings validates this branch; retain an actionable factory boundary.
         raise TTSFactoryError(f"Unknown TTS provider: {settings.provider}.")
+
+    capabilities = provider.capabilities()
+    try:
+        capabilities.validate_request(
+            language_id=settings.language_id
+            or getattr(provider, "language_id", None)
+            or None,
+            voice_mode=(
+                "reference"
+                if settings.audio_prompt_path is not None
+                else capabilities.voice_modes[0]
+            ),
+            reference_audio_present=settings.audio_prompt_path is not None,
+            usage_policy=settings.usage_policy,
+        )
+    except TTSCapabilityError as exc:
+        raise TTSFactoryError(str(exc)) from exc
 
     target_registry = registry or ProviderRegistry()
     try:

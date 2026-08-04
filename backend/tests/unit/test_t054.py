@@ -10,6 +10,7 @@ import pytest
 from app.providers.chatterbox_v3 import (
     ChatterboxAudioPromptError,
     ChatterboxAudioValidationError,
+    ChatterboxCompatibilityError,
     ChatterboxDependencyError,
     ChatterboxDeviceError,
     ChatterboxGenerationError,
@@ -52,6 +53,7 @@ def _install_fake_runtime(
     cuda_available: bool = True,
     model_factory_error: Exception | None = None,
     captured_from_pretrained: dict[str, object] | None = None,
+    accepts_t3_model: bool = True,
 ) -> None:
     fake_torch = types.ModuleType("torch")
     fake_torch.cuda = types.SimpleNamespace(is_available=lambda: cuda_available)
@@ -66,14 +68,23 @@ def _install_fake_runtime(
     fake_mtl_tts = types.ModuleType("chatterbox.mtl_tts")
 
     class FakeChatterboxMultilingualTTS:
-        @classmethod
-        def from_pretrained(cls, device: object, t3_model: str) -> object:
-            if captured_from_pretrained is not None:
-                captured_from_pretrained["device"] = device
-                captured_from_pretrained["t3_model"] = t3_model
-            if model_factory_error is not None:
-                raise model_factory_error
-            return {"device": device, "t3_model": t3_model}
+        if accepts_t3_model:
+            @classmethod
+            def from_pretrained(cls, device: object, t3_model: str) -> object:
+                if captured_from_pretrained is not None:
+                    captured_from_pretrained["device"] = device
+                    captured_from_pretrained["t3_model"] = t3_model
+                if model_factory_error is not None:
+                    raise model_factory_error
+                return {"device": device, "t3_model": t3_model}
+        else:
+            @classmethod
+            def from_pretrained(cls, device: object) -> object:
+                if captured_from_pretrained is not None:
+                    captured_from_pretrained["device"] = device
+                if model_factory_error is not None:
+                    raise model_factory_error
+                return {"device": device}
 
     fake_mtl_tts.ChatterboxMultilingualTTS = FakeChatterboxMultilingualTTS
     fake_chatterbox.mtl_tts = fake_mtl_tts  # type: ignore[attr-defined]
@@ -239,6 +250,15 @@ def test_runtime_loader_forwards_device_and_avoids_outbound_entrypoints(
     assert runtime._torchaudio is sys.modules["torchaudio"]
 
 
+def test_runtime_loader_rejects_incompatible_from_pretrained_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_runtime(monkeypatch, accepts_t3_model=False)
+
+    with pytest.raises(ChatterboxCompatibilityError, match="t3_model"):
+        _load_runtime_backend("cpu")
+
+
 def test_runtime_loader_wraps_model_initialization_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_runtime(monkeypatch, model_factory_error=RuntimeError("boom"))
 
@@ -260,6 +280,20 @@ def test_provider_wraps_generation_errors_and_redacts_missing_prompt_paths() -> 
     with pytest.raises(ChatterboxAudioPromptError) as error:
         prompt_provider.synthesize("tekst")
     assert str(missing) not in str(error.value)
+
+
+def test_provider_redacts_unreadable_prompt_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    readable = Path(__file__).resolve()
+    provider = ChatterboxV3Provider(audio_prompt_path=readable, model_loader=lambda _: RecordingBackend(_wav()))
+
+    def _deny_open(*_: object, **__: object) -> object:
+        raise OSError("permission denied: C:/private/voice.wav")
+
+    monkeypatch.setattr("builtins.open", _deny_open)
+
+    with pytest.raises(ChatterboxAudioPromptError) as error:
+        provider.effective_synthesis_identity()
+    assert "C:/private/voice.wav" not in str(error.value)
 
 
 @pytest.mark.parametrize("text", ["", "   ", None])

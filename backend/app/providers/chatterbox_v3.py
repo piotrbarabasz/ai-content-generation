@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import io
 import hashlib
 import wave
@@ -13,6 +14,12 @@ from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 
 from .interfaces import TTSProvider, _coerce_json_dict
+from .tts_capabilities import (
+    TTSCapabilities,
+    request_uses_speaking_rate,
+    resolve_language_id,
+    resolve_voice_mode,
+)
 from .tts_result import TTSSynthesisResult
 
 
@@ -42,6 +49,10 @@ class ChatterboxModelLoadError(ChatterboxV3Error):
     """The optional Chatterbox model could not be initialized."""
 
 
+class ChatterboxCompatibilityError(ChatterboxV3Error):
+    """The installed Chatterbox runtime does not match the validated V3 API."""
+
+
 class ChatterboxGenerationError(ChatterboxV3Error):
     """The optional Chatterbox backend could not generate audio."""
 
@@ -59,11 +70,24 @@ def _validate_wav(audio_bytes: bytes) -> tuple[int, float]:
         raise ChatterboxAudioValidationError("Chatterbox returned an empty WAV payload.")
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
             sample_rate = wav_file.getframerate()
+            compression_type = wav_file.getcomptype()
             frame_count = wav_file.getnframes()
+            if channels != 1:
+                raise ChatterboxAudioValidationError("Chatterbox WAV output must be mono.")
+            if sample_width != 2:
+                raise ChatterboxAudioValidationError(
+                    "Chatterbox WAV output must use signed 16-bit PCM samples."
+                )
             if sample_rate != 24_000:
                 raise ChatterboxAudioValidationError(
                     "Chatterbox WAV output must use a 24000 Hz sample rate."
+                )
+            if compression_type != "NONE":
+                raise ChatterboxAudioValidationError(
+                    "Chatterbox WAV output must use uncompressed PCM audio."
                 )
             if frame_count <= 0:
                 raise ChatterboxAudioValidationError("Chatterbox returned an empty WAV payload.")
@@ -110,6 +134,8 @@ def _load_runtime_backend(device: str) -> _RuntimeBackend:
             "Install them with: pip install '.[chatterbox-v3]'"
         ) from exc
 
+    _validate_from_pretrained_contract(ChatterboxMultilingualTTS.from_pretrained)
+
     normalized_device = device.lower()
     if normalized_device.startswith("cuda") and not torch.cuda.is_available():
         raise ChatterboxDeviceError("CUDA was requested but is unavailable.")
@@ -122,6 +148,31 @@ def _load_runtime_backend(device: str) -> _RuntimeBackend:
     except Exception as exc:
         raise ChatterboxModelLoadError("Chatterbox V3 model loading failed.") from exc
     return _RuntimeBackend(model, torchaudio)
+
+
+def _validate_from_pretrained_contract(from_pretrained: Any) -> None:
+    """Require the validated Chatterbox V3 callable contract before loading weights."""
+
+    try:
+        signature = inspect.signature(from_pretrained)
+    except (TypeError, ValueError) as exc:
+        raise ChatterboxCompatibilityError(
+            "Chatterbox V3 runtime is incompatible: from_pretrained must expose "
+            "device and t3_model keyword parameters."
+        ) from exc
+    parameters = signature.parameters
+    required_keywords = ("device", "t3_model")
+    missing = [
+        name
+        for name in required_keywords
+        if name not in parameters or parameters[name].kind == inspect.Parameter.POSITIONAL_ONLY
+    ]
+    if missing:
+        joined = ", ".join(missing)
+        raise ChatterboxCompatibilityError(
+            "Chatterbox V3 runtime is incompatible: from_pretrained must accept "
+            f"{joined} as keyword arguments before weights are loaded."
+        )
 
 
 class ChatterboxV3Provider(TTSProvider):
@@ -160,6 +211,16 @@ class ChatterboxV3Provider(TTSProvider):
         self._model_loader = model_loader or _load_runtime_backend
         self._backend: Any | None = None
 
+    def capabilities(self) -> TTSCapabilities:
+        return TTSCapabilities(
+            provider_name=self.provider_name,
+            supported_languages=("en", "pl"),
+            voice_modes=("builtin", "reference"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+
     def _get_backend(self) -> Any:
         normalized_device = self.device.lower()
         if not (normalized_device == "cpu" or normalized_device.startswith("cuda")):
@@ -189,17 +250,25 @@ class ChatterboxV3Provider(TTSProvider):
     def _effective_configuration(
         self,
         voice_config: JsonDict | None,
-    ) -> tuple[str, dict[str, Any], str | None]:
+    ) -> tuple[str, dict[str, Any], str | None, str]:
         config: Mapping[str, Any] = _coerce_json_dict(voice_config)
-        language_id = config.get("language_id", self.language_id) or self.language_id
+        audio_prompt_path = self._audio_prompt(config.get("audio_prompt_path", self.audio_prompt_path))
+        language_id = resolve_language_id(config, default_language_id=self.language_id) or self.language_id
+        voice_mode = resolve_voice_mode(
+            config,
+            default_voice_mode="reference" if audio_prompt_path is not None else "builtin",
+        )
+        self.capabilities().validate_request(
+            language_id=language_id,
+            voice_mode=voice_mode,
+            reference_audio_present=audio_prompt_path is not None,
+            speaking_rate_requested=request_uses_speaking_rate(config),
+        )
         generation_settings = {
             field: config[field] if field in config else self._generation_defaults[field]
             for field in _GENERATION_FIELDS
         }
-        audio_prompt_path = self._audio_prompt(
-            config.get("audio_prompt_path", self.audio_prompt_path)
-        )
-        return language_id, generation_settings, audio_prompt_path
+        return language_id, generation_settings, audio_prompt_path, voice_mode
 
     def effective_synthesis_identity(
         self,
@@ -207,16 +276,21 @@ class ChatterboxV3Provider(TTSProvider):
     ) -> JsonDict:
         """Return the effective configuration without loading optional runtime code."""
 
-        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+        language_id, generation_settings, audio_prompt_path, voice_mode = self._effective_configuration(
             voice_config
         )
-        voice: JsonDict = {"mode": "builtin"}
+        voice: JsonDict = {"mode": voice_mode}
         if audio_prompt_path is not None:
-            with open(audio_prompt_path, "rb") as reference_file:
-                voice = {
-                    "mode": "reference",
-                    "content_checksum": hashlib.sha256(reference_file.read()).hexdigest(),
-                }
+            try:
+                with open(audio_prompt_path, "rb") as reference_file:
+                    voice = {
+                        "mode": "reference",
+                        "content_checksum": hashlib.sha256(reference_file.read()).hexdigest(),
+                    }
+            except OSError as exc:
+                raise ChatterboxAudioPromptError(
+                    "Unable to read the configured Chatterbox audio prompt."
+                ) from exc
         return {
             "provider": self.provider_name,
             "model_variant": self.t3_model,
@@ -231,7 +305,7 @@ class ChatterboxV3Provider(TTSProvider):
     ) -> TTSSynthesisResult:
         if not isinstance(text, str) or not text.strip():
             raise ChatterboxGenerationError("Chatterbox requires non-empty synthesis text.")
-        language_id, generation_settings, audio_prompt_path = self._effective_configuration(
+        language_id, generation_settings, audio_prompt_path, _voice_mode = self._effective_configuration(
             voice_config
         )
         generation_kwargs = {

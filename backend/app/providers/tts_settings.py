@@ -16,6 +16,7 @@ _PROVIDERS = frozenset({"mock", "chatterbox_v3"})
 _FIELDS = frozenset(
     {
         "provider",
+        "usage_policy",
         "device",
         "language_id",
         "model_variant",
@@ -38,6 +39,7 @@ class TTSSettings:
     """Validated settings shared by the supported TTS provider constructors."""
 
     provider: str = "mock"
+    usage_policy: str = "production"
     device: str = "cpu"
     language_id: str | None = None
     model_variant: str = "v3"
@@ -52,6 +54,14 @@ class TTSSettings:
     def __post_init__(self) -> None:
         if not isinstance(self.provider, str) or self.provider not in _PROVIDERS:
             raise TTSSettingsError("Unsupported TTS provider; use 'mock' or 'chatterbox_v3'.")
+        if not isinstance(self.usage_policy, str):
+            raise TTSSettingsError("TTS usage_policy must be a string.")
+        normalized_usage_policy = self.usage_policy.strip().lower()
+        if normalized_usage_policy not in {"production", "evaluation_only"}:
+            raise TTSSettingsError(
+                "TTS usage_policy must be 'production' or 'evaluation_only'."
+            )
+        object.__setattr__(self, "usage_policy", normalized_usage_policy)
         if not isinstance(self.device, str) or not self.device.strip():
             raise TTSSettingsError("TTS device must be a non-empty string.")
         if self.language_id is not None and not isinstance(self.language_id, str):

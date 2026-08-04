@@ -16,7 +16,12 @@ def test_mock_smoke_writes_valid_wav_and_report(tmp_path):
     assert report["provider"] == "mock"
     assert report["model_variant"] == "mock"
     assert report["word_count"] == 3
+    assert report["channels"] == 1
+    assert report["sample_width"] == 2
     assert report["sample_rate"] == 24_000
+    assert report["compression_type"] == "NONE"
+    assert report["frame_count"] > 0
+    assert report["duration_seconds"] > 0
     assert report["voice"] == "builtin"
 
 
@@ -34,7 +39,7 @@ def test_input_text_file_and_settings_are_forwarded(tmp_path, monkeypatch):
             captured["voice_config"] = voice_config
             from app.providers.mock_tts import MockTTSProvider
 
-            return MockTTSProvider().synthesize(text, voice_config)
+            return MockTTSProvider("chatterbox_v3").synthesize(text, {})
 
     monkeypatch.setattr(tts_smoke, "_create_provider", lambda args: FakeProvider())
     assert tts_smoke.main([

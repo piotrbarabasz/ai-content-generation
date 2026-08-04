@@ -1016,7 +1016,7 @@ Notes: This is technical long-narration reliability testing. Do not introduce se
 
 ## Phase 22: TTS runtime baseline and provider capabilities
 
-- [ ] T065 Reproduce and lock Chatterbox Multilingual V3 runtime compatibility
+- [X] T065 Reproduce and lock Chatterbox Multilingual V3 runtime compatibility
 Milestone: M006
 Epic: E011
 Risk: high
@@ -1031,7 +1031,7 @@ Test requirements: Use fake modules to verify API-signature mismatch, V3 argumen
 Parallelizable: no
 Notes: Do not silently fall back to the legacy multilingual model. Do not place a moving Git branch in production dependencies; pin an immutable revision or validated release.
 
-- [ ] T066 Add isolated TTS runtime profiles, setup scripts and health checks
+- [X] T066 Add isolated TTS runtime profiles, setup scripts and health checks
 Milestone: M006
 Epic: E011
 Risk: medium
@@ -1046,7 +1046,7 @@ Test requirements: Add static tests for path resolution, explicit interpreter us
 Parallelizable: no
 Notes: PowerShell is the validated Windows path. A POSIX equivalent may be added later but is not required by this task.
 
-- [ ] T067 Add provider capability and usage-policy contracts
+- [X] T067 Add provider capability and usage-policy contracts
 Milestone: M006
 Epic: E011
 Risk: high

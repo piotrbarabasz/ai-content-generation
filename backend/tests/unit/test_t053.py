@@ -25,14 +25,16 @@ def test_settings_defaults_are_mock_cpu_and_no_prompt() -> None:
     settings = TTSSettings()
 
     assert settings.provider == "mock"
+    assert settings.usage_policy == "production"
     assert settings.device == "cpu"
     assert settings.audio_prompt_path is None
     assert settings.model_variant == "v3"
 
 
-def test_settings_accept_precise_chatterbox_fields() -> None:
+def test_settings_accept_precise_chatterbox_fields_and_policy_mode() -> None:
     settings = TTSSettings.from_mapping(
         {
+            "usage_policy": "evaluation_only",
             "language_id": "pl",
             "model_variant": "v3",
             "exaggeration": 0.5,
@@ -46,6 +48,7 @@ def test_settings_accept_precise_chatterbox_fields() -> None:
     )
 
     assert settings.provider == "chatterbox_v3"
+    assert settings.usage_policy == "evaluation_only"
     assert settings.language_id == "pl"
     assert settings.top_p == 0.9
 
@@ -57,6 +60,7 @@ def test_settings_accept_precise_chatterbox_fields() -> None:
         {"temperature": "warm"},
         {"unexpected": "value"},
         {"provider": "mock"},
+        {"usage_policy": "preview"},
     ],
 )
 def test_settings_reject_invalid_values(values: dict[str, object]) -> None:
@@ -76,12 +80,13 @@ def test_factory_selects_chatterbox_lazily_without_optional_runtime_import() -> 
     sys.modules.pop("torch", None)
     sys.modules.pop("chatterbox", None)
 
-    provider = build_tts_provider(_config("chatterbox_v3"))
+    provider = build_tts_provider(_config("chatterbox_v3", {"usage_policy": "evaluation_only"}))
 
     assert isinstance(provider, ChatterboxV3Provider)
     assert provider.device == "cpu"
     assert provider.language_id == "pl"
     assert provider._backend is None
+    assert provider.capabilities().usage_policy == "production"
     assert "torch" not in sys.modules
     assert "chatterbox" not in sys.modules
 

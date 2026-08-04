@@ -1,40 +1,43 @@
-﻿param(
+param(
+    [ValidateSet('tts311')]
+    [string]$Profile = 'tts311',
     [string]$Text,
     [string]$Output
 )
 
-$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $RepoRoot ".venv-tts311\Scripts\python.exe"
+$Python = Join-Path $RepoRoot ".venv-$Profile\Scripts\python.exe"
 
-if (-not (Test-Path $Python)) {
-    throw "Brak środowiska .venv-tts311. Najpierw utwórz i zainstaluj środowisko TTS."
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    throw "Missing runtime profile $Profile: $Python"
 }
 
 if ([string]::IsNullOrWhiteSpace($Text)) {
-    $Text = Read-Host "Wpisz tekst do wygenerowania"
+    $Text = Read-Host 'Enter text to synthesize'
 }
 
 if ([string]::IsNullOrWhiteSpace($Text)) {
-    throw "Tekst nie może być pusty."
+    throw 'Text must not be empty.'
 }
 
 if ([string]::IsNullOrWhiteSpace($Output)) {
-    $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $Output = ".runtime\tts-smoke\demo-$Timestamp.wav"
+    $Timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $Output = ".runtime\tts-demo\demo-$Timestamp.wav"
 }
 
 $OutputPath = [System.IO.Path]::GetFullPath(
     (Join-Path $RepoRoot $Output)
 )
 
-$env:PYTHONPATH = Join-Path $RepoRoot "backend"
+$env:PYTHONPATH = Join-Path $RepoRoot 'backend'
 
-Write-Host ""
-Write-Host "Generowanie głosu..."
-Write-Host "Plik wyjściowy: $OutputPath"
-Write-Host ""
+Write-Host ''
+Write-Host 'Generating speech...'
+Write-Host "Output file: $OutputPath"
+Write-Host ''
 
 & $Python `
     -m app.tooling.tts_smoke `
@@ -46,10 +49,10 @@ Write-Host ""
     --overwrite
 
 if ($LASTEXITCODE -ne 0) {
-    throw "Generowanie głosu zakończyło się błędem."
+    throw 'Speech generation failed.'
 }
 
-Write-Host ""
-Write-Host "Gotowe: $OutputPath"
+Write-Host ''
+Write-Host "Done: $OutputPath"
 
 Invoke-Item $OutputPath

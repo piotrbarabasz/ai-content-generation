@@ -16,7 +16,8 @@ The tool creates parent directories for the WAV and report. The report defaults
 to the WAV path with a `.json` extension and records provider, V3 model,
 device, language, word count, generation time, WAV duration and sample rate,
 SHA-256 checksum, and selected voice (`builtin` unless `--audio-prompt` is
-provided). It validates the final WAV before writing the report.
+provided). It validates the final WAV before writing the report and requires a
+mono, 16-bit PCM payload at 24 kHz.
 
 Supply narration with either `--text` or `--input-text-file`; the latter reads
 a UTF-8 fixture or text file. Missing, unreadable, or blank input files fail
@@ -26,6 +27,11 @@ Existing WAV or report paths are protected. Pass `--overwrite` deliberately to
 replace either file. Optional generation controls are `--exaggeration`,
 `--cfg-weight`, `--temperature`, `--repetition-penalty`, `--min-p`, and
 `--top-p`. `--help` is always available without the optional runtime.
+
+The smoke report also captures the validated PCM parameters: channels, sample
+width, sample rate, compression type, frame count and duration. This keeps the
+recorded Chatterbox contract reproducible without importing the heavy runtime
+from the default test environment.
 
 Keep outputs, private speaker references, weights, and caches outside tracked
 paths (for example, under `.runtime/`).
