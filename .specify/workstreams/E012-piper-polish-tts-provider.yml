@@ -1,0 +1,25 @@
+id: E012
+title: Piper Polish TTS Provider
+milestone: M006
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E012-piper-polish-tts-provider
+status: planned
+risk: high
+depends_on:
+  - E011
+tasks:
+  - T068
+  - T069
+  - T070
+required_checks:
+  - python -m pytest
+  - git --no-pager diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

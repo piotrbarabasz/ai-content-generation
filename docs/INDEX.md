@@ -35,3 +35,15 @@
 - `docs/tts/CHATTERBOX_SMOKE.md`
 
 <!-- M004 TTS DOCS INDEX END -->
+
+<!-- M006 MULTI-PROVIDER TTS DOCS INDEX START -->
+
+- `docs/tts/M006_PROVIDER_DECISION.md`
+- `docs/tts/RUNTIME_PROFILES.md`
+- `docs/tts/PIPER_SETUP.md`
+- `docs/tts/PIPER_VOICES.md`
+- `docs/tts/PIPER_SMOKE.md`
+- `docs/tts/XTTS_SETUP.md`
+- `docs/tts/PROVIDER_COMPARISON.md`
+
+<!-- M006 MULTI-PROVIDER TTS DOCS INDEX END -->

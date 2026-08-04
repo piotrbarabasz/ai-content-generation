@@ -330,3 +330,40 @@ A developer wants to provide a fixed Polish narration and receive a playable WAV
 - **SC-011**: An interrupted fifteen-minute offline narration run cannot expose stale success, resumes only valid compatible chunks, and publishes a validated final PCM WAV with truthful benchmark evidence.
 
 <!-- M005 TTS RUNTIME HARDENING EXTENSION END -->
+
+<!-- M006 MULTI-PROVIDER POLISH TTS EXTENSION START -->
+
+## Multi-Provider Polish TTS
+
+### Additional Functional Requirements
+
+- **FR-082**: The system MUST select a supported TTS provider through the existing ProviderConfig and TTS factory without provider-specific branches in VoiceoverModule or workflow orchestration.
+- **FR-083**: Every TTS provider MUST expose deterministic JSON-compatible capability metadata without importing or initializing its heavy optional runtime.
+- **FR-084**: Capability metadata MUST describe supported languages, voice modes, reference-audio requirements, speaking-rate support and usage policy.
+- **FR-085**: The Chatterbox Multilingual V3 runtime MUST be reproducibly pinned to an implementation that accepts the configured V3 model variant and MUST emit validated mono 16-bit PCM WAV output.
+- **FR-086**: Piper MUST be available as an optional local TTS provider with a curated Polish voice catalog and validated controls for voice selection and speaking rate.
+- **FR-087**: Every externally stored voice or model asset MUST have a deterministic identity containing provider, model key, revision or version, content checksum and recorded license identifier without persisting private local paths.
+- **FR-088**: XTTS-v2 MUST be exposed only as an evaluation provider, MUST require approved reference audio and MUST be rejected by production-mode configuration validation unless a separate policy decision changes its permitted use.
+- **FR-089**: Provider-specific settings MUST be validated strictly and unknown or unsupported settings MUST fail before model loading.
+- **FR-090**: Effective synthesis identity and cache invalidation MUST distinguish Chatterbox, Piper and XTTS requests, resolved model or voice assets, language, device, generation controls and reference-audio content.
+- **FR-091**: All providers MUST return a WAV payload compatible with the shared PCM inspection and assembly contract, while preserving the provider's truthful sample rate in result and benchmark metadata.
+- **FR-092**: A human-operated comparison runner MUST generate the same normalized Polish text across selected provider profiles and write per-profile WAV and JSON evidence plus a summary and playlist.
+- **FR-093**: Runtime setup and health checks MUST use explicit isolated interpreter paths and MUST NOT modify the interpreter pinned for hooks, agents or CI.
+- **FR-094**: Model downloads, private reference audio and real provider execution MUST occur only in explicit manual setup, smoke or comparison commands and never during default tests.
+
+### Additional Non-Functional Requirements
+
+- **NFR-017**: Default M006 tests MUST require no network, model download, GPU, PyTorch, Chatterbox, Piper, XTTS or private speaker-reference file.
+- **NFR-018**: Optional provider runtimes MUST be independently installable so incompatible heavy dependencies cannot destabilize the base application or each other.
+- **NFR-019**: Provider and voice metadata MUST preserve source, version or revision, checksum and usage-policy evidence sufficient for human license review.
+- **NFR-020**: Reference-audio paths and contents MUST remain local, ignored and absent from manifests, logs and committed fixtures; only non-reversible checksums and approved labels may be persisted.
+
+### Additional Success Criteria
+
+- **SC-012**: The same provider-neutral VoiceoverModule workflow can execute with mock, Chatterbox or Piper by changing ProviderConfig only.
+- **SC-013**: A human can run one documented comparison command and receive playable Chatterbox and Piper Polish WAV samples with truthful benchmark evidence; XTTS is included only when an approved reference is supplied.
+- **SC-014**: Production-mode configuration deterministically rejects the evaluation-only XTTS provider and explains the policy boundary.
+- **SC-015**: Provider changes and voice/model asset changes invalidate incompatible cached narration chunks while unchanged compatible runs remain reusable.
+- **SC-016**: The complete existing test suite remains green without installing or importing any real M006 provider runtime.
+
+<!-- M006 MULTI-PROVIDER POLISH TTS EXTENSION END -->

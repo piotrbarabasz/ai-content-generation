@@ -1011,3 +1011,163 @@ Parallelizable: no
 Notes: This is technical long-narration reliability testing. Do not introduce semantic scene splitting, captions, image generation, rendering or real Chatterbox execution in CI.
 
 <!-- M005 TTS RUNTIME HARDENING TASKS EXTENSION END -->
+
+<!-- M006 MULTI-PROVIDER POLISH TTS TASKS EXTENSION START -->
+
+## Phase 22: TTS runtime baseline and provider capabilities
+
+- [ ] T065 Reproduce and lock Chatterbox Multilingual V3 runtime compatibility
+Milestone: M006
+Epic: E011
+Risk: high
+Implementation files: `pyproject.toml`, `backend/app/providers/chatterbox_v3.py`, `docs/tts/CHATTERBOX_SETUP.md`, `docs/tts/CHATTERBOX_SMOKE.md`
+Test files: `backend/tests/unit/test_t065.py`, `backend/tests/unit/test_t054.py`, `backend/tests/unit/test_t055.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t065.py backend/tests/unit/test_t054.py backend/tests/unit/test_t055.py`
+Final PR review required: yes
+Goal: Convert the successful manual debugging result and direct PCM16 hotfix into a reproducible Chatterbox V3 runtime contract.
+Dependencies: T064
+Acceptance criteria: The optional dependency points to a validated Chatterbox source revision or released version whose `ChatterboxMultilingualTTS.from_pretrained` accepts the configured V3 model selector; the adapter verifies the expected callable contract before loading weights and raises an actionable compatibility error on mismatch; generated tensors are saved as mono signed 16-bit PCM WAV at 24 kHz; runtime errors retain a safe causal summary without exposing private paths or tokens; the default import path remains lazy; the manual setup document records the validated Python, torch, torchaudio, CUDA and Chatterbox versions; no real package or model is required by pytest.
+Test requirements: Use fake modules to verify API-signature mismatch, V3 argument forwarding, `encoding=PCM_S`, `bits_per_sample=16`, valid WAV output, lazy imports and safe error messages.
+Parallelizable: no
+Notes: Do not silently fall back to the legacy multilingual model. Do not place a moving Git branch in production dependencies; pin an immutable revision or validated release.
+
+- [ ] T066 Add isolated TTS runtime profiles, setup scripts and health checks
+Milestone: M006
+Epic: E011
+Risk: medium
+Implementation files: `scripts/setup-tts-runtime.ps1`, `scripts/check-tts-runtime.ps1`, `scripts/run-tts-demo.ps1`, `docs/tts/RUNTIME_PROFILES.md`, `.gitignore`
+Test files: `backend/tests/static/test_t066.py`
+Validation commands: `python -m pytest backend/tests/static/test_t066.py`
+Final PR review required: yes
+Goal: Make heavy local TTS runtimes reproducible without contaminating the agent or CI environment.
+Dependencies: T065
+Acceptance criteria: Documentation defines `.venv-ci311`, `.venv-tts311`, `.venv-piper311` and `.venv-xtts311`; scripts invoke explicit environment interpreters, are idempotent where practical and never activate or repoint `agent.python`; the Chatterbox setup script validates Python 3.11, matching torch/torchaudio versions, CUDA visibility, provider imports and one opt-in real smoke; health-check output is machine-readable as well as human-readable; generated environments, model caches, reference audio and comparison outputs are ignored; scripts fail before installing when prerequisites are unsupported.
+Test requirements: Add static tests for path resolution, explicit interpreter use, ignore coverage, no hook-config mutation, no embedded credentials and documented failure modes. Real installation remains manual.
+Parallelizable: no
+Notes: PowerShell is the validated Windows path. A POSIX equivalent may be added later but is not required by this task.
+
+- [ ] T067 Add provider capability and usage-policy contracts
+Milestone: M006
+Epic: E011
+Risk: high
+Implementation files: `backend/app/providers/interfaces.py`, `backend/app/providers/tts_capabilities.py`, `backend/app/providers/mock_tts.py`, `backend/app/providers/chatterbox_v3.py`, `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`
+Test files: `backend/tests/unit/test_t067.py`, `backend/tests/unit/test_t060.py`, `backend/tests/unit/test_t053.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t067.py backend/tests/unit/test_t060.py backend/tests/unit/test_t053.py`
+Final PR review required: yes
+Goal: Describe provider features and permitted runtime role without loading optional model code.
+Dependencies: T066
+Acceptance criteria: TTSProvider exposes deterministic capability metadata containing provider name, supported languages, voice modes, reference-audio requirement, speaking-rate support and usage policy; mock and Chatterbox implement the contract; capability inspection imports no heavy optional modules and performs no network access; TTSSettings validates provider-neutral policy mode separately from provider-specific generation settings; the factory continues to use the existing ProviderRegistry; unsupported provider capabilities fail with actionable provider-neutral errors; effective synthesis identity remains request-specific and separate from static capabilities.
+Test requirements: Add serialization, deterministic ordering, lazy-import, policy-mode, unsupported-language, unsupported-voice-mode and existing-factory regression tests.
+Parallelizable: no
+Notes: Do not encode a UI schema and do not add a second registry.
+
+## Phase 23: Piper Polish provider
+
+- [ ] T068 Add an optional lazy Piper TTS provider
+Milestone: M006
+Epic: E012
+Risk: high
+Implementation files: `pyproject.toml`, `backend/app/providers/piper_tts.py`, `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `backend/app/providers/tts_result.py`
+Test files: `backend/tests/unit/test_t068.py`, `backend/tests/unit/test_t053.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t068.py backend/tests/unit/test_t053.py`
+Final PR review required: yes
+Goal: Generate provider-neutral PCM WAV results from a local Piper ONNX voice without changing VoiceoverModule.
+Dependencies: T067
+Acceptance criteria: Piper is installed only through an optional dependency/runtime profile; imports and model loading are lazy; configuration accepts an explicit managed model key or approved local model path but manifests never persist absolute paths; the provider uses the Piper Python API and returns TTSSynthesisResult with truthful sample rate and duration; output is mono 16-bit uncompressed PCM WAV compatible with shared inspection and chunk assembly; missing runtime, missing model, invalid config and invalid WAV produce typed actionable errors; no model is downloaded during provider construction or tests.
+Test requirements: Use a fake Piper runtime to verify lazy import, model resolution, synthesis config forwarding, WAV validation, metadata, identity and error handling.
+Parallelizable: no
+Notes: The default implementation is CPU-first. CUDA acceleration is optional and must not become a test requirement.
+
+- [ ] T069 Add a curated Polish Piper voice catalog and asset identity
+Milestone: M006
+Epic: E012
+Risk: high
+Implementation files: `backend/app/providers/piper_catalog.py`, `backend/app/providers/piper_tts.py`, `docs/tts/PIPER_SETUP.md`, `docs/tts/PIPER_VOICES.md`, `scripts/setup-piper-runtime.ps1`, `scripts/check-piper-runtime.ps1`
+Test files: `backend/tests/unit/test_t069.py`, `backend/tests/static/test_t069.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t069.py backend/tests/static/test_t069.py`
+Final PR review required: yes
+Goal: Resolve known Polish Piper voices reproducibly and preserve source, checksum and license evidence.
+Dependencies: T068
+Acceptance criteria: The catalog initially covers `pl_PL-bass-high`, `pl_PL-darkman-medium`, `pl_PL-gosia-medium`, `pl_PL-mc_speech-medium` and `pl_PL-mls_6892-low` only after each model card is reviewed; every entry records provider key, language, quality, expected sample rate, source repository, immutable revision when available, required files, checksums and license identifier; setup downloads are explicit human actions and verify checksums before activation; catalog identity is included in effective synthesis identity; changed model bytes or catalog revision invalidate cache reuse; unknown voices fail without attempting arbitrary downloads; the engine and model-license review is documented separately from technical installation.
+Test requirements: Add catalog validation, duplicate key, missing checksum, changed checksum, path redaction, unknown voice and deterministic identity tests. Static tests must ensure no model binaries are committed.
+Parallelizable: no
+Notes: Model catalog inclusion is not automatic approval for commercial distribution.
+
+- [ ] T070 Add Piper controls and manual smoke comparison support
+Milestone: M006
+Epic: E012
+Risk: medium
+Implementation files: `backend/app/providers/piper_tts.py`, `backend/app/providers/tts_settings.py`, `backend/app/tooling/tts_smoke.py`, `backend/app/tooling/tts_compare.py`, `scripts/run-tts-provider-comparison.ps1`, `docs/tts/PIPER_SMOKE.md`
+Test files: `backend/tests/unit/test_t070.py`, `backend/tests/unit/test_t063.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t070.py backend/tests/unit/test_t063.py`
+Final PR review required: yes
+Goal: Compare Chatterbox neutral against selected Polish Piper voices using the same text and truthful metrics.
+Dependencies: T069
+Acceptance criteria: Piper settings support validated `length_scale`, volume, noise scale and noise-width scale without leaking unsupported values to other providers; `tts_smoke` accepts Piper and reports the resolved voice/model identity; the comparison runner invokes providers sequentially, writes one WAV and report per profile, a summary JSON and playlist, and continues after one profile failure while recording the reason; the default comparison includes Chatterbox neutral and the curated Piper voices; comparison output is ignored; tests use fake providers only and assert identical normalized text across profiles.
+Test requirements: Add settings bounds, provider-specific rejection, same-text, sequential execution, partial failure, summary aggregation, playlist and benchmark identity tests.
+Parallelizable: no
+Notes: Loudness-normalized derivatives may be added later, but original provider outputs must always be preserved.
+
+## Phase 24: XTTS evaluation and provider selection
+
+- [ ] T071 Add an evaluation-only XTTS-v2 provider
+Milestone: M006
+Epic: E013
+Risk: high
+Implementation files: `pyproject.toml`, `backend/app/providers/xtts_v2.py`, `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `docs/tts/XTTS_SETUP.md`
+Test files: `backend/tests/unit/test_t071.py`, `backend/tests/unit/test_t053.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t071.py backend/tests/unit/test_t053.py`
+Final PR review required: yes
+Goal: Evaluate Polish XTTS-v2 voice cloning without presenting it as a production-approved provider.
+Dependencies: T070
+Acceptance criteria: XTTS dependencies are isolated in `.venv-xtts311` and imported lazily; the provider name is `xtts_v2_eval`; capabilities declare `usage_policy=evaluation_only`, Polish support and required reference audio; provider construction and identity calculation perform no network access; synthesis requires an existing approved reference WAV and stores only its checksum and approved label; output is validated mono 16-bit PCM WAV with truthful sample rate; production policy rejects the provider before model loading; tests use fake runtime objects and generated WAV fixtures only.
+Test requirements: Add evaluation-policy, required-reference, consent-label, checksum identity, path redaction, lazy import, generation argument, WAV validation and production rejection tests.
+Parallelizable: no
+Notes: Do not add built-in public-figure voices, bundled private samples or a production override hidden in provider settings.
+
+- [ ] T072 Complete provider selection through configuration and tooling
+Milestone: M006
+Epic: E013
+Risk: high
+Implementation files: `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `backend/app/providers/registry.py`, `backend/app/tooling/tts_smoke.py`, `backend/app/modules/voiceover.py`
+Test files: `backend/tests/unit/test_t072.py`, `backend/tests/unit/test_t053.py`, `backend/tests/unit/test_t059.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t072.py backend/tests/unit/test_t053.py backend/tests/unit/test_t059.py`
+Final PR review required: yes
+Goal: Select mock, Chatterbox, Piper or evaluation XTTS by changing ProviderConfig only.
+Dependencies: T071
+Acceptance criteria: TTSSettings accepts provider-specific validated sub-settings without a union of silently ignored fields; build_tts_provider composes all supported providers through the existing registry; smoke tooling uses the same factory path instead of a separate hard-coded constructor switch; VoiceoverModule remains unaware of concrete provider classes; production/evaluation policy mode is explicit at the composition boundary; unsupported language, voice mode, model asset or policy is rejected before model loading; provider selection changes effective identity and invalidates incompatible cache entries.
+Test requirements: Add one ProviderConfig composition test per provider, strict cross-provider settings tests, policy tests, smoke/factory parity, Voiceover substitution and cache identity regressions.
+Parallelizable: no
+Notes: A CLI flag is a configuration input, not a second provider-selection implementation.
+
+- [ ] T073 Add a reproducible cross-provider Polish comparison harness
+Milestone: M006
+Epic: E013
+Risk: medium
+Implementation files: `backend/app/tooling/tts_compare.py`, `scripts/run-tts-provider-comparison.ps1`, `docs/tts/PROVIDER_COMPARISON.md`, `backend/tests/fixtures/narrations/story_01_1min.txt`
+Test files: `backend/tests/unit/test_t073.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t073.py`
+Final PR review required: yes
+Goal: Produce auditable same-text evidence for human provider and voice selection.
+Dependencies: T072
+Acceptance criteria: A manifest-driven comparison defines profiles separately from implementation code; all profiles receive the same normalized input text and declared random seed where the provider supports it; providers run sequentially; each result records status, effective identity, generation wall time, audio duration, real-time factor, PCM parameters, checksum and output path; failures are isolated per profile; XTTS is skipped unless an approved reference is supplied; summary output includes no private absolute paths; a human scoring template covers naturalness, Polish pronunciation, pace, timbre, expression and artifacts.
+Test requirements: Add deterministic manifest parsing, duplicate profile, same-text, seed propagation, skip, failure isolation, redaction, metrics and scoring-template tests using fake providers.
+Parallelizable: no
+Notes: Human listening decides quality; automated metrics are evidence only.
+
+- [ ] T074 Add multi-provider acceptance coverage and operational decision record
+Milestone: M006
+Epic: E013
+Risk: high
+Implementation files: `backend/app/modules/voiceover.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/manifest.py`, `docs/tts/M006_PROVIDER_DECISION.md`, `docs/INDEX.md`
+Test files: `backend/tests/unit/test_t074.py`, `backend/tests/unit/test_t064.py`, `backend/tests/integration/test_long_form_workflow.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t074.py backend/tests/unit/test_t064.py backend/tests/integration/test_long_form_workflow.py`
+Final PR review required: yes
+Goal: Prove offline that provider substitution preserves workflow behavior, cache correctness and policy boundaries.
+Dependencies: T073
+Acceptance criteria: One provider-neutral integration scenario executes the same short and resumable narration workflow with deterministic fake Chatterbox, Piper and XTTS adapters; output artifact contracts remain identical apart from truthful provider metadata and sample rate; changing provider, model/voice asset, speaking-rate controls or reference content invalidates incompatible chunks; unchanged configuration reuses valid chunks; production policy rejects evaluation XTTS; capability metadata and effective identity contain no private paths; docs record provider roles, runtime profiles, license-review requirements and the human comparison decision process; the full suite passes without real runtimes or network access.
+Test requirements: Add provider substitution, short mode, resumable mode, cache invalidation, full reuse, policy rejection, artifact parity, path redaction and documentation-link tests.
+Parallelizable: no
+Notes: Completion of M006 enables a later UI or API selector but does not implement one.
+
+<!-- M006 MULTI-PROVIDER POLISH TTS TASKS EXTENSION END -->

@@ -350,3 +350,39 @@ data/tts-smoke/
 ## M005 TTS Runtime Hardening
 
 M005 contains only E010, Long Narration Cache and Resume Integrity. It hardens the provider-neutral effective synthesis identity so cache reuse is correct across provider configuration and voice identity changes, prunes stale chunk records and artifacts, and makes manifest recovery and WAV finalization crash-safe and atomic. Benchmark and smoke evidence must report the actual synthesis configuration and distinguish generated, reused and failed chunks. The milestone adds an offline 15-minute interruption/resume acceptance path using deterministic fakes; CI must not execute a real model or access the network.
+
+<!-- M006 MULTI-PROVIDER POLISH TTS PLAN EXTENSION START -->
+
+## M006 Multi-Provider Polish TTS
+
+M006 expands the existing provider-neutral TTS path rather than redesigning it. E011 first makes the real Chatterbox Multilingual V3 runtime reproducible and introduces a lazy provider-capability and usage-policy contract. E012 adds Piper as a fast local Polish provider with a curated, checksum-pinned voice catalog and native speaking-rate controls. E013 adds XTTS-v2 only as an evaluation provider, exposes provider selection through the existing ProviderConfig and TTS factory, and adds a manual same-text comparison runner.
+
+The milestone uses separate optional runtime environments for Chatterbox, Piper and XTTS. The default test and agent environment remains lightweight. Real-model execution, network downloads and private reference audio are limited to explicit human-operated setup and smoke commands.
+
+### Architecture constraints
+
+- `VoiceoverModule`, chunking, cache, assembly and benchmark services remain provider-neutral.
+- Provider selection uses the existing `ProviderConfig`, `TTSSettings`, `build_tts_provider` and `ProviderRegistry`.
+- Heavy imports and model loading remain lazy.
+- Effective synthesis identity includes the resolved provider, model/voice asset identity, language, device, generation settings and reference-audio checksum where applicable.
+- Provider capability and usage-policy metadata can be inspected without loading models.
+- XTTS-v2 is rejected outside explicit evaluation mode until a separate licensing decision authorizes another use.
+- No test downloads models or executes a real provider.
+
+### Delivery order
+
+1. E011: repair and lock the Chatterbox real-runtime baseline; add runtime profiles and provider capabilities.
+2. E012: add Piper, Polish voice asset management and Piper smoke/benchmark support.
+3. E013: add evaluation-only XTTS-v2, complete provider selection and produce cross-provider comparison evidence.
+
+### Out of scope
+
+- UI provider selection,
+- training or fine-tuning,
+- cloud TTS services,
+- scraping or committing voice references,
+- automatic model downloads in tests,
+- concurrent loading of several GPU models,
+- captions, image generation, rendering and deployment.
+
+<!-- M006 MULTI-PROVIDER POLISH TTS PLAN EXTENSION END -->
