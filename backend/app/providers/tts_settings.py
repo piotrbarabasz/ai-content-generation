@@ -121,8 +121,6 @@ class TTSSettings:
         else:
             if self.model_key is not None or self.model_path is not None:
                 raise TTSSettingsError("TTS model_key and model_path are only supported by Piper.")
-            if self.audio_prompt_path is not None and self.provider != "chatterbox_v3":
-                raise TTSSettingsError("TTS audio_prompt_path is only supported by Chatterbox V3.")
             for field_name in ("length_scale", "volume", "noise_scale", "noise_w_scale"):
                 if getattr(self, field_name) is not None:
                     raise TTSSettingsError(f"TTS {field_name} is only supported by Piper.")

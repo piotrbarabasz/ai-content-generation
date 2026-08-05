@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.enums import ProviderType
+from app.domain.provider_config import ProviderConfig
 from app.providers.piper_tts import PiperTTSProvider
+from app.providers.tts_factory import TTSFactoryError, build_tts_provider
 from app.providers.tts_settings import TTSSettings, TTSSettingsError
 from app.tooling import tts_compare, tts_smoke
 
@@ -31,6 +34,15 @@ class RecordingBackend:
     def synthesize(self, text: str, **kwargs: object) -> bytes:
         self.calls.append((text, dict(kwargs)))
         return self.payload
+
+
+def _config(name: str = "mock", settings: dict[str, object] | None = None) -> ProviderConfig:
+    return ProviderConfig.create(
+        workflow_config_id="workflow",
+        provider_type=ProviderType.TTS,
+        provider_name=name,
+        settings=settings,
+    )
 
 
 def test_piper_settings_validate_controls_and_reject_leakage() -> None:
@@ -58,6 +70,11 @@ def test_piper_settings_validate_controls_and_reject_leakage() -> None:
         TTSSettings.from_mapping({"model_key": "pl_PL-gosia-medium", "length_scale": 0.0}, provider="piper")
     with pytest.raises(TTSSettingsError, match="greater than or equal to zero"):
         TTSSettings.from_mapping({"model_key": "pl_PL-gosia-medium", "noise_w_scale": -0.1}, provider="piper")
+
+
+def test_audio_prompt_path_reaches_provider_neutral_capability_validation_for_unsupported_provider() -> None:
+    with pytest.raises(TTSFactoryError, match="voice mode 'reference'"):
+        build_tts_provider(_config("mock", {"audio_prompt_path": "private-reference.wav"}))
 
 
 def test_piper_provider_forwards_controls_and_records_effective_identity() -> None:
