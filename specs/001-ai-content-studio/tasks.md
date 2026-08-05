@@ -1125,7 +1125,7 @@ Test requirements: Add evaluation-policy, required-reference, consent-label, che
 Parallelizable: no
 Notes: Do not add built-in public-figure voices, bundled private samples or a production override hidden in provider settings.
 
-- [ ] T072 Complete provider selection through configuration and tooling
+- [X] T072 Complete provider selection through configuration and tooling
 Milestone: M006
 Epic: E013
 Risk: high
