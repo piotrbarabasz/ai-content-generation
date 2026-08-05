@@ -1,6 +1,8 @@
 param(
     [string]$Text,
     [string]$InputTextFile,
+    [string]$Manifest = $(Join-Path (Split-Path -Parent $PSScriptRoot) "docs\tts\PROVIDER_COMPARISON.md"),
+    [string]$ApprovedReference,
     [string]$OutputDir = $(Join-Path (Split-Path -Parent $PSScriptRoot) ".runtime\tts-comparison\comparison-$((Get-Date).ToString('yyyyMMdd-HHmmss'))"),
     [string[]]$Profile,
     [switch]$Overwrite
@@ -27,6 +29,7 @@ $env:PYTHONPATH = Join-Path $RepoRoot 'backend'
 
 $arguments = @(
     '-m', 'app.tooling.tts_compare',
+    '--manifest', $Manifest,
     '--output-dir', $OutputPath
 )
 
@@ -37,17 +40,21 @@ elseif (-not [string]::IsNullOrWhiteSpace($InputTextFile)) {
     $arguments += @('--input-text-file', $InputTextFile)
 }
 else {
-    $Text = Read-Host 'Enter text to compare'
-    if ([string]::IsNullOrWhiteSpace($Text)) {
-        throw 'Text must not be empty.'
+    $FixtureText = Join-Path $RepoRoot 'backend\tests\fixtures\narrations\story_01_1min.txt'
+    if (-not (Test-Path -LiteralPath $FixtureText -PathType Leaf)) {
+        throw "Missing default comparison fixture: $FixtureText"
     }
-    $arguments += @('--text', $Text)
+    $arguments += @('--input-text-file', $FixtureText)
 }
 
 if ($Profile) {
     foreach ($item in $Profile) {
         $arguments += @('--profile', $item)
     }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ApprovedReference)) {
+    $arguments += @('--approved-reference', $ApprovedReference)
 }
 
 if ($Overwrite) {

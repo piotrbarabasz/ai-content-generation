@@ -1140,7 +1140,7 @@ Test requirements: Add one ProviderConfig composition test per provider, strict 
 Parallelizable: no
 Notes: A CLI flag is a configuration input, not a second provider-selection implementation.
 
-- [ ] T073 Add a reproducible cross-provider Polish comparison harness
+- [X] T073 Add a reproducible cross-provider Polish comparison harness
 Milestone: M006
 Epic: E013
 Risk: medium
