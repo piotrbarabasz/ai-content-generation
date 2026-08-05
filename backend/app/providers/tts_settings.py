@@ -12,7 +12,7 @@ class TTSSettingsError(ValueError):
     """Raised when TTS-specific provider settings are invalid."""
 
 
-_PROVIDERS = frozenset({"mock", "chatterbox_v3", "piper"})
+_PROVIDERS = frozenset({"mock", "chatterbox_v3", "piper", "xtts_v2_eval"})
 _FIELDS = frozenset(
     {
         "provider",
@@ -21,6 +21,8 @@ _FIELDS = frozenset(
         "language_id",
         "model_variant",
         "audio_prompt_path",
+        "reference_audio_path",
+        "approved_label",
         "model_key",
         "model_path",
         "length_scale",
@@ -64,6 +66,8 @@ class TTSSettings:
     language_id: str | None = None
     model_variant: str = "v3"
     audio_prompt_path: str | Path | None = None
+    reference_audio_path: str | Path | None = None
+    approved_label: str | None = None
     model_key: str | None = None
     model_path: str | Path | None = None
     length_scale: float | None = None
@@ -79,7 +83,9 @@ class TTSSettings:
 
     def __post_init__(self) -> None:
         if not isinstance(self.provider, str) or self.provider not in _PROVIDERS:
-            raise TTSSettingsError("Unsupported TTS provider; use 'mock', 'chatterbox_v3' or 'piper'.")
+            raise TTSSettingsError(
+                "Unsupported TTS provider; use 'mock', 'chatterbox_v3', 'piper' or 'xtts_v2_eval'."
+            )
         if not isinstance(self.usage_policy, str):
             raise TTSSettingsError("TTS usage_policy must be a string.")
         normalized_usage_policy = self.usage_policy.strip().lower()
@@ -92,13 +98,28 @@ class TTSSettings:
             raise TTSSettingsError("TTS device must be a non-empty string.")
         if self.language_id is not None and not isinstance(self.language_id, str):
             raise TTSSettingsError("TTS language_id must be a string or null.")
-        if self.model_variant != "v3":
+        if not isinstance(self.model_variant, str):
+            raise TTSSettingsError("TTS model_variant must be a string.")
+        normalized_model_variant = self.model_variant.strip().lower().replace("-", "_")
+        if self.provider == "xtts_v2_eval":
+            if normalized_model_variant not in {"v3", "xtts_v2"}:
+                raise TTSSettingsError("XTTS model_variant must be 'xtts_v2'.")
+            object.__setattr__(self, "model_variant", "xtts_v2")
+        elif normalized_model_variant != "v3":
             raise TTSSettingsError("TTS model_variant must be 'v3'.")
         if self.audio_prompt_path is not None and not isinstance(self.audio_prompt_path, (str, Path)):
             raise TTSSettingsError("TTS audio_prompt_path must be a path string or null.")
+        if self.reference_audio_path is not None and not isinstance(self.reference_audio_path, (str, Path)):
+            raise TTSSettingsError("TTS reference_audio_path must be a path string or null.")
+        if self.approved_label is not None and not isinstance(self.approved_label, str):
+            raise TTSSettingsError("TTS approved_label must be a string or null.")
         if self.provider == "piper":
             if self.audio_prompt_path is not None:
                 raise TTSSettingsError("TTS audio_prompt_path is not supported by Piper.")
+            if self.reference_audio_path is not None:
+                raise TTSSettingsError("TTS reference_audio_path is not supported by Piper.")
+            if self.approved_label is not None:
+                raise TTSSettingsError("TTS approved_label is not supported by Piper.")
             if (self.model_key is None) == (self.model_path is None):
                 raise TTSSettingsError(
                     "Piper TTS settings must include exactly one of model_key or model_path."
@@ -118,9 +139,30 @@ class TTSSettings:
                 value = getattr(self, field_name)
                 if value is not None:
                     _validate_piper_numeric(field_name, value)
+        elif self.provider == "xtts_v2_eval":
+            if self.model_key is not None or self.model_path is not None:
+                raise TTSSettingsError("TTS model_key and model_path are only supported by Piper.")
+            if self.audio_prompt_path is not None and self.reference_audio_path is not None:
+                audio_prompt_path = Path(self.audio_prompt_path)
+                reference_audio_path = Path(self.reference_audio_path)
+                if audio_prompt_path != reference_audio_path:
+                    raise TTSSettingsError(
+                        "XTTS audio_prompt_path and reference_audio_path must resolve to the same file."
+                    )
+            if self.reference_audio_path is None and self.audio_prompt_path is not None:
+                object.__setattr__(self, "reference_audio_path", Path(self.audio_prompt_path))
+            elif self.reference_audio_path is not None:
+                object.__setattr__(self, "reference_audio_path", Path(self.reference_audio_path))
+            if self.approved_label is None or not self.approved_label.strip():
+                raise TTSSettingsError("XTTS approved_label is required.")
+            object.__setattr__(self, "approved_label", self.approved_label.strip())
         else:
             if self.model_key is not None or self.model_path is not None:
                 raise TTSSettingsError("TTS model_key and model_path are only supported by Piper.")
+            if self.reference_audio_path is not None:
+                raise TTSSettingsError("TTS reference_audio_path is only supported by XTTS.")
+            if self.approved_label is not None:
+                raise TTSSettingsError("TTS approved_label is only supported by XTTS.")
             for field_name in ("length_scale", "volume", "noise_scale", "noise_w_scale"):
                 if getattr(self, field_name) is not None:
                     raise TTSSettingsError(f"TTS {field_name} is only supported by Piper.")

@@ -7,6 +7,7 @@ from app.domain.provider_config import ProviderConfig
 
 from .chatterbox_v3 import ChatterboxV3Provider
 from .piper_tts import PiperConfigurationError, PiperTTSProvider
+from .xtts_v2 import XTTSConfigurationError, XTTSV2EvalProvider
 from .interfaces import TTSProvider
 from .mock_tts import MockTTSProvider
 from .registry import ProviderRegistry, ProviderRegistryError
@@ -62,6 +63,18 @@ def build_tts_provider(
             )
         except PiperConfigurationError as exc:
             raise TTSFactoryError(str(exc)) from exc
+    elif settings.provider == "xtts_v2_eval":
+        try:
+            provider = XTTSV2EvalProvider(
+                settings.provider,
+                device=settings.device,
+                language_id=settings.language_id or "pl",
+                model_variant=settings.model_variant,
+                reference_audio_path=settings.reference_audio_path or settings.audio_prompt_path,
+                approved_label=settings.approved_label,
+            )
+        except XTTSConfigurationError as exc:
+            raise TTSFactoryError(str(exc)) from exc
     else:  # TTSSettings validates this branch; retain an actionable factory boundary.
         raise TTSFactoryError(f"Unknown TTS provider: {settings.provider}.")
 
@@ -74,9 +87,12 @@ def build_tts_provider(
             voice_mode=(
                 "reference"
                 if settings.audio_prompt_path is not None
+                or settings.reference_audio_path is not None
                 else capabilities.voice_modes[0]
             ),
-            reference_audio_present=settings.audio_prompt_path is not None,
+            reference_audio_present=(
+                settings.audio_prompt_path is not None or settings.reference_audio_path is not None
+            ),
             usage_policy=settings.usage_policy,
         )
     except TTSCapabilityError as exc:

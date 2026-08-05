@@ -71,6 +71,26 @@ def test_settings_accept_piper_model_key_and_path_selection() -> None:
         assert path_settings.model_path == model_path
 
 
+def test_settings_accept_xtts_reference_audio_and_label() -> None:
+    with TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp_dir:
+        reference_audio_path = Path(temp_dir) / "approved-reference.wav"
+        reference_audio_path.write_bytes(b"reference-audio")
+
+        settings = TTSSettings.from_mapping(
+            {
+                "reference_audio_path": reference_audio_path,
+                "approved_label": "consent-2026-08",
+                "usage_policy": "evaluation_only",
+            },
+            provider="xtts_v2_eval",
+        )
+
+        assert settings.provider == "xtts_v2_eval"
+        assert settings.reference_audio_path == reference_audio_path
+        assert settings.approved_label == "consent-2026-08"
+        assert settings.model_variant == "xtts_v2"
+
+
 @pytest.mark.parametrize("provider_name", ["mock", "chatterbox_v3"])
 def test_settings_reject_piper_fields_for_other_providers(provider_name: str) -> None:
     with TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp_dir:

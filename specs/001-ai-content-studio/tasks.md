@@ -1110,7 +1110,7 @@ Notes: Loudness-normalized derivatives may be added later, but original provider
 
 ## Phase 24: XTTS evaluation and provider selection
 
-- [ ] T071 Add an evaluation-only XTTS-v2 provider
+- [X] T071 Add an evaluation-only XTTS-v2 provider
 Milestone: M006
 Epic: E013
 Risk: high

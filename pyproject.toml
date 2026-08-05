@@ -26,6 +26,9 @@ chatterbox-v3 = [
 piper = [
   "piper-tts",
 ]
+xtts = [
+  "TTS",
+]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
