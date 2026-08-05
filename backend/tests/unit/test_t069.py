@@ -57,7 +57,7 @@ class RecordingBackend:
             "bass",
             "high",
             22_050,
-            "7c89b592e94392a56c789bd35a860fec66a6583f",
+            "834f23262168a7e809179465e4113f23f5a7d1f7",
             "427c7c0975ee21cea29db0f58f827883",
             "0a121543c2a697ddb48a74bbdd0fbbe9",
             "53b729f8209e4fc98d55c299055d79b5",

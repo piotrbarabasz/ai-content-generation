@@ -38,7 +38,7 @@ class T069PiperCatalogStaticTests(unittest.TestCase):
             '"pl_PL-mc_speech-medium"',
             '"pl_PL-mls_6892-low"',
             "source_repository=PIPER_VOICE_SOURCE_REPOSITORY",
-            'source_revision="7c89b592e94392a56c789bd35a860fec66a6583f"',
+            'source_revision="834f23262168a7e809179465e4113f23f5a7d1f7"',
             'source_revision="e9ef9dd"',
             'source_revision="441d4ac"',
             'source_revision="5227e41"',
