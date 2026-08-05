@@ -1063,7 +1063,7 @@ Notes: Do not encode a UI schema and do not add a second registry.
 
 ## Phase 23: Piper Polish provider
 
-- [ ] T068 Add an optional lazy Piper TTS provider
+- [X] T068 Add an optional lazy Piper TTS provider
 Milestone: M006
 Epic: E012
 Risk: high
@@ -1078,7 +1078,7 @@ Test requirements: Use a fake Piper runtime to verify lazy import, model resolut
 Parallelizable: no
 Notes: The default implementation is CPU-first. CUDA acceleration is optional and must not become a test requirement.
 
-- [ ] T069 Add a curated Polish Piper voice catalog and asset identity
+- [X] T069 Add a curated Polish Piper voice catalog and asset identity
 Milestone: M006
 Epic: E012
 Risk: high
@@ -1093,7 +1093,7 @@ Test requirements: Add catalog validation, duplicate key, missing checksum, chan
 Parallelizable: no
 Notes: Model catalog inclusion is not automatic approval for commercial distribution.
 
-- [ ] T070 Add Piper controls and manual smoke comparison support
+- [X] T070 Add Piper controls and manual smoke comparison support
 Milestone: M006
 Epic: E012
 Risk: medium

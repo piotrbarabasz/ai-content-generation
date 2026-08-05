@@ -14,6 +14,8 @@ from typing import Any
 from app.tts.benchmark import build_benchmark_report
 from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
 from app.tts.manifest import ChunkManifest, SynthesisManifest, sanitize_synthesis_identity
+from app.providers.piper_tts import PiperTTSProvider
+from app.providers.tts_settings import TTSSettings
 
 
 class TTSSmokeError(RuntimeError):
@@ -21,12 +23,13 @@ class TTSSmokeError(RuntimeError):
 
 
 _KNOBS = ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p")
+_PIPER_KNOBS = ("length_scale", "volume", "noise_scale", "noise_w_scale")
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the parser without importing optional provider dependencies."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("mock", "chatterbox_v3"), default="mock")
+    parser.add_argument("--provider", choices=("mock", "chatterbox_v3", "piper"), default="mock")
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--text", help="Narration text to synthesize.")
     input_group.add_argument(
@@ -38,8 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu", help="Chatterbox device (default: cpu).")
     parser.add_argument("--audio-prompt", type=Path, help="Optional local speaker-reference WAV.")
     parser.add_argument("--model-variant", choices=("v3",), default="v3")
+    parser.add_argument("--model-key", help="Piper catalog voice key.")
+    parser.add_argument("--model-path", type=Path, help="Piper local model path.")
     parser.add_argument("--overwrite", action="store_true", help="Permit replacing an existing WAV or report.")
     for knob in _KNOBS:
+        parser.add_argument(f"--{knob.replace('_', '-')}", type=float)
+    for knob in _PIPER_KNOBS:
         parser.add_argument(f"--{knob.replace('_', '-')}", type=float)
     return parser
 
@@ -55,14 +62,56 @@ def _validate_wav(path: Path):
 
 
 def _create_provider(args: argparse.Namespace) -> Any:
+    settings = TTSSettings.from_mapping(
+        {
+            "device": args.device,
+            "language_id": args.language,
+            "model_variant": args.model_variant,
+            "audio_prompt_path": args.audio_prompt,
+            "model_key": getattr(args, "model_key", None),
+            "model_path": getattr(args, "model_path", None),
+            "exaggeration": getattr(args, "exaggeration", None),
+            "cfg_weight": getattr(args, "cfg_weight", None),
+            "temperature": getattr(args, "temperature", None),
+            "repetition_penalty": getattr(args, "repetition_penalty", None),
+            "min_p": getattr(args, "min_p", None),
+            "top_p": getattr(args, "top_p", None),
+            "length_scale": getattr(args, "length_scale", None),
+            "volume": getattr(args, "volume", None),
+            "noise_scale": getattr(args, "noise_scale", None),
+            "noise_w_scale": getattr(args, "noise_w_scale", None),
+        },
+        provider=args.provider,
+    )
     if args.provider == "mock":
         from app.providers.mock_tts import MockTTSProvider
 
-        return MockTTSProvider("mock")
-    from app.providers.chatterbox_v3 import ChatterboxV3Provider
+        return MockTTSProvider(settings.provider)
+    if args.provider == "chatterbox_v3":
+        from app.providers.chatterbox_v3 import ChatterboxV3Provider
 
-    return ChatterboxV3Provider(
-        "chatterbox_v3", device=args.device, language_id=args.language, audio_prompt_path=args.audio_prompt
+        return ChatterboxV3Provider(
+            settings.provider,
+            device=settings.device,
+            language_id=settings.language_id or "pl",
+            audio_prompt_path=settings.audio_prompt_path,
+            exaggeration=settings.exaggeration,
+            cfg_weight=settings.cfg_weight,
+            temperature=settings.temperature,
+            repetition_penalty=settings.repetition_penalty,
+            min_p=settings.min_p,
+            top_p=settings.top_p,
+        )
+    return PiperTTSProvider(
+        settings.provider,
+        device=settings.device,
+        language_id=settings.language_id or "pl",
+        model_key=settings.model_key,
+        model_path=settings.model_path,
+        length_scale=settings.length_scale,
+        volume=settings.volume,
+        noise_scale=settings.noise_scale,
+        noise_w_scale=settings.noise_w_scale,
     )
 
 
@@ -149,6 +198,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "model_variant": report["model"], "generation_seconds": report["generation_wall_time_seconds"],
         "checksum_sha256": checksum, "voice": result.metadata.get("voice", "builtin"),
         "output_wav": str(args.output),
+        "effective_synthesis_identity": sanitize_synthesis_identity(effective_identity),
         "channels": parameters.channels,
         "sample_width": parameters.sample_width,
         "sample_rate": parameters.sample_rate,

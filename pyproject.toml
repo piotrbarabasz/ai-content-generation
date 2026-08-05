@@ -23,6 +23,9 @@ chatterbox-v3 = [
   "resemble-perth==1.0.1",
   "setuptools<81",
 ]
+piper = [
+  "piper-tts",
+]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
