@@ -1078,7 +1078,7 @@ Test requirements: Use a fake Piper runtime to verify lazy import, model resolut
 Parallelizable: no
 Notes: The default implementation is CPU-first. CUDA acceleration is optional and must not become a test requirement.
 
-- [ ] T069 Add a curated Polish Piper voice catalog and asset identity
+- [X] T069 Add a curated Polish Piper voice catalog and asset identity
 Milestone: M006
 Epic: E012
 Risk: high

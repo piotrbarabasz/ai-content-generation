@@ -11,6 +11,7 @@ from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 from app.tts.assembly import inspect_pcm_wav
 
+from .piper_catalog import PiperCatalogError, PiperVoiceCatalogEntry, get_piper_voice_catalog_entry
 from .interfaces import TTSProvider, _coerce_json_dict
 from .tts_capabilities import (
     TTSCapabilities,
@@ -46,11 +47,23 @@ class PiperAudioValidationError(PiperError):
     """The backend output is not a usable mono 16-bit PCM WAV payload."""
 
 
-def _model_identity(model_key: str | None, model_path: Path | None) -> dict[str, Any]:
+def _catalog_identity(entry: PiperVoiceCatalogEntry) -> dict[str, Any]:
+    return entry.to_identity_payload()
+
+
+def _model_identity(
+    model_key: str | None,
+    model_path: Path | None,
+    catalog_entry: PiperVoiceCatalogEntry | None,
+) -> dict[str, Any]:
     if model_key is not None:
+        if catalog_entry is None:
+            raise PiperConfigurationError(
+                f"Unknown Piper voice '{model_key}'."
+            )
         return {
-            "kind": "managed_key",
-            "model_key": model_key,
+            "kind": "catalog_voice",
+            **_catalog_identity(catalog_entry),
         }
     assert model_path is not None
     try:
@@ -71,6 +84,21 @@ def _runtime_model_reference(model_key: str | None, model_path: Path | None) -> 
     if model_path is not None:
         reference["model_path"] = str(model_path)
     return reference
+
+
+def _expected_voice_mode(model_key: str | None, model_path: Path | None) -> str:
+    if model_key is not None:
+        return "catalog"
+    assert model_path is not None
+    return "local_path"
+
+
+def _validate_voice_mode(voice_mode: str, *, model_key: str | None, model_path: Path | None) -> None:
+    expected_mode = _expected_voice_mode(model_key, model_path)
+    if voice_mode != expected_mode:
+        raise PiperConfigurationError(
+            f"Piper voice_mode must be '{expected_mode}' for the configured voice asset."
+        )
 
 
 def _coerce_wav_bytes(audio: Any, *, output_buffer: io.BytesIO) -> bytes | None:
@@ -206,6 +234,7 @@ class PiperTTSProvider(TTSProvider):
         self.model_path = Path(model_path) if model_path is not None else None
         self._model_loader = model_loader or _load_runtime_backend
         self._backend: Any | None = None
+        self._catalog_entry: PiperVoiceCatalogEntry | None = None
 
         if not isinstance(self.device, str) or not self.device.strip():
             raise PiperConfigurationError("Piper device must be a non-empty string.")
@@ -217,6 +246,11 @@ class PiperTTSProvider(TTSProvider):
             )
         if self.model_path is not None and not self.model_path.is_file():
             raise PiperConfigurationError("Piper model_path must point to an existing file.")
+        if self.model_key is not None:
+            try:
+                self._catalog_entry = get_piper_voice_catalog_entry(self.model_key)
+            except PiperCatalogError as exc:
+                raise PiperConfigurationError(str(exc)) from exc
 
     def capabilities(self) -> TTSCapabilities:
         return TTSCapabilities(
@@ -232,14 +266,22 @@ class PiperTTSProvider(TTSProvider):
         return resolve_language_id(voice_config, default_language_id=self.language_id) or self.language_id
 
     def _effective_voice_mode(self, voice_config: JsonDict | None) -> str:
-        default_voice_mode = "catalog" if self.model_key is not None else "local_path"
-        return resolve_voice_mode(voice_config, default_voice_mode=default_voice_mode)
+        default_voice_mode = _expected_voice_mode(self.model_key, self.model_path)
+        voice_mode = resolve_voice_mode(voice_config, default_voice_mode=default_voice_mode)
+        _validate_voice_mode(voice_mode, model_key=self.model_key, model_path=self.model_path)
+        return voice_mode
 
     def _model_reference(self) -> JsonDict:
         runtime_reference = _runtime_model_reference(self.model_key, self.model_path)
         runtime_reference["device"] = self.device
         runtime_reference["language_id"] = self.language_id
-        runtime_reference["model_identity"] = _model_identity(self.model_key, self.model_path)
+        runtime_reference["model_identity"] = _model_identity(
+            self.model_key,
+            self.model_path,
+            self._catalog_entry,
+        )
+        if self._catalog_entry is not None:
+            runtime_reference["catalog_identity"] = _catalog_identity(self._catalog_entry)
         return runtime_reference
 
     def _model_variant(self) -> str:
@@ -281,7 +323,12 @@ class PiperTTSProvider(TTSProvider):
             "generation_settings": {},
             "voice": {
                 "mode": voice_mode,
-                "model": _model_identity(self.model_key, self.model_path),
+                "model": _model_identity(self.model_key, self.model_path, self._catalog_entry),
+                **(
+                    {"catalog": _catalog_identity(self._catalog_entry)}
+                    if self._catalog_entry is not None
+                    else {}
+                ),
             },
         }
 
@@ -327,7 +374,8 @@ class PiperTTSProvider(TTSProvider):
                 "Piper WAV output must use signed 16-bit PCM samples."
             )
 
-        model_identity = _model_identity(self.model_key, self.model_path)
+        model_identity = _model_identity(self.model_key, self.model_path, self._catalog_entry)
+        catalog_identity = _catalog_identity(self._catalog_entry) if self._catalog_entry is not None else None
         return TTSSynthesisResult(
             audio_bytes=audio_payload,
             sample_rate=parameters.sample_rate,
@@ -341,6 +389,7 @@ class PiperTTSProvider(TTSProvider):
                 "voice": {
                     "mode": voice_mode,
                     "model": model_identity,
+                    **({"catalog": catalog_identity} if catalog_identity is not None else {}),
                 },
             },
         )
