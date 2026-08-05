@@ -79,7 +79,7 @@ class RecordingBackend:
             "gosia",
             "medium",
             22_050,
-            "e9ef9dd",
+            "5e74c24a88ed7d31e308633fa1542433ce2b28d4",
             "ecf817530e575025166e454adde1f382",
             "82fe5f840c3af4c98e8a1430431ecdbd",
             "e1355330fe5fab166e6f2e20af7e91e9",
@@ -180,7 +180,7 @@ def test_provider_includes_catalog_identity_in_effective_synthesis_identity() ->
     assert identity["voice"]["mode"] == "catalog"
     assert identity["voice"]["model"]["kind"] == "catalog_voice"
     assert identity["voice"]["catalog"]["provider_key"] == "pl_PL-gosia-medium"
-    assert identity["voice"]["catalog"]["source_revision"] == "e9ef9dd"
+    assert identity["voice"]["catalog"]["source_revision"] == "5e74c24a88ed7d31e308633fa1542433ce2b28d4"
     assert identity["voice"]["catalog"]["checksums"]["pl/pl_PL/gosia/medium/pl_PL-gosia-medium.onnx"] == (
         "ecf817530e575025166e454adde1f382"
     )

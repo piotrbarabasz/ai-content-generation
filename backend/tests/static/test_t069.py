@@ -40,6 +40,7 @@ class T069PiperCatalogStaticTests(unittest.TestCase):
             "source_repository=PIPER_VOICE_SOURCE_REPOSITORY",
             'source_revision="834f23262168a7e809179465e4113f23f5a7d1f7"',
             'source_revision="e9ef9dd"',
+            'source_revision="5e74c24a88ed7d31e308633fa1542433ce2b28d4"',
             'source_revision="441d4ac"',
             'source_revision="5227e41"',
             "download_urls",
