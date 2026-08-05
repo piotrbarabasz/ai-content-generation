@@ -11,11 +11,18 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from app.domain.enums import ProviderType
+from app.domain.provider_config import ProviderConfig
+from app.providers.chatterbox_v3 import ChatterboxV3Provider
+from app.providers.mock_tts import MockTTSProvider
+from app.providers.piper_tts import PiperTTSProvider
+from app.providers.tts_factory import build_tts_provider
+from app.providers.tts_capabilities import TTSCapabilities
 from app.tts.benchmark import build_benchmark_report
 from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
 from app.tts.manifest import ChunkManifest, SynthesisManifest, sanitize_synthesis_identity
-from app.providers.piper_tts import PiperTTSProvider
 from app.providers.tts_settings import TTSSettings
+from app.providers.xtts_v2 import XTTSV2EvalProvider
 
 
 class TTSSmokeError(RuntimeError):
@@ -26,10 +33,68 @@ _KNOBS = ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "mi
 _PIPER_KNOBS = ("length_scale", "volume", "noise_scale", "noise_w_scale")
 
 
+def _provider_capabilities(provider_name: str) -> TTSCapabilities:
+    if provider_name == "mock":
+        return TTSCapabilities(
+            provider_name="mock",
+            supported_languages=("*",),
+            voice_modes=("mock",),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+    if provider_name == "chatterbox_v3":
+        return TTSCapabilities(
+            provider_name="chatterbox_v3",
+            supported_languages=("en", "pl"),
+            voice_modes=("builtin", "reference"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+    if provider_name == "piper":
+        return TTSCapabilities(
+            provider_name="piper",
+            supported_languages=("pl",),
+            voice_modes=("catalog", "local_path"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+    if provider_name == "xtts_v2_eval":
+        return TTSCapabilities(
+            provider_name="xtts_v2_eval",
+            supported_languages=("pl",),
+            voice_modes=("reference",),
+            reference_audio_required=True,
+            speaking_rate_supported=False,
+            usage_policy="evaluation_only",
+        )
+    raise TTSSmokeError(f"Unknown provider for smoke capabilities: {provider_name}.")
+
+
+def _attach_capabilities(provider: Any, provider_name: str) -> Any:
+    if getattr(provider, "provider_type", None) is None:
+        setattr(provider, "provider_type", ProviderType.TTS)
+    capabilities = getattr(provider, "capabilities", None)
+    if callable(capabilities):
+        return provider
+
+    def _capabilities() -> TTSCapabilities:
+        return _provider_capabilities(provider_name)
+
+    setattr(provider, "capabilities", _capabilities)
+    return provider
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the parser without importing optional provider dependencies."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("mock", "chatterbox_v3", "piper"), default="mock")
+    parser.add_argument(
+        "--provider",
+        choices=("mock", "chatterbox_v3", "piper", "xtts_v2_eval"),
+        default="mock",
+    )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--text", help="Narration text to synthesize.")
     input_group.add_argument(
@@ -40,15 +105,75 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", default="pl", help="Chatterbox language id (default: pl).")
     parser.add_argument("--device", default="cpu", help="Chatterbox device (default: cpu).")
     parser.add_argument("--audio-prompt", type=Path, help="Optional local speaker-reference WAV.")
-    parser.add_argument("--model-variant", choices=("v3",), default="v3")
+    parser.add_argument("--model-variant", choices=("v3", "xtts_v2"), default="v3")
     parser.add_argument("--model-key", help="Piper catalog voice key.")
     parser.add_argument("--model-path", type=Path, help="Piper local model path.")
+    parser.add_argument(
+        "--usage-policy",
+        choices=("production", "evaluation_only"),
+        default="production",
+        help="Composition policy for the selected provider.",
+    )
+    parser.add_argument(
+        "--approved-label",
+        help="Human-reviewed label required by xtts_v2_eval.",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Permit replacing an existing WAV or report.")
     for knob in _KNOBS:
         parser.add_argument(f"--{knob.replace('_', '-')}", type=float)
     for knob in _PIPER_KNOBS:
         parser.add_argument(f"--{knob.replace('_', '-')}", type=float)
     return parser
+
+
+def _provider_factories() -> dict[str, Any]:
+    """Return provider constructors resolved from this module's bindings."""
+
+    return {
+        "mock": lambda settings: _attach_capabilities(
+            MockTTSProvider(settings.provider), settings.provider
+        ),
+        "chatterbox_v3": lambda settings: _attach_capabilities(
+            ChatterboxV3Provider(
+                settings.provider,
+                device=settings.device,
+                language_id=settings.language_id or "pl",
+                audio_prompt_path=settings.audio_prompt_path,
+                exaggeration=settings.exaggeration,
+                cfg_weight=settings.cfg_weight,
+                temperature=settings.temperature,
+                repetition_penalty=settings.repetition_penalty,
+                min_p=settings.min_p,
+                top_p=settings.top_p,
+            ),
+            settings.provider,
+        ),
+        "piper": lambda settings: _attach_capabilities(
+            PiperTTSProvider(
+                settings.provider,
+                device=settings.device,
+                language_id=settings.language_id or "pl",
+                model_key=settings.model_key,
+                model_path=settings.model_path,
+                length_scale=settings.length_scale,
+                volume=settings.volume,
+                noise_scale=settings.noise_scale,
+                noise_w_scale=settings.noise_w_scale,
+            ),
+            settings.provider,
+        ),
+        "xtts_v2_eval": lambda settings: _attach_capabilities(
+            XTTSV2EvalProvider(
+                settings.provider,
+                device=settings.device,
+                language_id=settings.language_id or "pl",
+                model_variant=settings.model_variant,
+                reference_audio_path=settings.reference_audio_path or settings.audio_prompt_path,
+                approved_label=settings.approved_label,
+            ),
+            settings.provider,
+        ),
+    }
 
 
 def _validate_wav(path: Path):
@@ -62,57 +187,58 @@ def _validate_wav(path: Path):
 
 
 def _create_provider(args: argparse.Namespace) -> Any:
-    settings = TTSSettings.from_mapping(
-        {
-            "device": args.device,
-            "language_id": args.language,
-            "model_variant": args.model_variant,
-            "audio_prompt_path": args.audio_prompt,
-            "model_key": getattr(args, "model_key", None),
-            "model_path": getattr(args, "model_path", None),
-            "exaggeration": getattr(args, "exaggeration", None),
-            "cfg_weight": getattr(args, "cfg_weight", None),
-            "temperature": getattr(args, "temperature", None),
-            "repetition_penalty": getattr(args, "repetition_penalty", None),
-            "min_p": getattr(args, "min_p", None),
-            "top_p": getattr(args, "top_p", None),
-            "length_scale": getattr(args, "length_scale", None),
-            "volume": getattr(args, "volume", None),
-            "noise_scale": getattr(args, "noise_scale", None),
-            "noise_w_scale": getattr(args, "noise_w_scale", None),
+    provider_settings = {
+        "provider": args.provider,
+        "usage_policy": args.usage_policy,
+        "device": args.device,
+        "language_id": args.language,
+        "model_variant": args.model_variant,
+        "audio_prompt_path": args.audio_prompt,
+        "model_key": getattr(args, "model_key", None),
+        "model_path": getattr(args, "model_path", None),
+        "exaggeration": getattr(args, "exaggeration", None),
+        "cfg_weight": getattr(args, "cfg_weight", None),
+        "temperature": getattr(args, "temperature", None),
+        "repetition_penalty": getattr(args, "repetition_penalty", None),
+        "min_p": getattr(args, "min_p", None),
+        "top_p": getattr(args, "top_p", None),
+        "length_scale": getattr(args, "length_scale", None),
+        "volume": getattr(args, "volume", None),
+        "noise_scale": getattr(args, "noise_scale", None),
+        "noise_w_scale": getattr(args, "noise_w_scale", None),
+    }
+    if args.provider == "xtts_v2_eval":
+        provider_settings["reference_audio_path"] = args.audio_prompt
+        provider_settings["approved_label"] = getattr(args, "approved_label", None)
+    settings = TTSSettings.from_mapping(provider_settings, provider=args.provider)
+    provider_config = ProviderConfig.create(
+        workflow_config_id="tts_smoke",
+        provider_type=ProviderType.TTS,
+        provider_name=settings.provider,
+        settings={
+            "provider": settings.provider,
+            "usage_policy": settings.usage_policy,
+            "device": settings.device,
+            "language_id": settings.language_id,
+            "model_variant": settings.model_variant,
+            "audio_prompt_path": settings.audio_prompt_path,
+            "reference_audio_path": settings.reference_audio_path,
+            "approved_label": settings.approved_label,
+            "model_key": settings.model_key,
+            "model_path": settings.model_path,
+            "length_scale": settings.length_scale,
+            "volume": settings.volume,
+            "noise_scale": settings.noise_scale,
+            "noise_w_scale": settings.noise_w_scale,
+            "exaggeration": settings.exaggeration,
+            "cfg_weight": settings.cfg_weight,
+            "temperature": settings.temperature,
+            "repetition_penalty": settings.repetition_penalty,
+            "min_p": settings.min_p,
+            "top_p": settings.top_p,
         },
-        provider=args.provider,
     )
-    if args.provider == "mock":
-        from app.providers.mock_tts import MockTTSProvider
-
-        return MockTTSProvider(settings.provider)
-    if args.provider == "chatterbox_v3":
-        from app.providers.chatterbox_v3 import ChatterboxV3Provider
-
-        return ChatterboxV3Provider(
-            settings.provider,
-            device=settings.device,
-            language_id=settings.language_id or "pl",
-            audio_prompt_path=settings.audio_prompt_path,
-            exaggeration=settings.exaggeration,
-            cfg_weight=settings.cfg_weight,
-            temperature=settings.temperature,
-            repetition_penalty=settings.repetition_penalty,
-            min_p=settings.min_p,
-            top_p=settings.top_p,
-        )
-    return PiperTTSProvider(
-        settings.provider,
-        device=settings.device,
-        language_id=settings.language_id or "pl",
-        model_key=settings.model_key,
-        model_path=settings.model_path,
-        length_scale=settings.length_scale,
-        volume=settings.volume,
-        noise_scale=settings.noise_scale,
-        noise_w_scale=settings.noise_w_scale,
-    )
+    return build_tts_provider(provider_config, provider_factories=_provider_factories())
 
 
 def _effective_synthesis_identity(
@@ -192,11 +318,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report = build_benchmark_report(
         manifest, word_count=len(text.split()), generation_wall_time_seconds=generation_seconds,
     ).to_payload()
+    voice = result.metadata.get("voice", "builtin")
+    if isinstance(voice, dict):
+        voice = voice.get("mode", "builtin")
     report.update({
         # Keep the legacy field aligned with the effective identity-backed
         # benchmark model; CLI selection must not overwrite reported identity.
         "model_variant": report["model"], "generation_seconds": report["generation_wall_time_seconds"],
-        "checksum_sha256": checksum, "voice": result.metadata.get("voice", "builtin"),
+        "checksum_sha256": checksum, "voice": voice,
         "output_wav": str(args.output),
         "effective_synthesis_identity": sanitize_synthesis_identity(effective_identity),
         "channels": parameters.channels,

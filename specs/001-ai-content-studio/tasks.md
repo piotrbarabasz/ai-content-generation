@@ -1110,7 +1110,7 @@ Notes: Loudness-normalized derivatives may be added later, but original provider
 
 ## Phase 24: XTTS evaluation and provider selection
 
-- [ ] T071 Add an evaluation-only XTTS-v2 provider
+- [X] T071 Add an evaluation-only XTTS-v2 provider
 Milestone: M006
 Epic: E013
 Risk: high
@@ -1125,7 +1125,7 @@ Test requirements: Add evaluation-policy, required-reference, consent-label, che
 Parallelizable: no
 Notes: Do not add built-in public-figure voices, bundled private samples or a production override hidden in provider settings.
 
-- [ ] T072 Complete provider selection through configuration and tooling
+- [X] T072 Complete provider selection through configuration and tooling
 Milestone: M006
 Epic: E013
 Risk: high
@@ -1140,7 +1140,7 @@ Test requirements: Add one ProviderConfig composition test per provider, strict 
 Parallelizable: no
 Notes: A CLI flag is a configuration input, not a second provider-selection implementation.
 
-- [ ] T073 Add a reproducible cross-provider Polish comparison harness
+- [X] T073 Add a reproducible cross-provider Polish comparison harness
 Milestone: M006
 Epic: E013
 Risk: medium
@@ -1155,7 +1155,7 @@ Test requirements: Add deterministic manifest parsing, duplicate profile, same-t
 Parallelizable: no
 Notes: Human listening decides quality; automated metrics are evidence only.
 
-- [ ] T074 Add multi-provider acceptance coverage and operational decision record
+- [X] T074 Add multi-provider acceptance coverage and operational decision record
 Milestone: M006
 Epic: E013
 Risk: high

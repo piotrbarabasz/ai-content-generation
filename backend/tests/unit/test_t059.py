@@ -69,3 +69,44 @@ def test_voiceover_module_keeps_short_direct_synthesis_provider_neutral() -> Non
         assert result.output["voiceover"]["chunk_count"] == 1
         assert provider.calls == ["One minute narration."]
         assert "benchmark_artifact" not in result.output
+
+
+class SelectionProvider(MockTTSProvider):
+    def __init__(self, provider_name: str) -> None:
+        super().__init__(provider_name)
+        self.calls: list[str] = []
+
+    def synthesize(self, text, voice_config=None):
+        self.calls.append(text)
+        return super().synthesize(text, voice_config)
+
+
+def test_voiceover_cache_invalidates_when_provider_selection_changes() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+        root = Path(directory)
+        store = LocalArtifactStore(root / "artifacts")
+        first_provider = SelectionProvider("selection-a")
+        second_provider = SelectionProvider("selection-b")
+        context = _context("One two. Three four.")
+
+        VoiceoverModule(
+            tts_provider=first_provider,
+            artifact_store=store,
+            resumable_runtime_dir=root / "runtime",
+        ).execute(context)
+        VoiceoverModule(
+            tts_provider=second_provider,
+            artifact_store=store,
+            resumable_runtime_dir=root / "runtime",
+        ).execute(context)
+
+        assert first_provider.calls == ["One two.", "Three four."]
+        assert second_provider.calls == ["One two.", "Three four."]
+        manifest = json.loads(
+            (root / "runtime" / "resumable-run" / "synthesis-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["effective_synthesis_identity"]["provider"] == "selection-b"
+        assert manifest["generated_chunk_count"] == 2
+        assert manifest["reused_chunk_count"] == 0
