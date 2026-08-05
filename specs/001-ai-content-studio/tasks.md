@@ -1155,7 +1155,7 @@ Test requirements: Add deterministic manifest parsing, duplicate profile, same-t
 Parallelizable: no
 Notes: Human listening decides quality; automated metrics are evidence only.
 
-- [ ] T074 Add multi-provider acceptance coverage and operational decision record
+- [X] T074 Add multi-provider acceptance coverage and operational decision record
 Milestone: M006
 Epic: E013
 Risk: high

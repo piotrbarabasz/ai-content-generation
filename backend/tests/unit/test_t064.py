@@ -10,6 +10,7 @@ from app.modules.voiceover import VoiceoverModule
 from app.providers.mock_tts import MockTTSProvider
 from app.storage.local_store import LocalArtifactStore
 from app.tts.assembly import inspect_pcm_wav
+from app.tts.chunk_synthesis import ResumableChunkSynthesizer
 from app.tts.chunking import NarrationChunkingSettings, chunk_narration
 from app.workflow.execution import ModuleExecutionContext
 
@@ -25,22 +26,48 @@ class DeterministicFixtureProvider(MockTTSProvider):
         self,
         *,
         provider_name: str = "fixture-tts-v1",
+        voice_mode: str = "reference",
+        model_key: str | None = None,
+        length_scale: float | None = None,
         reference_checksum: str = "reference-a",
         fail_after_successes: int | None = None,
     ) -> None:
         super().__init__(provider_name)
+        self.voice_mode = voice_mode
+        self.model_key = model_key
+        self.length_scale = length_scale
         self.reference_checksum = reference_checksum
         self.fail_after_successes = fail_after_successes
         self.calls: list[str] = []
         self._result = super().synthesize("deterministic offline fixture", {"language": "pl"})
 
     def effective_synthesis_identity(self, voice_config=None):
+        config = dict(voice_config or {})
+        voice: dict[str, object] = {
+            "mode": str(config.get("voice_mode", self.voice_mode)),
+        }
+        model_key = config.get("model_key", self.model_key)
+        if model_key is not None:
+            voice["model"] = {
+                "kind": "catalog_voice",
+                "provider_key": str(model_key),
+            }
+        reference_checksum = config.get("reference_checksum", self.reference_checksum)
+        if reference_checksum is not None:
+            voice["content_checksum"] = str(reference_checksum)
+
+        generation_settings: dict[str, object] = {}
+        length_scale = config.get("length_scale", self.length_scale)
+        if length_scale is not None:
+            generation_settings["length_scale"] = length_scale
+
         return {
             "provider": self.provider_name,
             "model_variant": "deterministic-fixture",
             "device": "cpu",
             "language_id": "pl",
-            "voice": {"mode": "reference", "content_checksum": self.reference_checksum},
+            "generation_settings": generation_settings,
+            "voice": voice,
         }
 
     def synthesize(self, text, voice_config=None):
@@ -134,3 +161,56 @@ def test_fifteen_minute_resume_invalidates_provider_and_reference_content_identi
         changed_reference = DeterministicFixtureProvider(provider_name="fixture-tts-v2", reference_checksum="reference-b")
         _module(root, changed_reference).execute(_context(text, workflow_run_id="t064-identity-run"))
         assert len(changed_reference.calls) == expected_count
+
+
+def test_fifteen_minute_resume_invalidates_model_and_speaking_rate_identity_changes() -> None:
+    text = _FIXTURE.read_text(encoding="utf-8")
+    chunks = chunk_narration(
+        " ".join(text.split()), NarrationChunkingSettings(max_words=_CHUNKING["max_words"])
+    )
+
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+        runtime_dir = Path(directory)
+        provider = DeterministicFixtureProvider(
+            provider_name="fixture-tts-v1",
+            voice_mode="catalog",
+            model_key="pl_PL-gosia-medium",
+            length_scale=1.0,
+            reference_checksum="reference-a",
+        )
+        synthesizer = ResumableChunkSynthesizer(provider)
+        voice_config = {
+            "voice_mode": "catalog",
+            "model_key": "pl_PL-gosia-medium",
+            "length_scale": 1.0,
+            "reference_checksum": "reference-a",
+        }
+
+        first = synthesizer.synthesize(chunks, runtime_dir=runtime_dir, voice_config=voice_config)
+        second = synthesizer.synthesize(chunks, runtime_dir=runtime_dir, voice_config=voice_config)
+        changed_model = synthesizer.synthesize(
+            chunks,
+            runtime_dir=runtime_dir,
+            voice_config={**voice_config, "model_key": "pl_PL-darkman-medium"},
+        )
+        changed_rate = synthesizer.synthesize(
+            chunks,
+            runtime_dir=runtime_dir,
+            voice_config={**voice_config, "length_scale": 1.25},
+        )
+        changed_reference = synthesizer.synthesize(
+            chunks,
+            runtime_dir=runtime_dir,
+            voice_config={**voice_config, "reference_checksum": "reference-b"},
+        )
+
+        assert first.completed is True
+        assert second.completed is True
+        assert changed_model.completed is True
+        assert changed_rate.completed is True
+        assert changed_reference.completed is True
+        assert first.manifest.generated_chunk_count == len(chunks)
+        assert second.manifest.reused_chunk_count == len(chunks)
+        assert changed_model.manifest.generated_chunk_count == len(chunks)
+        assert changed_rate.manifest.generated_chunk_count == len(chunks)
+        assert changed_reference.manifest.generated_chunk_count == len(chunks)
