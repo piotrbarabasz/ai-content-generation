@@ -95,3 +95,89 @@ def test_voiceover_uses_shared_pcm_rejection() -> None:
 
         with pytest.raises(ValueError, match="readable WAV"):
             module.execute(context)
+
+
+def test_smoke_report_accepts_piper_controls_and_keeps_resolved_identity(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+        output = Path(directory) / "speech.wav"
+        captured: dict[str, object] = {}
+
+        class FakePiperProvider:
+            provider_name = "piper"
+
+            def __init__(self, provider_name: str, **kwargs: object) -> None:
+                self.provider_name = provider_name
+                self.kwargs = dict(kwargs)
+
+            def effective_synthesis_identity(self, voice_config=None):
+                return {
+                    "provider": "piper",
+                    "model_variant": "pl_PL-gosia-medium",
+                    "device": self.kwargs["device"],
+                    "language_id": self.kwargs["language_id"],
+                    "generation_settings": {
+                        "length_scale": self.kwargs["length_scale"],
+                        "volume": self.kwargs["volume"],
+                        "noise_scale": self.kwargs["noise_scale"],
+                        "noise_w_scale": self.kwargs["noise_w_scale"],
+                    },
+                    "voice": {
+                        "mode": "catalog",
+                        "model": {
+                            "kind": "catalog_voice",
+                            "provider_key": "pl_PL-gosia-medium",
+                        },
+                    },
+                }
+
+            def synthesize(self, text, voice_config=None):
+                captured["text"] = text
+                captured["voice_config"] = voice_config
+                captured["kwargs"] = dict(self.kwargs)
+                return MockTTSProvider("piper").synthesize(text, {})
+
+        monkeypatch.setattr(tts_smoke, "PiperTTSProvider", FakePiperProvider)
+        report = tts_smoke.run(
+            tts_smoke.build_parser().parse_args(
+                [
+                    "--provider",
+                    "piper",
+                    "--text",
+                    "Jedna, dwie, trzy.",
+                    "--output",
+                    str(output),
+                    "--model-key",
+                    "pl_PL-gosia-medium",
+                    "--length-scale",
+                    "1.25",
+                    "--volume",
+                    "0.75",
+                    "--noise-scale",
+                    "0.2",
+                    "--noise-w-scale",
+                    "0.9",
+                ]
+            )
+        )
+
+        assert captured["text"] == "Jedna, dwie, trzy."
+        assert captured["voice_config"] == {"language_id": "pl"}
+        assert captured["kwargs"] == {
+            "device": "cpu",
+            "language_id": "pl",
+            "model_key": "pl_PL-gosia-medium",
+            "model_path": None,
+            "length_scale": 1.25,
+            "volume": 0.75,
+            "noise_scale": 0.2,
+            "noise_w_scale": 0.9,
+        }
+        assert report["provider"] == "piper"
+        assert report["model_variant"] == "pl_PL-gosia-medium"
+        assert report["effective_synthesis_identity"]["generation_settings"] == {
+            "length_scale": 1.25,
+            "volume": 0.75,
+            "noise_scale": 0.2,
+            "noise_w_scale": 0.9,
+        }
+        assert report["effective_synthesis_identity"]["voice"]["model"]["provider_key"] == "pl_PL-gosia-medium"

@@ -1093,7 +1093,7 @@ Test requirements: Add catalog validation, duplicate key, missing checksum, chan
 Parallelizable: no
 Notes: Model catalog inclusion is not automatic approval for commercial distribution.
 
-- [ ] T070 Add Piper controls and manual smoke comparison support
+- [X] T070 Add Piper controls and manual smoke comparison support
 Milestone: M006
 Epic: E012
 Risk: medium

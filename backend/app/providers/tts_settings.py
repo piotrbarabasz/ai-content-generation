@@ -23,6 +23,10 @@ _FIELDS = frozenset(
         "audio_prompt_path",
         "model_key",
         "model_path",
+        "length_scale",
+        "volume",
+        "noise_scale",
+        "noise_w_scale",
         "exaggeration",
         "cfg_weight",
         "temperature",
@@ -32,8 +36,22 @@ _FIELDS = frozenset(
     }
 )
 _NUMERIC_FIELDS = frozenset(
-    {"exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p"}
+    {
+        "exaggeration",
+        "cfg_weight",
+        "temperature",
+        "repetition_penalty",
+        "min_p",
+        "top_p",
+        "length_scale",
+        "volume",
+        "noise_scale",
+        "noise_w_scale",
+    }
 )
+
+_PIPER_POSITIVE_FIELDS = frozenset({"length_scale", "volume"})
+_PIPER_NON_NEGATIVE_FIELDS = frozenset({"noise_scale", "noise_w_scale"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +66,10 @@ class TTSSettings:
     audio_prompt_path: str | Path | None = None
     model_key: str | None = None
     model_path: str | Path | None = None
+    length_scale: float | None = None
+    volume: float | None = None
+    noise_scale: float | None = None
+    noise_w_scale: float | None = None
     exaggeration: float | None = None
     cfg_weight: float | None = None
     temperature: float | None = None
@@ -92,15 +114,22 @@ class TTSSettings:
                 if not model_path.is_file():
                     raise TTSSettingsError("Piper model_path must point to an existing file.")
                 object.__setattr__(self, "model_path", model_path)
+            for field_name in ("length_scale", "volume", "noise_scale", "noise_w_scale"):
+                value = getattr(self, field_name)
+                if value is not None:
+                    _validate_piper_numeric(field_name, value)
         else:
             if self.model_key is not None or self.model_path is not None:
                 raise TTSSettingsError("TTS model_key and model_path are only supported by Piper.")
             if self.audio_prompt_path is not None and self.provider != "chatterbox_v3":
                 raise TTSSettingsError("TTS audio_prompt_path is only supported by Chatterbox V3.")
+            for field_name in ("length_scale", "volume", "noise_scale", "noise_w_scale"):
+                if getattr(self, field_name) is not None:
+                    raise TTSSettingsError(f"TTS {field_name} is only supported by Piper.")
         for field_name in _NUMERIC_FIELDS:
             value = getattr(self, field_name)
-            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
-                raise TTSSettingsError(f"TTS {field_name} must be numeric or null.")
+            if value is not None:
+                _validate_numeric_value(field_name, value)
 
     @classmethod
     def from_mapping(
@@ -122,3 +151,16 @@ class TTSSettings:
         if configured_provider != provider:
             raise TTSSettingsError("TTS settings provider must match ProviderConfig provider_name.")
         return cls(provider=configured_provider, **{key: value for key, value in values.items() if key != "provider"})
+
+
+def _validate_numeric_value(field_name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TTSSettingsError(f"TTS {field_name} must be numeric or null.")
+
+
+def _validate_piper_numeric(field_name: str, value: object) -> None:
+    _validate_numeric_value(field_name, value)
+    if field_name in _PIPER_POSITIVE_FIELDS and float(value) <= 0:
+        raise TTSSettingsError(f"Piper {field_name} must be greater than zero.")
+    if field_name in _PIPER_NON_NEGATIVE_FIELDS and float(value) < 0:
+        raise TTSSettingsError(f"Piper {field_name} must be greater than or equal to zero.")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,6 +22,11 @@ from .tts_capabilities import (
     resolve_voice_mode,
 )
 from .tts_result import TTSSynthesisResult
+
+
+_GENERATION_FIELDS = ("length_scale", "volume", "noise_scale", "noise_w_scale")
+_POSITIVE_GENERATION_FIELDS = frozenset({"length_scale", "volume"})
+_NON_NEGATIVE_GENERATION_FIELDS = frozenset({"noise_scale", "noise_w_scale"})
 
 
 class PiperError(RuntimeError):
@@ -99,6 +105,21 @@ def _validate_voice_mode(voice_mode: str, *, model_key: str | None, model_path: 
         raise PiperConfigurationError(
             f"Piper voice_mode must be '{expected_mode}' for the configured voice asset."
         )
+
+
+def _validate_generation_value(field_name: str, value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PiperConfigurationError(f"Piper {field_name} must be numeric or null.")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise PiperConfigurationError(f"Piper {field_name} must be finite.")
+    if field_name in _POSITIVE_GENERATION_FIELDS and numeric <= 0:
+        raise PiperConfigurationError(f"Piper {field_name} must be greater than zero.")
+    if field_name in _NON_NEGATIVE_GENERATION_FIELDS and numeric < 0:
+        raise PiperConfigurationError(f"Piper {field_name} must be greater than or equal to zero.")
+    return numeric
 
 
 def _coerce_wav_bytes(audio: Any, *, output_buffer: io.BytesIO) -> bytes | None:
@@ -225,6 +246,10 @@ class PiperTTSProvider(TTSProvider):
         language_id: str | None = "pl",
         model_key: str | None = None,
         model_path: str | Path | None = None,
+        length_scale: float | None = None,
+        volume: float | None = None,
+        noise_scale: float | None = None,
+        noise_w_scale: float | None = None,
         model_loader: Callable[[JsonDict], Any] | None = None,
     ) -> None:
         self.provider_name = provider_name
@@ -232,6 +257,12 @@ class PiperTTSProvider(TTSProvider):
         self.language_id = language_id or "pl"
         self.model_key = model_key.strip() if isinstance(model_key, str) and model_key.strip() else None
         self.model_path = Path(model_path) if model_path is not None else None
+        self._generation_defaults = {
+            "length_scale": _validate_generation_value("length_scale", length_scale),
+            "volume": _validate_generation_value("volume", volume),
+            "noise_scale": _validate_generation_value("noise_scale", noise_scale),
+            "noise_w_scale": _validate_generation_value("noise_w_scale", noise_w_scale),
+        }
         self._model_loader = model_loader or _load_runtime_backend
         self._backend: Any | None = None
         self._catalog_entry: PiperVoiceCatalogEntry | None = None
@@ -264,6 +295,16 @@ class PiperTTSProvider(TTSProvider):
 
     def _effective_language_id(self, voice_config: JsonDict | None) -> str:
         return resolve_language_id(voice_config, default_language_id=self.language_id) or self.language_id
+
+    def _effective_generation_settings(self, voice_config: JsonDict | None) -> dict[str, float | None]:
+        config = _coerce_json_dict(voice_config)
+        settings: dict[str, float | None] = {}
+        for field_name in _GENERATION_FIELDS:
+            settings[field_name] = _validate_generation_value(
+                field_name,
+                config[field_name] if field_name in config else self._generation_defaults[field_name],
+            )
+        return settings
 
     def _effective_voice_mode(self, voice_config: JsonDict | None) -> str:
         default_voice_mode = _expected_voice_mode(self.model_key, self.model_path)
@@ -309,6 +350,7 @@ class PiperTTSProvider(TTSProvider):
         config = _coerce_json_dict(voice_config)
         language_id = self._effective_language_id(config)
         voice_mode = self._effective_voice_mode(config)
+        generation_settings = self._effective_generation_settings(config)
         self.capabilities().validate_request(
             language_id=language_id,
             voice_mode=voice_mode,
@@ -320,7 +362,7 @@ class PiperTTSProvider(TTSProvider):
             "model_variant": self._model_variant(),
             "device": self.device,
             "language_id": language_id,
-            "generation_settings": {},
+            "generation_settings": generation_settings,
             "voice": {
                 "mode": voice_mode,
                 "model": _model_identity(self.model_key, self.model_path, self._catalog_entry),
@@ -343,6 +385,7 @@ class PiperTTSProvider(TTSProvider):
         config = _coerce_json_dict(voice_config)
         language_id = self._effective_language_id(config)
         voice_mode = self._effective_voice_mode(config)
+        generation_settings = self._effective_generation_settings(config)
         self.capabilities().validate_request(
             language_id=language_id,
             voice_mode=voice_mode,
@@ -351,10 +394,11 @@ class PiperTTSProvider(TTSProvider):
         )
 
         runtime = self._get_backend()
+        generation_kwargs = {key: value for key, value in generation_settings.items() if value is not None}
         try:
-            audio_bytes = runtime.synthesize(text, language_id=language_id)
+            audio_bytes = runtime.synthesize(text, language_id=language_id, **generation_kwargs)
         except TypeError:
-            audio_bytes = runtime.synthesize(text)
+            audio_bytes = runtime.synthesize(text, language_id=language_id)
         except PiperError:
             raise
         except Exception as exc:
@@ -386,6 +430,7 @@ class PiperTTSProvider(TTSProvider):
                 "device": self.device,
                 "language_id": language_id,
                 "model_variant": self._model_variant(),
+                "generation_settings": generation_settings,
                 "voice": {
                     "mode": voice_mode,
                     "model": model_identity,
