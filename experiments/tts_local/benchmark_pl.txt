@@ -1,0 +1,11 @@
+Był późny sierpniowy wieczór. Wrocław powoli cichł, a światła przejeżdżających tramwajów odbijały się w mokrym bruku. Powietrze pachniało deszczem, kawą i świeżo skoszoną trawą.
+
+System przeanalizował dane, przygotował raport, zapisał wyniki na dysku i wysłał powiadomienie do użytkownika. System przeanalizował dane. Następnie przygotował raport i zapisał wyniki na dysku. Na końcu wysłał powiadomienie do użytkownika.
+
+Czy wszystko działa poprawnie? Tak — ale przed uruchomieniem produkcyjnym musimy sprawdzić jeszcze trzy rzeczy: wymowę, tempo oraz naturalność głosu.
+
+Źdźbło trawy poruszało się na wietrze, a chrząszcz brzęczał w trzcinie. Grzegorz szczegółowo przeanalizował współczynnik prawdopodobieństwa, przedsiębiorczość oraz architekturę sztucznej inteligencji.
+
+Spotkanie odbędzie się dwudziestego pierwszego sierpnia dwa tysiące dwudziestego szóstego roku, o godzinie siedemnastej trzydzieści. Koszt urządzenia wynosi tysiąc dwieście trzydzieści cztery złote i pięćdziesiąt sześć groszy.
+
+Nowe API wykorzystuje GPU, format JSON oraz model text-to-speech. Czy skróty, liczby, pytania i trudne polskie słowa zabrzmią naturalnie? Posłuchajmy.
