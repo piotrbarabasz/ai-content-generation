@@ -16,7 +16,9 @@ experiments/tts_local/
 ├── run_chatterbox_v3.py
 ├── run_piper.py
 ├── run_voxcpm2.py
-└── run_moss_tts_realtime.py
+├── run_moss_tts_realtime.py
+├── run_moss_tts_v15.py
+└── setup_moss_tts_v15.ps1
 ```
 
 Local environments, upstream checkouts, references, model caches, and outputs belong under `.runtime/tts-experiments/`. The existing Piper cache stays under `.runtime/piper/`. These locations are ignored by Git.
@@ -42,6 +44,7 @@ The GTX assessment is a conservative setup guide, not a measured quality or memo
 | `run_piper.py` | `rhasspy/piper-voices:pl_PL-darkman-medium` | CPU | No | Easy CPU path | GPL-3.0 | Piper voice repository: MIT; darkman dataset card: CC0 | baseline |
 | `run_voxcpm2.py` | `openbmb/VoxCPM2` | High-memory CUDA or slow CPU | Optional | Do not run automatically; no 6 GB fit claim | Apache-2.0 | Apache-2.0 | experimental-heavy |
 | `run_moss_tts_realtime.py` | `OpenMOSS-Team/MOSS-TTS-Realtime` + `OpenMOSS-Team/MOSS-Audio-Tokenizer` | High-memory CUDA | Optional | Do not run automatically; upstream measurements use L20 | Apache-2.0 | Apache-2.0 | experimental-heavy |
+| `run_moss_tts_v15.py` | `OpenMOSS-Team/MOSS-TTS-v1.5` + `OpenMOSS-Team/MOSS-Audio-Tokenizer-ONNX` | CPU/RAM with optional CUDA layer offload | Optional | 6 GB is below upstream's 8 GB low-memory target; measure locally | Apache-2.0 | Apache-2.0 | F16 scaffolded; setup/inference not executed here |
 
 Licenses for code and weights are listed separately. “Commercial usage appears permitted” below only reports the current upstream labeling; it is not a legal conclusion. Review the upstream license before production use, and check every model license again before any production integration.
 
@@ -221,6 +224,151 @@ Run only after consciously choosing a suitable device:
 .\.runtime\tts-experiments\venvs\moss-realtime\Scripts\python.exe .\experiments\tts_local\run_moss_tts_realtime.py --device cpu
 ```
 
+## MOSS-TTS-v1.5 8B
+
+This is the quality-first heavyweight experiment. Its exact checkpoint is `OpenMOSS-Team/MOSS-TTS-v1.5`, the full approximately 8B-class `MossTTSDelay` model—not `OpenMOSS-Team/MOSS-TTS` 1.0 and not the older `OpenMOSS-Team/MOSS-TTS-GGUF` files. Polish is one of the 31 languages officially listed for v1.5. The current v1.5 API represents known languages with their English names (the official example uses `language="French"`), so this runner sends the corresponding official prompt label `Polish`; it does not leave language selection to automatic guessing.
+
+Compared with 1.0, upstream describes v1.5 as having more stable punctuation-following prosody, more stable cloning, and explicit pause control. The shared `benchmark_pl.txt` is always passed unchanged: punctuation is not rewritten and no pause markers are inserted. To test explicit pause control separately, create another ignored local text file containing a marker such as `[pause 0.5s]` and select it with `--text-file`.
+
+The intended local architecture is the official first-class `OpenMOSS/llama.cpp` path:
+
+```text
+OpenMOSS-Team/MOSS-TTS-v1.5
+    -> first-class MOSS-TTS-Delay GGUF backbone
+    -> llama-moss-tts with selected transformer layers on CUDA
+    -> remaining backbone layers in CPU/system RAM
+    -> MOSS-Audio-Tokenizer-ONNX encode/decode on CPU
+    -> benchmark.wav + benchmark.json
+```
+
+The setup and runner use the hybrid first-class components from the `moss-tts-firstclass` branch: `convert_hf_to_gguf.py`, `tools/tts/moss-tts-build-generation-ref.py`, `llama-moss-tts`, and `tools/tts/moss-tts-audio-decode.py`. The runner invokes them with argument lists rather than a command shell. This matters on Windows because the current upstream Python e2e convenience wrapper internally combines `shlex.join()` with `shell=True`, which is not a reliable native Windows invocation. No legacy `build_bridge.sh` path is used.
+
+Official sources: [MOSS-TTS repository](https://github.com/OpenMOSS/MOSS-TTS), [v1.5 model card](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5), [first-class e2e guide](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md), and [ONNX audio tokenizer](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-ONNX).
+
+### F16 verification and quantization boundary
+
+As inspected on 2026-08-07, the official first-class branch is at commit `b785003ba497794ecfa337c3e47f01af79489888` from 2026-04-08, while MOSS-TTS-v1.5 was released on 2026-05-26. Its guide still shows `OpenMOSS-Team/MOSS-TTS` (1.0) as the example input, but the official converter is architecture-based and registers `MossTTSDelayModel`. The official v1.0 and v1.5 checkpoints have byte-identical `config.json` files, identical 463-name tensor maps, and identical total tensor size. This verifies that the current first-class F16 converter accepts the v1.5 layout without substituting the 1.0 checkpoint.
+
+`-PrepareGGUF` validates the downloaded exact model ID, architecture, 32 audio embedding tables, 33 output heads, and converter registration before invoking the official converter. A successful conversion records the source revision and GGUF SHA-256 in ignored provenance. This is source/metadata verification; conversion and synthesis were deliberately not executed while adding the scaffold. Community v1.5 GGUFs and the official 1.0 pre-quantized repository are never substituted.
+
+F16 is the only prepared format scaffolded as the canonical reference. The current official first-class guide does not document v1.5-specific `Q4_K_M` safety, so `-Quantize Q4_K_M` is also blocked unless that guide later explicitly documents both v1.5 and this quantization path. Generic `llama-quantize` compatibility is not assumed for the MOSS-specific audio embeddings and output heads.
+
+### Hardware expectations
+
+The target strategy is partial GPU layer offload with the audio codec kept on CPU. The runner maps `--gpu-layers N` to the official `--n-gpu-layers N` option; `0` means CPU backbone execution. Start at `0`, then measure `4`, `8`, and optionally `12`. Increase gradually until VRAM becomes too tight. No particular value is claimed to fit 6 GB.
+
+The GTX 1660 SUPER's 6 GB VRAM is below upstream's published 8 GB low-memory target for the 8B model. Hybrid success and performance therefore have to be measured on the actual machine. CPU-only execution is expected to be slow, but it is a valid quality/listening-test configuration with 64 GB system RAM. Do not use `-ngl -1` on this GPU; the runner rejects negative/all-layer offload. CUDA OOM never triggers an automatic retry or configuration change.
+
+The official source contains a normal CMake `llama-moss-tts` target without a POSIX-only target guard, and the setup uses a Windows multi-configuration-aware build path. This is source-level verification, not a claim that the target was compiled on this machine during repository implementation.
+
+### Setup commands
+
+Running the setup script without switches performs safe prerequisite checks and prints help. It reports Windows, Python installations, Git, CMake, MSVC build tools, NVIDIA/CUDA visibility, system RAM, free disk, and all expected runtime paths:
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1
+```
+
+Create the isolated environment only:
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1 -DependencyOnly
+```
+
+Explicitly download the exact v1.5 checkpoint and ONNX tokenizer (approximately 31 GB combined, before an approximately 17 GB F16 GGUF and cache headroom):
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1 `
+    -DependencyOnly `
+    -DownloadModels
+```
+
+Downloads use the Hugging Face CLI and are resumable. Existing files are reused unless `-Force` is explicit. If authentication or model terms become required, the script prints an actionable login message and never embeds or reports a token.
+
+Build the native Windows CPU target:
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1 -BuildCpu
+```
+
+Build the native Windows CUDA target:
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1 -BuildCuda
+```
+
+Explicitly download both exact repositories and prepare the canonical F16 GGUF:
+
+```powershell
+.\experiments\tts_local\setup_moss_tts_v15.ps1 `
+    -DependencyOnly `
+    -DownloadModels `
+    -PrepareGGUF
+```
+
+No switch deletes or resets an existing checkout, model, reference, or completed output; existing checkouts are never recloned or switched automatically. `-Force` permits dependency reinstall, explicit Hugging Face redownload, and CMake reconfiguration only. If conversion fails, the script removes only the uniquely named incomplete GGUF created by that same invocation.
+
+### Inference commands
+
+These commands become usable after setup successfully produces provenance with `conversion_status` equal to `verified_official_v15`. The runner stops before inference if the selected GGUF lacks the exact v1.5 revision and SHA-256 provenance, preventing a MOSS-TTS 1.0 or unrelated community file from being mislabeled as v1.5.
+
+First CPU benchmark:
+
+```powershell
+.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
+    .\experiments\tts_local\run_moss_tts_v15.py `
+    --device cpu `
+    --gpu-layers 0
+```
+
+First conservative hybrid benchmark:
+
+```powershell
+.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
+    .\experiments\tts_local\run_moss_tts_v15.py `
+    --device hybrid `
+    --gpu-layers 4
+```
+
+Then measure eight layers:
+
+```powershell
+.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
+    .\experiments\tts_local\run_moss_tts_v15.py `
+    --device hybrid `
+    --gpu-layers 8
+```
+
+Only if memory remains comfortable, optionally test twelve layers by replacing `8` with `12`. Existing output/report files require `--overwrite`.
+
+Successful output appears at:
+
+```text
+.runtime/tts-experiments/outputs/moss-tts-v15/benchmark.wav
+.runtime/tts-experiments/outputs/moss-tts-v15/benchmark.json
+```
+
+Direct generation without reference audio is supported by the official first-class pipeline. For optional voice cloning, place a recording you own or are permitted to use under `.runtime/tts-experiments/references/`. The current first-class path requires a non-empty 24 kHz mono PCM WAV. The runner validates and hashes the source but never changes it. If explicit conversion is needed, make a separate local file and review the operation yourself:
+
+```powershell
+ffmpeg -i .\.runtime\tts-experiments\references\source.wav `
+    -ar 24000 `
+    -ac 1 `
+    .\.runtime\tts-experiments\references\speaker_24k_mono.wav
+```
+
+Then run with:
+
+```powershell
+.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
+    .\experiments\tts_local\run_moss_tts_v15.py `
+    --device hybrid `
+    --gpu-layers 4 `
+    --reference-audio .\.runtime\tts-experiments\references\speaker_24k_mono.wav
+```
+
+The JSON sidecar records the exact model/tokenizer/runtime revisions from guarded provenance, GGUF SHA-256 and quantization identity, requested/effective GPU layers, codec device, input/reference hashes, timing, WAV properties, and best-effort NVIDIA/system-memory telemetry. It never records access tokens, environment variables, a private transcript, or an absolute identifying input path.
+
 ## Reference audio
 
 Create the ignored reference directory and place your own permitted recording and exact UTF-8 transcript there:
@@ -229,7 +377,7 @@ Create the ignored reference directory and place your own permitted recording an
 New-Item -ItemType Directory -Force .\.runtime\tts-experiments\references
 ```
 
-Suggested paths are `.runtime/tts-experiments/references/speaker.wav` and `.runtime/tts-experiments/references/speaker.txt`. Do not silently substitute another clip. OmniVoice requires both paths in this lab. MOSS Nano, Chatterbox V3, VoxCPM2, and MOSS Realtime accept optional reference audio; their current transcript behavior is stated in their setup sections and recorded in reports.
+Suggested paths are `.runtime/tts-experiments/references/speaker.wav` and `.runtime/tts-experiments/references/speaker.txt`. Do not silently substitute another clip. OmniVoice requires both paths in this lab. MOSS Nano, Chatterbox V3, VoxCPM2, MOSS Realtime, and MOSS-TTS-v1.5 accept optional reference audio; their current transcript behavior and format requirements are stated in their setup sections and recorded in reports.
 
 ## Downloads, cache, and disk space
 
