@@ -26,7 +26,7 @@ RUNTIME_ID = "OpenMOSS/llama.cpp@moss-tts-firstclass"
 DEFAULT_TEXT = ROOT / "experiments/tts_local/benchmark_pl.txt"
 DEFAULT_OUTPUT = ROOT / ".runtime/tts-experiments/outputs/moss-tts-v15/benchmark.wav"
 DEFAULT_MODEL_ROOT = ROOT / ".runtime/tts-experiments/models/moss-tts-v15"
-DEFAULT_MODEL_GGUF = DEFAULT_MODEL_ROOT / "gguf/moss_tts_v15_firstclass_f16.gguf"
+DEFAULT_MODEL_GGUF = DEFAULT_MODEL_ROOT / "gguf/moss_tts_v15_firstclass_q4_k_m.gguf"
 DEFAULT_TOKENIZER_DIR = DEFAULT_MODEL_ROOT / "hf"
 DEFAULT_ONNX_DIR = DEFAULT_MODEL_ROOT / "audio-tokenizer-onnx"
 DEFAULT_PROVENANCE = DEFAULT_MODEL_ROOT / "provenance.json"
@@ -54,12 +54,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-file", type=Path, default=DEFAULT_TEXT, help="UTF-8 input text.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Destination WAV.")
     parser.add_argument("--report", type=Path, help="JSON report (default: output with .json suffix).")
-    parser.add_argument("--device", choices=("cpu", "cuda", "hybrid"), default="hybrid")
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda", "hybrid"),
+        default="hybrid",
+        help="Execution mode (default: hybrid, with the ONNX audio codec on CPU).",
+    )
     parser.add_argument(
         "--gpu-layers",
         type=int,
-        default=0,
-        help="Backbone layers offloaded by llama.cpp; 0 keeps the backbone on CPU.",
+        default=4,
+        help="Backbone layers offloaded by llama.cpp (default: 4); 0 keeps the backbone on CPU.",
     )
     parser.add_argument(
         "--reference-audio",
@@ -169,7 +174,12 @@ def git_revision(checkout: Path) -> str | None:
     return revision if result.returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40}", revision) else None
 
 
-def system_ram_mb() -> int | None:
+def system_memory_telemetry() -> dict[str, int | None]:
+    telemetry: dict[str, int | None] = {
+        "system_ram_mb": None,
+        "system_ram_available_mb": None,
+        "page_file_available_mb": None,
+    }
     if os.name == "nt":
         class MemoryStatusEx(ctypes.Structure):
             _fields_ = [
@@ -188,15 +198,20 @@ def system_ram_mb() -> int | None:
         status.dwLength = ctypes.sizeof(status)
         try:
             if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                return round(status.ullTotalPhys / (1024 * 1024))
+                telemetry["system_ram_mb"] = round(status.ullTotalPhys / (1024 * 1024))
+                telemetry["system_ram_available_mb"] = round(status.ullAvailPhys / (1024 * 1024))
+                telemetry["page_file_available_mb"] = round(status.ullAvailPageFile / (1024 * 1024))
+                return telemetry
         except (AttributeError, OSError):
-            return None
+            return telemetry
     if hasattr(os, "sysconf"):
         try:
-            return round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 * 1024))
+            telemetry["system_ram_mb"] = round(
+                os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 * 1024)
+            )
         except (OSError, ValueError):
-            return None
-    return None
+            pass
+    return telemetry
 
 
 def gpu_telemetry() -> dict[str, Any]:
@@ -296,8 +311,30 @@ def is_cuda_oom(exc: BaseException) -> bool:
         "cuda memory was exhausted",
         "out of memory on device",
         "cudamalloc",
+        "failed to allocate cuda",
+        "failed to allocate cuda0",
         "ggml_cuda_error_out_of_memory",
         "cudaerroroutofmemory",
+    )
+    return any(indicator in lowered for indicator in indicators)
+
+
+def is_system_memory_exhaustion(exc: BaseException) -> bool:
+    if is_cuda_oom(exc):
+        return False
+    detail = str(exc)
+    if isinstance(exc, ComponentFailure):
+        detail += "\n" + exc.output
+    lowered = detail.lower()
+    indicators = (
+        "cannot allocate memory",
+        "failed to allocate",
+        "std::bad_alloc",
+        "out of memory",
+        "not enough memory",
+        "paging file is too small",
+        "mmap failed",
+        "virtualalloc failed",
     )
     return any(indicator in lowered for indicator in indicators)
 
@@ -422,6 +459,7 @@ def main() -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         report.parent.mkdir(parents=True, exist_ok=True)
         before_gpu = gpu_telemetry()
+        before_memory = system_memory_telemetry()
         generation_started = time.perf_counter()
         with tempfile.TemporaryDirectory(prefix="moss-tts-v15-") as temporary_dir:
             temporary_root = Path(temporary_dir)
@@ -489,6 +527,7 @@ def main() -> int:
         duration, sample_rate, channels = inspect_wav(temporary_output)
         temporary_output.replace(output)
         after_gpu = gpu_telemetry()
+        after_memory = system_memory_telemetry()
         payload: dict[str, Any] = {
             "status": "completed",
             "runner": Path(__file__).name,
@@ -496,15 +535,21 @@ def main() -> int:
             "model_revision": model_revision,
             "audio_tokenizer_id": CODEC_ID,
             "audio_tokenizer_revision": provenance.get("audio_tokenizer_revision"),
-            "runtime": "openmoss-llama-cpp-firstclass",
+            "runtime": "OpenMOSS/llama.cpp",
             "runtime_repository": RUNTIME_ID,
             "runtime_revision": runtime_revision,
-            "backend": "hybrid",
+            "backend": "llama-moss-tts",
             "quantization": quantization,
-            "model_gguf_sha256": model_gguf_sha256,
+            "model_file_sha256": model_gguf_sha256,
             "device_requested": args.device,
             "gpu_layers_requested": args.gpu_layers,
             "gpu_layers_effective": args.gpu_layers,
+            "system_ram_mb": before_memory["system_ram_mb"],
+            "system_ram_available_before_mb": before_memory["system_ram_available_mb"],
+            "system_ram_available_after_mb": after_memory["system_ram_available_mb"],
+            "vram_total_mb": before_gpu["vram_total_mb"] or after_gpu["vram_total_mb"],
+            "vram_used_before_mb": before_gpu["vram_used_mb"],
+            "vram_used_after_mb": after_gpu["vram_used_mb"],
             "audio_codec_device": "cpu" if args.device in ("cpu", "hybrid") else "cuda",
             "language": args.language,
             "input_text_path": safe_path(text_path),
@@ -529,7 +574,11 @@ def main() -> int:
                 "vram_total_mb": before_gpu["vram_total_mb"] or after_gpu["vram_total_mb"],
                 "vram_used_before_mb": before_gpu["vram_used_mb"],
                 "vram_used_after_mb": after_gpu["vram_used_mb"],
-                "system_ram_mb": system_ram_mb(),
+                "system_ram_mb": before_memory["system_ram_mb"],
+                "system_ram_available_before_mb": before_memory["system_ram_available_mb"],
+                "system_ram_available_after_mb": after_memory["system_ram_available_mb"],
+                "page_file_available_before_mb": before_memory["page_file_available_mb"],
+                "page_file_available_after_mb": after_memory["page_file_available_mb"],
             },
             "post_processing": [],
         }
@@ -541,8 +590,15 @@ def main() -> int:
             temporary_output.unlink()
         if is_cuda_oom(exc):
             print(
-                f"ERROR: CUDA memory was exhausted with --gpu-layers {args.gpu_layers}. "
-                f"Retry manually with --gpu-layers {lower_layer_suggestions(args.gpu_layers)}.",
+                f"ERROR: CUDA memory exhausted with --gpu-layers {args.gpu_layers}. "
+                f"Retry manually with a smaller value ({lower_layer_suggestions(args.gpu_layers)}).",
+                file=sys.stderr,
+            )
+        elif is_system_memory_exhaustion(exc):
+            print(
+                "ERROR: System memory allocation failed while loading or running MOSS-TTS-v1.5. "
+                "Close memory-heavy applications and retry. If generation memory is the cause, lower "
+                "--max-new-tokens; changing --gpu-layers is appropriate only for a CUDA-memory failure.",
                 file=sys.stderr,
             )
         else:

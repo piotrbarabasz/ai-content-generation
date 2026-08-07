@@ -226,40 +226,53 @@ Run only after consciously choosing a suitable device:
 
 ## MOSS-TTS-v1.5 8B
 
-This is the quality-first heavyweight experiment. Its exact checkpoint is `OpenMOSS-Team/MOSS-TTS-v1.5`, the full approximately 8B-class `MossTTSDelay` model—not `OpenMOSS-Team/MOSS-TTS` 1.0 and not the older `OpenMOSS-Team/MOSS-TTS-GGUF` files. Polish is one of the 31 languages officially listed for v1.5. The current v1.5 API represents known languages with their English names (the official example uses `language="French"`), so this runner sends the corresponding official prompt label `Polish`; it does not leave language selection to automatic guessing.
+This isolated experiment targets the exact `OpenMOSS-Team/MOSS-TTS-v1.5` checkpoint—not MOSS-TTS 1.0, the official 1.0 `MOSS-TTS-GGUF` repository, or a community conversion. Polish is passed as the explicit official prompt label `Polish`, and `benchmark_pl.txt` is passed unchanged.
 
 Compared with 1.0, upstream describes v1.5 as having more stable punctuation-following prosody, more stable cloning, and explicit pause control. The shared `benchmark_pl.txt` is always passed unchanged: punctuation is not rewritten and no pause markers are inserted. To test explicit pause control separately, create another ignored local text file containing a marker such as `[pause 0.5s]` and select it with `--text-file`.
 
 The intended local architecture is the official first-class `OpenMOSS/llama.cpp` path:
 
 ```text
-OpenMOSS-Team/MOSS-TTS-v1.5
-    -> first-class MOSS-TTS-Delay GGUF backbone
-    -> llama-moss-tts with selected transformer layers on CUDA
-    -> remaining backbone layers in CPU/system RAM
+exact MOSS-TTS-v1.5 Q4_K_M first-class GGUF
+    -> four transformer layers on CUDA by default
+    -> remaining quantized layers on CPU/system RAM
     -> MOSS-Audio-Tokenizer-ONNX encode/decode on CPU
-    -> benchmark.wav + benchmark.json
+    -> WAV + JSON report
 ```
 
-The setup and runner use the hybrid first-class components from the `moss-tts-firstclass` branch: `convert_hf_to_gguf.py`, `tools/tts/moss-tts-build-generation-ref.py`, `llama-moss-tts`, and `tools/tts/moss-tts-audio-decode.py`. The runner invokes them with argument lists rather than a command shell. This matters on Windows because the current upstream Python e2e convenience wrapper internally combines `shlex.join()` with `shell=True`, which is not a reliable native Windows invocation. No legacy `build_bridge.sh` path is used.
+The setup and runner use the first-class components from the `moss-tts-firstclass` branch: `convert_hf_to_gguf.py`, `llama-quantize`, `llama-moss-tts`, and the official prompt/audio helpers. They are invoked with argument arrays, never a command shell. This is llama.cpp, not Ollama; Ollama is neither installed nor invoked.
 
-Official sources: [MOSS-TTS repository](https://github.com/OpenMOSS/MOSS-TTS), [v1.5 model card](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5), [first-class e2e guide](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md), and [ONNX audio tokenizer](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-ONNX).
+Official sources: [MOSS llama.cpp backend](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/llama_cpp/README.md), [conversion guide](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/llama_cpp/conversion/README.md), [v1.5 model card](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5), [first-class guide](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md), and [quantizer options](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/tools/quantize/README.md).
 
-### F16 verification and quantization boundary
+### Verified conversion and quantization path
 
 As inspected on 2026-08-07, the official first-class branch is at commit `b785003ba497794ecfa337c3e47f01af79489888` from 2026-04-08, while MOSS-TTS-v1.5 was released on 2026-05-26. Its guide still shows `OpenMOSS-Team/MOSS-TTS` (1.0) as the example input, but the official converter is architecture-based and registers `MossTTSDelayModel`. The official v1.0 and v1.5 checkpoints have byte-identical `config.json` files, identical 463-name tensor maps, and identical total tensor size. This verifies that the current first-class F16 converter accepts the v1.5 layout without substituting the 1.0 checkpoint.
 
-`-PrepareGGUF` validates the downloaded exact model ID, architecture, 32 audio embedding tables, 33 output heads, and converter registration before invoking the official converter. A successful conversion records the source revision and GGUF SHA-256 in ignored provenance. This is source/metadata verification; conversion and synthesis were deliberately not executed while adding the scaffold. Community v1.5 GGUFs and the official 1.0 pre-quantized repository are never substituted.
+`-PrepareGGUF` validates the exact model ID, revision, architecture, 32 audio embedding tables, 33 output heads, and converter registration. A successful conversion records its source revision and SHA-256 in ignored provenance. Community v1.5 GGUFs and the official 1.0 pre-quantized repository are never substituted.
 
-F16 is the only prepared format scaffolded as the canonical reference. The current official first-class guide does not document v1.5-specific `Q4_K_M` safety, so `-Quantize Q4_K_M` is also blocked unless that guide later explicitly documents both v1.5 and this quantization path. Generic `llama-quantize` compatibility is not assumed for the MOSS-specific audio embeddings and output heads.
+F16 is only the conversion intermediate/reference. The first-class format stores the backbone, text/audio embeddings, and text/audio output heads inside one GGUF. The official MOSS Q4 backend quantizes its Qwen3 backbone while keeping all embedding/head arrays as float16 sidecars. Setup preserves that official precision boundary inside the first-class file with `--token-embedding-type f16`, `--output-tensor-type f16`, and regex `--tensor-type` overrides for every `token_embd_audio.*` and `output_audio.*` tensor.
+
+```text
+llama-quantize.exe --token-embedding-type f16 --output-tensor-type f16
+  --tensor-type ^token_embd_audio\.[0-9]+\.weight$=f16
+  --tensor-type ^output_audio\.[0-9]+\.weight$=f16
+  moss_tts_v15_firstclass_f16.gguf
+  moss_tts_v15_firstclass_q4_k_m.gguf Q4_K_M
+```
+
+The exact plan is checked with `llama-quantize --dry-run` before writing. Afterward, the official GGUF reader must find architecture `moss-tts-delay`, all 463 tensors, quantized backbone tensors, and all 66 embedding/head tensors in F16. `llama-moss-tts --n-gpu-layers 0 --print-delay-config` must then load it. Only after those checks does setup write the receipt; it never generates speech.
+
+The retained F16 tables occupy about 3.09 GB. Applying the published 4.91-bit Q4_K_M class to the remaining current F16 bytes estimates roughly 7.35 GB (6.85 GiB), not the legacy backbone-only 4.8 GB. Setup recalculates from the actual F16 size and records the measured result.
 
 ### Hardware expectations
 
-The target strategy is partial GPU layer offload with the audio codec kept on CPU. The runner maps `--gpu-layers N` to the official `--n-gpu-layers N` option; `0` means CPU backbone execution. Start at `0`, then measure `4`, `8`, and optionally `12`. Increase gradually until VRAM becomes too tight. No particular value is claimed to fit 6 GB.
+The target is a Ryzen 7 5700X with 16 GB RAM and a GTX 1660 SUPER with 6 GB VRAM. Hybrid mode and `--gpu-layers 4` are defaults, but no layer count is claimed to fit before testing. The runner maps non-negative values through 36 to `--n-gpu-layers`; `-1` and all-layer shortcuts are rejected.
 
-The GTX 1660 SUPER's 6 GB VRAM is below upstream's published 8 GB low-memory target for the 8B model. Hybrid success and performance therefore have to be measured on the actual machine. CPU-only execution is expected to be slow, but it is a valid quality/listening-test configuration with 64 GB system RAM. Do not use `-ngl -1` on this GPU; the runner rejects negative/all-layer offload. CUDA OOM never triggers an automatic retry or configuration change.
+Hybrid success and performance must be measured on the machine. CPU-only execution is valid but expected to be slow. CUDA or system-memory failures produce actionable errors without automatic retries or configuration changes.
 
-The official source contains a normal CMake `llama-moss-tts` target without a POSIX-only target guard, and the setup uses a Windows multi-configuration-aware build path. This is source-level verification, not a claim that the target was compiled on this machine during repository implementation.
+The legacy Python backend documents `low_memory` and quantized KV-cache settings. The exact first-class `llama-moss-tts` CLI does not expose equivalent low-memory, `cache-type-k`, or `cache-type-v` flags, so the runner does not invent them. Lowering the supported `--max-new-tokens` can reduce generation allocation.
+
+OpenMOSS inherits an explicit CUDA 11.7 build path, and its CUDA CMake includes compute capability 7.5. Setup targets architecture 75 for this GPU and never installs or upgrades CUDA. Actual build diagnostics remain authoritative.
 
 ### Setup commands
 
@@ -269,65 +282,54 @@ Running the setup script without switches performs safe prerequisite checks and 
 .\experiments\tts_local\setup_moss_tts_v15.ps1
 ```
 
-Create the isolated environment only:
+If CMake is missing, install it manually and open a new PowerShell session:
+
+```powershell
+winget install --id Kitware.CMake -e
+```
+
+Then run each explicit stage:
 
 ```powershell
 .\experiments\tts_local\setup_moss_tts_v15.ps1 -DependencyOnly
-```
-
-Explicitly download the exact v1.5 checkpoint and ONNX tokenizer (approximately 31 GB combined, before an approximately 17 GB F16 GGUF and cache headroom):
-
-```powershell
-.\experiments\tts_local\setup_moss_tts_v15.ps1 `
-    -DependencyOnly `
-    -DownloadModels
-```
-
-Downloads use the Hugging Face CLI and are resumable. Existing files are reused unless `-Force` is explicit. If authentication or model terms become required, the script prints an actionable login message and never embeds or reports a token.
-
-Build the native Windows CPU target:
-
-```powershell
-.\experiments\tts_local\setup_moss_tts_v15.ps1 -BuildCpu
-```
-
-Build the native Windows CUDA target:
-
-```powershell
 .\experiments\tts_local\setup_moss_tts_v15.ps1 -BuildCuda
+.\experiments\tts_local\setup_moss_tts_v15.ps1 -DownloadModels
+.\experiments\tts_local\setup_moss_tts_v15.ps1 -PrepareGGUF -Quantize Q4_K_M
 ```
 
-Explicitly download both exact repositories and prepare the canonical F16 GGUF:
+Downloads occur only with `-DownloadModels`. Before downloading, converting, or quantizing, setup derives required space from upstream metadata or current files and refuses to proceed without headroom. Downloads are resumable; authentication messages never expose a token.
+
+To remove only the F16 intermediate after verified Q4 creation:
 
 ```powershell
 .\experiments\tts_local\setup_moss_tts_v15.ps1 `
-    -DependencyOnly `
-    -DownloadModels `
-    -PrepareGGUF
+    -PrepareGGUF `
+    -Quantize Q4_K_M `
+    -CleanupIntermediate
 ```
 
-No switch deletes or resets an existing checkout, model, reference, or completed output; existing checkouts are never recloned or switched automatically. `-Force` permits dependency reinstall, explicit Hugging Face redownload, and CMake reconfiguration only. If conversion fails, the script removes only the uniquely named incomplete GGUF created by that same invocation.
+No switch resets a checkout or deletes source weights, the Q4 model, tokenizer, provenance, references, or outputs. Failed work removes only its uniquely named partial file. `-Force` never overwrites an unverified GGUF.
 
 ### Inference commands
 
 These commands become usable after setup successfully produces provenance with `conversion_status` equal to `verified_official_v15`. The runner stops before inference if the selected GGUF lacks the exact v1.5 revision and SHA-256 provenance, preventing a MOSS-TTS 1.0 or unrelated community file from being mislabeled as v1.5.
 
-First CPU benchmark:
-
-```powershell
-.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
-    .\experiments\tts_local\run_moss_tts_v15.py `
-    --device cpu `
-    --gpu-layers 0
-```
-
-First conservative hybrid benchmark:
+First hybrid benchmark:
 
 ```powershell
 .\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
     .\experiments\tts_local\run_moss_tts_v15.py `
     --device hybrid `
     --gpu-layers 4
+```
+
+CPU-only baseline:
+
+```powershell
+.\.runtime\tts-experiments\venvs\moss-v15\Scripts\python.exe `
+    .\experiments\tts_local\run_moss_tts_v15.py `
+    --device cpu `
+    --gpu-layers 0
 ```
 
 Then measure eight layers:
@@ -367,7 +369,7 @@ Then run with:
     --reference-audio .\.runtime\tts-experiments\references\speaker_24k_mono.wav
 ```
 
-The JSON sidecar records the exact model/tokenizer/runtime revisions from guarded provenance, GGUF SHA-256 and quantization identity, requested/effective GPU layers, codec device, input/reference hashes, timing, WAV properties, and best-effort NVIDIA/system-memory telemetry. It never records access tokens, environment variables, a private transcript, or an absolute identifying input path.
+The JSON sidecar records the exact v1.5 model/tokenizer/runtime revisions, `Q4_K_M`, `model_file_sha256`, requested/effective GPU layers, codec device, input/reference hashes, timing, WAV properties, and best-effort total/available RAM and VRAM telemetry. It never records access tokens, environment variables, a private transcript, or an absolute identifying input path.
 
 ## Reference audio
 
