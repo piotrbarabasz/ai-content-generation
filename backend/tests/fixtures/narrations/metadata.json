@@ -1,10 +1,37 @@
 {
   "schema_version": "1.0",
-  "language": "pl",
+  "language": "multi",
   "encoding": "utf-8",
   "word_count_rule": "Unicode word tokens; hyphenated and apostrophe-connected forms count as one token.",
-  "duration_note": "Actual XTTS duration depends on the cloned voice, punctuation, speed and chunk settings. Target labels are comparison profiles, not hard timing guarantees.",
+  "duration_note": "Actual TTS duration depends on the selected voice, punctuation, speed and chunk settings. Target labels are comparison profiles, not hard timing guarantees.",
   "fixtures": [
+    {
+      "file": "story_en_01_1min.txt",
+      "title": "The Open Door",
+      "language": "en",
+      "target_duration_minutes": 1,
+      "actual_word_count": 157,
+      "expected_word_count_range": {
+        "min": 120,
+        "max": 190
+      },
+      "estimated_duration_minutes": {
+        "at_150_wpm": 1.05,
+        "at_165_wpm": 0.95,
+        "at_180_wpm": 0.87
+      },
+      "sha256": "c7655315024b870f981090b6212e309e947f58fc5af2a7f8d51d70ccac43448f",
+      "feature_tags": [
+        "english",
+        "multiple_paragraphs",
+        "names",
+        "dates_and_years",
+        "percentages",
+        "numbers",
+        "abbreviations",
+        "quotation_marks"
+      ]
+    },
     {
       "file": "story_01_1min.txt",
       "title": "Ostatni tramwaj",

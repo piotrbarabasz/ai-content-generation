@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
 from app.api.routes import artifacts as _artifacts_routes  # noqa: F401,E402
 from app.api.routes import approvals as _approvals_routes  # noqa: F401,E402
 from app.api.routes import projects as _projects_routes  # noqa: F401,E402
+from app.api.routes import publishing as _publishing_routes  # noqa: F401,E402
 from app.api.routes import workflow_configs as _workflow_configs_routes  # noqa: F401,E402
 from app.api.routes import workflow_runs as _workflow_runs_routes  # noqa: F401,E402
 

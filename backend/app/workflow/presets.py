@@ -71,6 +71,7 @@ class WorkflowPresetDefinition:
     optional_modules: tuple[str, ...] = field(default_factory=tuple)
     expected_artifacts: tuple[str, ...] = field(default_factory=tuple)
     default_provider_config: JsonDict = field(default_factory=dict)
+    default_export_config: JsonDict = field(default_factory=dict)
     default_language: str = "en"
     default_tone: str = "neutral"
 
@@ -109,6 +110,9 @@ class WorkflowPresetDefinition:
             "default_provider_config",
             _coerce_provider_config(dict(self.default_provider_config)),
         )
+        if not isinstance(self.default_export_config, dict):
+            raise ValueError("WorkflowPresetDefinition default_export_config must be an object.")
+        object.__setattr__(self, "default_export_config", dict(self.default_export_config))
         object.__setattr__(self, "default_language", _normalize_text(self.default_language, field_name="default_language"))
         object.__setattr__(self, "default_tone", _normalize_text(self.default_tone, field_name="default_tone"))
 
@@ -176,7 +180,7 @@ class WorkflowPresetDefinition:
             "voiceConfig": {},
             "assetConfig": {},
             "approvalPolicy": {},
-            "exportConfig": {},
+            "exportConfig": deepcopy(self.default_export_config),
         }
         if project_id is not None:
             payload["projectId"] = project_id
@@ -274,6 +278,12 @@ LONG_FORM_SCRIPT_VOICEOVER_PRESET = WorkflowPresetDefinition(
         ProviderType.TTS,
         ProviderType.STORAGE,
     ),
+    default_export_config={
+        "localizationStrategy": "platform_auto_dub",
+        "localizationTargets": ["pl"],
+        "manualAcceptanceRequired": True,
+        "customAudioFallbackEnabled": True,
+    },
 )
 
 

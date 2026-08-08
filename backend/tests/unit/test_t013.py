@@ -164,7 +164,12 @@ def test_workflow_preset_registry_lists_and_builds_payload_defaults() -> None:
         "voiceConfig": {},
         "assetConfig": {},
         "approvalPolicy": {},
-        "exportConfig": {},
+        "exportConfig": {
+            "localizationStrategy": "platform_auto_dub",
+            "localizationTargets": ["pl"],
+            "manualAcceptanceRequired": True,
+            "customAudioFallbackEnabled": True,
+        },
     }
 
 

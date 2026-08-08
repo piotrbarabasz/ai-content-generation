@@ -38,6 +38,7 @@
 - `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`
 - `docs/tts/CHATTERBOX_SETUP.md`
 - `docs/tts/CHATTERBOX_SMOKE.md`
+- `docs/tts/CHATTERBOX_ENGLISH_BASELINE.md`
 
 <!-- M004 TTS DOCS INDEX END -->
 
@@ -52,3 +53,7 @@
 - `docs/tts/PROVIDER_COMPARISON.md`
 
 <!-- M006 MULTI-PROVIDER TTS DOCS INDEX END -->
+
+## Publishing
+
+- `docs/publishing/YOUTUBE_HANDOFF.md`

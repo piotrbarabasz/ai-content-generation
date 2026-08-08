@@ -124,7 +124,12 @@ def test_workflow_config_create_validates_required_fields_and_payload_aliases() 
         voice_config={},
         asset_config={},
         approval_policy={"script": "approved"},
-        export_config={"includeManifest": True},
+        export_config={
+            "localizationStrategy": "platform_auto_dub",
+            "localizationTargets": ["en"],
+            "manualAcceptanceRequired": True,
+            "customAudioFallbackEnabled": True,
+        },
     )
 
     assert config.project_id == "project_1"
@@ -132,6 +137,7 @@ def test_workflow_config_create_validates_required_fields_and_payload_aliases() 
     assert config.enabled_modules == ["brief", "export"]
     assert config.disabled_modules == ["captions"]
     assert config.provider_config == {"LLMProvider": {"providerName": "mock"}}
+    assert config.export_config["localizationTargets"] == ["en"]
 
     payload = asdict(config)
     encoded = json.dumps(payload, default=str)

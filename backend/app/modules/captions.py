@@ -6,8 +6,14 @@ import json
 from collections.abc import Mapping
 from dataclasses import asdict
 from hashlib import sha256
+from pathlib import PurePosixPath
 
-from app.domain.caption_track import CaptionTrack
+from app.domain.caption_track import (
+    CaptionTrack,
+    serialize_srt,
+    validate_caption_segments,
+)
+from app.domain.export_config import normalize_language
 from app.domain.types import JsonDict
 from app.providers.interfaces import CaptionProvider, TranscriptionProvider
 from app.storage.artifact_store import ArtifactStore
@@ -30,10 +36,6 @@ def _pick(mapping: Mapping[str, object], *names: str, default: object | None = N
 
 def _optional_text(value: object | None) -> str:
     return " ".join(str(value).strip().split()) if value is not None else ""
-
-
-def _block_text(value: object | None) -> str:
-    return str(value).strip() if value is not None else ""
 
 
 def _coerce_text(value: object | None, *, field_name: str) -> str:
@@ -249,6 +251,7 @@ class CaptionsModule:
                 "captions": {"type": "object"},
                 "captions_json": {"type": "array"},
                 "captions_srt": {"type": "string"},
+                "srt_artifact": {"type": "object"},
                 "artifact": {"type": "object"},
                 "scene_plan": {"type": "object"},
                 "voiceover": {"type": "object"},
@@ -263,6 +266,7 @@ class CaptionsModule:
                 "default_language": {"type": "string"},
                 "default_style": {"type": "string"},
                 "captions_name": {"type": "string"},
+                "srt_name_template": {"type": "string"},
             },
         },
         dependencies=(("voiceover", "scriptGeneration"), ("scenePlanning",)),
@@ -282,6 +286,7 @@ class CaptionsModule:
         default_language: str = "en",
         default_style: str = "standard",
         captions_name: str = "captions.json",
+        srt_name_template: str = "captions.{language}.srt",
     ) -> None:
         self._caption_provider = caption_provider
         self._transcription_provider = transcription_provider
@@ -289,6 +294,7 @@ class CaptionsModule:
         self._default_language = _optional_text(default_language) or "en"
         self._default_style = _optional_text(default_style) or "standard"
         self._captions_name = _optional_text(captions_name) or "captions.json"
+        self._srt_name_template = _optional_text(srt_name_template) or "captions.{language}.srt"
 
     def execute(self, context: ModuleExecutionContext) -> ModuleResult:
         inputs = dict(context.inputs)
@@ -297,7 +303,10 @@ class CaptionsModule:
             context.module_results,
         )
         scene_plan = _extract_scene_plan(inputs, context.module_results)
-        language = _optional_text(_pick(inputs, "language")) or self._default_language
+        language = normalize_language(
+            _optional_text(_pick(inputs, "language")) or self._default_language,
+            field_name="caption language",
+        )
         style = _optional_text(
             _pick(inputs, "style", "caption_style", "captionStyle")
         ) or self._default_style
@@ -323,8 +332,20 @@ class CaptionsModule:
         )
         captions_json = captions_payload.get("captions_json")
         if not isinstance(captions_json, list):
-            captions_json = []
-        captions_srt = _block_text(captions_payload.get("captions_srt"))
+            raise ValueError("CaptionProvider must return structured captions_json timing.")
+        segments = validate_caption_segments(captions_json)
+        captions_json = [
+            {
+                "id": segment.id,
+                "index": segment.index,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "text": segment.text,
+            }
+            for segment in segments
+        ]
+        # Provider timing is canonical; provider-supplied SRT is deliberately not trusted.
+        captions_srt = serialize_srt(segments)
 
         scene_summary = _scene_plan_summary(scene_plan)
         captions_record = {
@@ -367,11 +388,28 @@ class CaptionsModule:
                 "scene_plan_id": scene_summary["scene_plan_id"],
             },
         )
+        srt_name = self._srt_name_template.format(language=language.lower())
+        if PurePosixPath(srt_name.replace("\\", "/")).name != srt_name:
+            raise ValueError("CaptionsModule SRT artifact name must be a filename.")
+        srt_artifact = self._artifact_store.save_artifact(
+            srt_name,
+            captions_srt.encode("utf-8"),
+            metadata={
+                "workflow_run_id": context.workflow_run_id,
+                "module_name": self.definition.name,
+                "artifact_type": "captions_srt",
+                "provider": self._caption_provider.provider_name,
+                "language": language,
+                "segment_count": len(segments),
+            },
+        )
 
         caption_track = CaptionTrack.create(
             workflow_run_id=context.workflow_run_id,
             provider=self._caption_provider.provider_name,
             caption_storage_key=artifact.storage_key,
+            srt_storage_key=srt_artifact.storage_key,
+            language=language,
         )
 
         return ModuleResult(
@@ -384,6 +422,7 @@ class CaptionsModule:
                 "captions_json": captions_json,
                 "captions_srt": captions_srt,
                 "artifact": artifact.to_payload(),
+                "srt_artifact": srt_artifact.to_payload(),
                 "scene_plan": scene_plan,
                 "voiceover": {
                     "provider": _optional_text(voiceover_payload.get("provider")),

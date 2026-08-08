@@ -9,7 +9,9 @@ from datetime import UTC, datetime
 from hashlib import sha256
 
 from app.domain.enums import ContentGenre, ContentType, DurationProfile, WorkflowPreset
+from app.domain.export_config import ExportConfig
 from app.domain.export_bundle import ExportBundle
+from app.domain.platform_handoff import PlatformHandoffBuilder
 from app.domain.types import JsonDict
 from app.modules.export_manifest import ExportBundleManifest
 from app.storage.artifact_store import ArtifactStore
@@ -229,6 +231,10 @@ class ExportModule:
                 "approvalSummary": {"type": "object"},
                 "provider_summary": {"type": "object"},
                 "providerSummary": {"type": "object"},
+                "publishing_metadata": {"type": "object"},
+                "publishingMetadata": {"type": "object"},
+                "source_language": {"type": "string"},
+                "sourceLanguage": {"type": "string"},
             },
         },
         output_schema={
@@ -238,6 +244,7 @@ class ExportModule:
                 "artifact": {"type": "object"},
                 "export_bundle": {"type": "object"},
                 "workflow_snapshot": {"type": "object"},
+                "platform_handoff": {"type": "object"},
             },
         },
         config_schema={
@@ -258,9 +265,13 @@ class ExportModule:
         *,
         artifact_store: ArtifactStore,
         manifest_name: str = "manifest.json",
+        platform_handoff_builder: PlatformHandoffBuilder | None = None,
+        handoff_name: str = "platform_handoff.json",
     ) -> None:
         self._artifact_store = artifact_store
         self._manifest_name = _optional_text(manifest_name) or "manifest.json"
+        self._platform_handoff_builder = platform_handoff_builder
+        self._handoff_name = _optional_text(handoff_name) or "platform_handoff.json"
 
     def execute(self, context: ModuleExecutionContext) -> ModuleResult:
         inputs = dict(context.inputs)
@@ -349,6 +360,42 @@ class ExportModule:
         )
 
         manifest_payload = manifest.to_payload()
+        platform_handoff_payload: JsonDict = {}
+        if self._platform_handoff_builder is not None:
+            source_language = _optional_text(
+                _pick(inputs, "source_language", "sourceLanguage")
+            ) or _optional_text(workflow_config.get("language"))
+            if not source_language:
+                raise ValueError("ExportModule source_language is required for a platform handoff.")
+            publishing_metadata = _coerce_mapping(
+                _pick(inputs, "publishing_metadata", "publishingMetadata")
+            )
+            export_config = ExportConfig.from_mapping(
+                workflow_config.get("exportConfig", workflow_config.get("export_config", {})),
+                source_language=source_language,
+            )
+            platform_handoff = self._platform_handoff_builder.build(
+                manifest_payload,
+                source_language=source_language,
+                metadata=publishing_metadata,
+                export_config=export_config,
+            )
+            platform_handoff_payload = platform_handoff.to_payload()
+            handoff_artifact = self._artifact_store.save_artifact(
+                self._handoff_name,
+                json.dumps(platform_handoff_payload, indent=2, sort_keys=True) + "\n",
+                metadata={
+                    "workflow_run_id": workflow_run_id,
+                    "module_name": self.definition.name,
+                    "artifact_type": "platform_handoff",
+                    "export_id": export_id,
+                    "platform": platform_handoff.platform,
+                },
+            )
+            manifest_payload["artifactReferences"][self._handoff_name] = handoff_artifact.to_payload()
+            if self._handoff_name not in manifest_payload["includedArtifacts"]:
+                manifest_payload["includedArtifacts"].append(self._handoff_name)
+
         manifest_artifact = self._artifact_store.save_artifact(
             self._manifest_name,
             json.dumps(manifest_payload, indent=2, sort_keys=True, default=_json_default),
@@ -368,7 +415,7 @@ class ExportModule:
             manifest_path=manifest_artifact.storage_key,
             manifest=manifest_payload,
             required_files=list(ExportBundleManifest.REQUIRED_FILES),
-            included_artifacts=included_artifacts,
+            included_artifacts=manifest_payload["includedArtifacts"],
             missing_optional_artifacts=missing_optional_artifacts,
             approval_summary=approval_summary,
             provider_summary=provider_summary,
@@ -390,6 +437,7 @@ class ExportModule:
                     "enabled_modules": list(context.enabled_modules),
                     "disabled_modules": list(context.disabled_modules),
                 },
+                "platform_handoff": platform_handoff_payload,
             },
         )
 

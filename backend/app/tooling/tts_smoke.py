@@ -325,6 +325,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # Keep the legacy field aligned with the effective identity-backed
         # benchmark model; CLI selection must not overwrite reported identity.
         "model_variant": report["model"], "generation_seconds": report["generation_wall_time_seconds"],
+        "language_id": report["language"],
         "checksum_sha256": checksum, "voice": voice,
         "output_wav": str(args.output),
         "effective_synthesis_identity": sanitize_synthesis_identity(effective_identity),

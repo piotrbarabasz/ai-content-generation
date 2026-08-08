@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.domain.artifact import Artifact
 from app.domain.enums import ContentGenre, ContentType, DurationProfile, TargetPlatform, WorkflowPreset
 from app.domain.export_bundle import ExportBundle
+from app.domain.export_config import LocalizationStrategy
 from app.domain.project import Project
 from app.domain.workflow_config import WorkflowConfig
 from app.domain.workflow_run import WorkflowRun
@@ -31,6 +32,51 @@ class ApiSchema(BaseModel):
         from_attributes=True,
         alias_generator=_to_camel,
     )
+
+
+class ExportConfigSchema(ApiSchema):
+    localization_strategy: LocalizationStrategy = LocalizationStrategy.NONE
+    localization_targets: list[str] = Field(default_factory=list)
+    manual_acceptance_required: bool = False
+    custom_audio_fallback_enabled: bool = False
+
+
+class LocalizationDecisionSchema(ApiSchema):
+    id: str
+    language: str
+    decision: str
+    reviewer_id: str
+    comment: str
+    created_at: datetime
+
+
+class CustomAudioFallbackSchema(ApiSchema):
+    target_language: str
+    artifact_reference: str
+    checksum: str
+    approved_label: str
+    provenance: str
+
+
+class LocalizationTargetSchema(ApiSchema):
+    language: str
+    status: str
+    decision_history: list[LocalizationDecisionSchema] = Field(default_factory=list)
+    custom_audio: CustomAudioFallbackSchema | None = None
+
+
+class LocalizationHandoffSchema(ApiSchema):
+    id: str
+    export_id: str
+    source_language: str
+    strategy: LocalizationStrategy
+    targets: list[str] = Field(default_factory=list)
+    manual_acceptance_required: bool
+    custom_audio_fallback_enabled: bool
+    provider: str = ""
+    publish_ref: str = ""
+    target_states: dict[str, LocalizationTargetSchema] = Field(default_factory=dict)
+    created_at: datetime
 
 
 class ProjectCreateRequest(ApiSchema):
@@ -210,6 +256,11 @@ __all__ = [
     "ApiSchema",
     "ArtifactSchema",
     "ExportBundleSchema",
+    "ExportConfigSchema",
+    "CustomAudioFallbackSchema",
+    "LocalizationDecisionSchema",
+    "LocalizationHandoffSchema",
+    "LocalizationTargetSchema",
     "ProjectCreateRequest",
     "ProjectSchema",
     "WorkflowConfigCreateRequest",
