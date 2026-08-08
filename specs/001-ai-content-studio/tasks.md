@@ -1176,7 +1176,7 @@ Notes: Completion of M006 enables a later UI or API selector but does not implem
 
 ## Phase 25: English-first localization boundary
 
-- [ ] T075 Close M006 and record the English-first localization architecture decision
+- [X] T075 Close M006 and record the English-first localization architecture decision
 Milestone: M007
 Epic: E014
 Risk: medium
