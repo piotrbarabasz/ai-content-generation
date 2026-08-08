@@ -386,3 +386,45 @@ The milestone uses separate optional runtime environments for Chatterbox, Piper 
 - captions, image generation, rendering and deployment.
 
 <!-- M006 MULTI-PROVIDER POLISH TTS PLAN EXTENSION END -->
+
+<!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION PLAN EXTENSION START -->
+
+## M007 English-First YouTube Production
+
+M007 moves the product from provider investigation to an English-first production and platform handoff path. English is the generated source-content and narration language. Localization is a later export/publishing concern: platform automatic dubbing is preferred when available, while custom localized audio remains an explicit fallback.
+
+The architecture decision is recorded in `docs/decisions/0002-english-first-localization-boundary.md`. `WorkflowConfig.language` continues to describe generated source content. Validated localization targets and handoff policy are carried inside export/publishing configuration and must not mutate or replace that source-language field.
+
+### Delivery order
+
+1. E014 defines and validates the English source-language and localization boundary without adding provider or platform branches to orchestration.
+2. E015 establishes a reproducible English Chatterbox production baseline and proves long-form resumable narration with provider-neutral artifact parity.
+3. E016 produces a deterministic YouTube-ready export with metadata and UTF-8 English captions.
+4. E017 composes publishing through the existing provider registry and records platform-localization handoff, human acceptance and custom-dub fallback state.
+
+### Architecture constraints
+
+- `WorkflowConfig.language` is the source language used by content generation and narration; it is not a localization target list.
+- Localization configuration is validated at the export/publishing boundary and records target languages, preferred localization mode, acceptance requirements and custom-audio fallback metadata.
+- TTS selection continues through `ProviderConfig`, `TTSSettings`, `build_tts_provider` and `ProviderRegistry`.
+- Publishing selection uses `ProviderConfig`, `PublishingProvider` and `ProviderRegistry`; `CoreWorkflowEngine` does not select YouTube directly.
+- `VoiceoverModule`, technical chunking, cache identity, WAV assembly and narration artifacts remain provider-neutral.
+- YouTube-specific mapping stays behind export/publishing contracts and does not leak into narrative generation or rendering concepts.
+- Automatic-dubbing handoff is represented truthfully as internal metadata and manual state until an authoritative platform API supports a stronger integration.
+- Tests remain deterministic and offline; real TTS smoke and publishing calls are explicit human actions using isolated optional runtimes.
+
+### Planned handoff artifacts
+
+When the corresponding source artifacts exist, the YouTube-ready bundle contains the rendered video, English narration, deterministic English captions, upload metadata, source-language identity, artifact checksums and localization-handoff metadata. Missing optional inputs are reported rather than fabricated. Final publishing and localization acceptance remain reviewable steps after generation.
+
+### Out of scope
+
+- adding MOSS-TTS or another experimental provider to the production TTS factory,
+- changing the provider-neutral narration architecture,
+- invoking real models or platform APIs in default tests,
+- claiming an unsupported YouTube automatic-dubbing API,
+- hiding credentials or private localized audio in manifests,
+- placing Chatterbox or YouTube conditionals in `CoreWorkflowEngine` or `VoiceoverModule`,
+- automatic publish, merge or deployment without human approval.
+
+<!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION PLAN EXTENSION END -->

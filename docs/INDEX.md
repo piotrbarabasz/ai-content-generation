@@ -25,6 +25,11 @@
 - `specs/001-ai-content-studio/tasks.md`
 - `specs/001-ai-content-studio/quickstart.md`
 
+## Architecture Decisions
+
+- `docs/decisions/0001-modular-workflow-engine.md`
+- `docs/decisions/0002-english-first-localization-boundary.md`
+
 <!-- M004 TTS DOCS INDEX START -->
 
 ## TTS

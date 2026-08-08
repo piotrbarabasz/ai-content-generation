@@ -1,0 +1,24 @@
+id: E014
+title: English-First Localization Boundary
+milestone: M007
+feature: specs/001-ai-content-studio
+base_branch: master
+branch: epic/E014-english-first-localization-boundary
+status: planned
+risk: high
+depends_on:
+  - E013
+tasks:
+  - T075
+  - T076
+required_checks:
+  - python -m pytest
+  - git --no-pager diff --check
+pr_policy:
+  one_pr_per_epic: true
+  merge_requires_human: true
+  auto_merge: false
+commit_policy:
+  one_commit_per_task: true
+  commit_requires_human: true
+  auto_commit: false

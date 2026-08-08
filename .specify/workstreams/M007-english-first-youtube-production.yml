@@ -1,0 +1,20 @@
+id: M007
+title: English-First YouTube Production
+status: planned
+goal: Deliver a production-ready English narration and YouTube handoff path while preserving provider-neutral generation and separating localization from content generation.
+epics:
+  - E014
+  - E015
+  - E016
+  - E017
+completion_criteria:
+  - WorkflowConfig.language continues to identify the generated source-content language, with English as the M007 production baseline.
+  - Validated localization settings live at the export and publishing boundary and do not overload source-language configuration.
+  - Chatterbox Multilingual V3 has a reproducible English production profile and an explicit human-operated runtime smoke path.
+  - Long-form English narration preserves deterministic chunking, resumable reuse, cache identity and artifact parity through provider-neutral tests.
+  - Export produces a deterministic YouTube-ready handoff containing video, narration, captions, metadata and checksummed artifact references when those inputs are available.
+  - English caption export is deterministic, UTF-8 encoded and suitable for manual YouTube upload.
+  - Publishing is composed through the existing ProviderConfig and ProviderRegistry boundaries, with offline mock coverage and optional real runtime dependencies.
+  - Auto-dubbing handoff and custom localized-audio fallback are represented as explicit metadata and human-reviewed state without claiming an unsupported platform API.
+  - CoreWorkflowEngine and VoiceoverModule contain no concrete TTS-provider or publishing-platform branches.
+  - Default tests require no network, platform credentials, model download, GPU or real publishing request.

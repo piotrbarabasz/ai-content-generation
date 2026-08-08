@@ -1171,3 +1171,135 @@ Parallelizable: no
 Notes: Completion of M006 enables a later UI or API selector but does not implement one.
 
 <!-- M006 MULTI-PROVIDER POLISH TTS TASKS EXTENSION END -->
+
+<!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION TASKS EXTENSION START -->
+
+## Phase 25: English-first localization boundary
+
+- [ ] T075 Close M006 and record the English-first localization architecture decision
+Milestone: M007
+Epic: E014
+Risk: medium
+Implementation files: `docs/tts/M006_PROVIDER_DECISION.md`, `docs/decisions/0002-english-first-localization-boundary.md`, `docs/INDEX.md`
+Test files: `backend/tests/static/test_t075.py`
+Validation commands: `python -m pytest backend/tests/static/test_t075.py`
+Final PR review required: yes
+Goal: Lock the completed Polish TTS investigation outcome and the English-source/platform-localization product boundary into reviewable documentation and static architecture guards.
+Dependencies: T074
+Acceptance criteria: The M006 manifest is completed while E011-E013 and T065-T074 history remain unchanged; the provider decision preserves the historical M006 implementation and adds the final outcome; Chatterbox is identified as the current general production-capable baseline, Piper as a fast local provider rather than the product quality baseline, and XTTS as evaluation-only; MOSS and other experimental runners remain outside the production TTS registry; the ADR states that English is the primary production language, WorkflowConfig.language describes generated source content, localization belongs to export/publishing configuration, platform auto-dubbing is preferred and custom localized narration is a fallback; documentation is indexed; static guards reject concrete Chatterbox/YouTube selection branches in CoreWorkflowEngine or VoiceoverModule.
+Test requirements: Add offline static checks for milestone/epic completion consistency, required decision statements, documentation links, absence of MOSS production registration and absence of concrete provider/platform selection branches in orchestration.
+Parallelizable: no
+Notes: Preserve the historical record; do not rewrite M006 as if it had originally been English-first and do not add an experimental provider to TTSFactory.
+
+- [ ] T076 Add validated localization and export configuration
+Milestone: M007
+Epic: E014
+Risk: high
+Implementation files: `backend/app/domain/export_config.py`, `backend/app/domain/workflow_config.py`, `backend/app/domain/__init__.py`, `backend/app/api/schemas.py`, `backend/app/workflow/presets.py`
+Test files: `backend/tests/unit/test_t076.py`, `backend/tests/unit/test_t046_project_config_models.py`, `backend/tests/unit/test_workflow_config_validation.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t076.py backend/tests/unit/test_t046_project_config_models.py backend/tests/unit/test_workflow_config_validation.py`
+Final PR review required: yes
+Goal: Represent source-language generation and downstream localization as separate validated configuration concerns.
+Dependencies: T075
+Acceptance criteria: WorkflowConfig.language remains the non-empty source content and narration language; a typed validated export configuration carries ordered unique localization targets, preferred localization mode, manual acceptance policy and optional custom-audio fallback policy; localization configuration round-trips through API schemas and preset composition without becoming a second source-language field; the existing long-form YouTube path defaults to English source production and platform-first localization while other preset behavior remains backward compatible; unsupported modes, duplicate/invalid target languages, a target equal to the source language and unknown fields fail before workflow execution; CoreWorkflowEngine and VoiceoverModule receive provider-neutral configuration and contain no provider or platform selection branches.
+Test requirements: Add model/API round-trip, default, backward-compatibility, strict unknown-field, language separation, duplicate target, same-as-source target and static no-branch tests.
+Parallelizable: no
+Notes: Keep localization within export/publishing configuration; do not replace WorkflowConfig.language or introduce YouTube-specific orchestration.
+
+## Phase 26: English narration production baseline
+
+- [ ] T077 Add a reproducible English Chatterbox production baseline and manual smoke path
+Milestone: M007
+Epic: E015
+Risk: high
+Implementation files: `backend/app/providers/chatterbox_v3.py`, `backend/app/providers/tts_capabilities.py`, `backend/app/tooling/tts_smoke.py`, `backend/tests/fixtures/narrations/metadata.json`, `backend/tests/fixtures/narrations/story_en_01_1min.txt`, `scripts/setup-tts-runtime.ps1`, `scripts/check-tts-runtime.ps1`, `scripts/run-tts-demo.ps1`, `docs/tts/CHATTERBOX_ENGLISH_BASELINE.md`, `docs/INDEX.md`
+Test files: `backend/tests/unit/test_t077.py`, `backend/tests/static/test_t077.py`, `backend/tests/unit/test_t065.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t077.py backend/tests/static/test_t077.py backend/tests/unit/test_t065.py`
+Final PR review required: yes
+Goal: Make the existing Chatterbox Multilingual V3 integration reproducibly usable as the English production narration baseline without changing provider-neutral composition.
+Dependencies: T076
+Acceptance criteria: Chatterbox capabilities truthfully advertise English and existing supported languages; English language selection is forwarded through the existing TTS settings/factory path; a fixed English one-minute fixture and metadata are deterministic; setup and health checks retain explicit isolated interpreter paths and validated immutable/runtime version evidence; one documented manual command generates an English WAV and JSON evidence with effective provider, model, voice mode, device, language, duration, PCM parameters and checksum; built-in and approved-reference voice modes remain explicit; missing runtime/device/reference failures are actionable and path-safe; default tests use fake runtime objects and make no model or network request.
+Test requirements: Add English capability, language forwarding, effective identity, fixture metadata, manual command, lazy import, runtime-profile and existing Polish compatibility regressions using fakes only.
+Parallelizable: no
+Notes: Do not add MOSS or another experimental model to the production registry and do not run a real model in CI.
+
+- [ ] T078 Validate English long-form resumable narration and artifact parity
+Milestone: M007
+Epic: E015
+Risk: high
+Implementation files: `backend/app/modules/voiceover.py`, `backend/app/tts/chunk_synthesis.py`, `backend/app/tts/manifest.py`, `backend/app/tts/benchmark.py`
+Test files: `backend/tests/unit/test_t078.py`, `backend/tests/unit/test_t064.py`, `backend/tests/integration/test_long_form_workflow.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t078.py backend/tests/unit/test_t064.py backend/tests/integration/test_long_form_workflow.py`
+Final PR review required: yes
+Goal: Prove that long-form English narration can resume deterministically and produces the same artifact contracts through any compatible TTS provider.
+Dependencies: T077
+Acceptance criteria: A deterministic long English fixture is chunked in stable text order; an interrupted run preserves completed chunks without publishing a stale final WAV; resume with identical effective synthesis identity reuses every valid chunk and generates only missing chunks; changes to provider, model/voice, language, generation settings or reference content invalidate incompatible reuse; final WAV, synthesis manifest and benchmark are atomically finalized and contain truthful English/provider identity; artifact names and shapes are identical across deterministic fake Chatterbox and another fake TTS provider apart from truthful provider/sample-rate metadata; the workflow engine and VoiceoverModule remain unaware of concrete provider classes.
+Test requirements: Add interruption/resume, full reuse, source-language identity, provider substitution, incompatible cache, final-WAV integrity, manifest/benchmark parity and no-concrete-import tests without real runtimes.
+Parallelizable: no
+Notes: Preserve technical chunking as distinct from NarrativeSegment and RenderScene; do not add provider-specific retry or fallback behavior.
+
+## Phase 27: YouTube-ready export
+
+- [ ] T079 Add YouTube-ready export metadata and platform handoff artifacts
+Milestone: M007
+Epic: E016
+Risk: high
+Implementation files: `backend/app/domain/export_bundle.py`, `backend/app/domain/platform_handoff.py`, `backend/app/modules/export_manifest.py`, `backend/app/modules/export.py`, `docs/publishing/YOUTUBE_HANDOFF.md`, `docs/INDEX.md`
+Test files: `backend/tests/unit/test_t079.py`, `backend/tests/unit/test_export_manifest.py`, `backend/tests/integration/test_export_bundle.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t079.py backend/tests/unit/test_export_manifest.py backend/tests/integration/test_export_bundle.py`
+Final PR review required: yes
+Goal: Package existing production artifacts and deterministic upload metadata into an auditable YouTube-ready handoff without publishing.
+Dependencies: T078
+Acceptance criteria: Export configuration validates a YouTube target without adding platform branches to CoreWorkflowEngine; the export bundle includes deterministic source-language metadata, title, description, tags and user-supplied audience settings plus checksummed references for available video, English narration and captions; missing optional artifacts are reported rather than fabricated; platform handoff state is provider-neutral and serializable; private paths, credentials and tokens are absent; identical inputs produce identical handoff content apart from explicitly documented creation timestamps/identifiers; final export approval remains required before publishing; existing generic exports remain backward compatible.
+Test requirements: Add metadata validation, deterministic ordering, artifact inclusion/missing reporting, checksum, redaction, generic-export regression, approval boundary and no-engine-platform-branch tests using temporary artifact stores.
+Parallelizable: no
+Notes: This task creates upload-ready artifacts only; it must not call the YouTube API or claim that a bundle was published.
+
+- [ ] T080 Add deterministic English caption and subtitle export for YouTube handoff
+Milestone: M007
+Epic: E016
+Risk: high
+Implementation files: `backend/app/domain/caption_track.py`, `backend/app/modules/captions.py`, `backend/app/providers/mock_captions.py`, `backend/app/modules/export.py`, `docs/publishing/YOUTUBE_HANDOFF.md`
+Test files: `backend/tests/unit/test_t080.py`, `backend/tests/unit/test_t027.py`, `backend/tests/integration/test_export_bundle.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t080.py backend/tests/unit/test_t027.py backend/tests/integration/test_export_bundle.py`
+Final PR review required: yes
+Goal: Emit deterministic source-English subtitle artifacts that can be inspected and manually uploaded with the YouTube-ready bundle.
+Dependencies: T079
+Acceptance criteria: Caption segments use stable source-text ordering, non-negative non-overlapping timestamps and deterministic identifiers; UTF-8 SRT is emitted as its own artifact with stable sequence numbers and line endings while existing captions.json remains available; the export bundle references both artifacts and records source language `en`; malformed, empty, overlapping or out-of-order segments fail before export; caption generation remains behind CaptionProvider and uses deterministic fakes in tests; this task does not translate captions or create localized audio.
+Test requirements: Add Unicode, timestamp formatting, ordering, overlap, empty segment, stable serialization, artifact-store, export inclusion and existing CaptionsModule regression tests.
+Parallelizable: no
+Notes: Keep caption timing separate from narrative segmentation and rendering; localization targets do not change the source-English subtitle track.
+
+## Phase 28: YouTube publishing and localization handoff
+
+- [ ] T081 Add a YouTube publishing provider boundary with offline tests and optional runtime dependencies
+Milestone: M007
+Epic: E017
+Risk: high
+Implementation files: `pyproject.toml`, `backend/app/providers/interfaces.py`, `backend/app/providers/registry.py`, `backend/app/providers/publishing_factory.py`, `backend/app/providers/youtube_publishing.py`, `backend/app/providers/mocks.py`, `docs/publishing/YOUTUBE_HANDOFF.md`
+Test files: `backend/tests/unit/test_t081.py`, `backend/tests/unit/test_provider_registry.py`, `backend/tests/unit/test_t022.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t081.py backend/tests/unit/test_provider_registry.py backend/tests/unit/test_t022.py`
+Final PR review required: yes
+Goal: Compose YouTube publishing behind the existing generic provider boundary while keeping default execution deterministic, credential-free and offline.
+Dependencies: T080
+Acceptance criteria: PublishingProvider exposes a typed request/result contract for an approved export bundle; mock publishing is deterministic and remains the default test implementation; an optional YouTube adapter is selected through ProviderConfig and ProviderRegistry rather than CoreWorkflowEngine branches; optional real client dependencies are isolated from the default install and imported lazily; provider construction performs no network request; credentials come only from explicit runtime configuration and are never serialized; tests inject a fake transport and cover request mapping, idempotency identity, error translation and redaction; publishing is rejected before provider invocation when final export approval is absent.
+Test requirements: Add protocol/factory, registry composition, lazy dependency, missing credential, fake transport, deterministic mock, approved-export, idempotency, safe error and no-network tests.
+Parallelizable: no
+Notes: Do not use a real account or network in pytest, do not bypass approval and do not place `if platform == "youtube"` in workflow orchestration.
+
+- [ ] T082 Add auto-dubbing handoff state, manual acceptance and custom-dub fallback metadata
+Milestone: M007
+Epic: E017
+Risk: high
+Implementation files: `backend/app/domain/localization_handoff.py`, `backend/app/domain/approval.py`, `backend/app/modules/publishing.py`, `backend/app/api/routes/publishing.py`, `backend/app/api/schemas.py`, `backend/app/modules/export.py`, `docs/publishing/YOUTUBE_HANDOFF.md`
+Test files: `backend/tests/unit/test_t082.py`, `backend/tests/unit/test_approval_workflow.py`, `backend/tests/integration/test_publishing_handoff.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t082.py backend/tests/unit/test_approval_workflow.py backend/tests/integration/test_publishing_handoff.py`
+Final PR review required: yes
+Goal: Track platform-first localization as a truthful human-reviewed handoff and preserve custom localized narration as an explicit fallback.
+Dependencies: T081
+Acceptance criteria: Localization handoff records source language, ordered target languages, preferred platform-auto-dubbing mode, provider/publish reference when present and a manual per-language acceptance state; no state claims an automatic-dubbing API call that the adapter does not support; reviewers can accept, reject or request changes while preserving the approved source export and decision history; rejected/unavailable platform localization can record a custom-dub fallback requirement plus artifact checksum and approved label without private absolute paths; publishing/localization status is exposed through API schemas and persisted in the export handoff; retries are idempotent and do not duplicate decisions or overwrite accepted artifacts; CoreWorkflowEngine and VoiceoverModule remain provider/platform neutral.
+Test requirements: Add state-transition, per-language acceptance, unsupported transition, rejection preservation, changes-requested, custom-fallback checksum/redaction, idempotent retry, API serialization, artifact persistence and no-fabricated-auto-dub-result tests.
+Parallelizable: no
+Notes: Auto-dubbing availability and acceptance are manual handoff facts in this milestone; do not invent an undocumented platform endpoint.
+
+<!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION TASKS EXTENSION END -->
