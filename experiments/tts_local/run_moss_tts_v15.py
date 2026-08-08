@@ -508,20 +508,30 @@ def main() -> int:
                 str(AUDIO_TEMPERATURE),
                 "--dump-raw-codes",
                 str(raw_codes),
-                "--audio-decoder-script",
+            ]
+            run_component(inference_command, "llama-moss-tts generation")
+
+            if not raw_codes.is_file() or raw_codes.stat().st_size == 0:
+                raise RuntimeError("llama-moss-tts generation did not produce non-empty raw audio codes.")
+
+            decoder_command = [
+                sys.executable,
                 str(decode_script),
-                "--audio-encoder-onnx",
-                str(onnx_dir / "encoder.onnx"),
-                "--audio-decoder-onnx",
-                str(onnx_dir / "decoder.onnx"),
+                "--codes-bin",
+                str(raw_codes),
                 "--wav-out",
                 str(temporary_output),
-                "--python-bin",
-                sys.executable,
+                "--encoder-onnx",
+                str(onnx_dir / "encoder.onnx"),
+                "--decoder-onnx",
+                str(onnx_dir / "decoder.onnx"),
             ]
             if args.device in ("cpu", "hybrid"):
-                inference_command.append("--audio-decoder-cpu")
-            run_component(inference_command, "llama-moss-tts")
+                decoder_command.append("--cpu")
+            run_component(decoder_command, "official audio decoder")
+
+            if not temporary_output.is_file() or temporary_output.stat().st_size <= 44:
+                raise RuntimeError("Official audio decoder did not produce a non-empty WAV.")
 
         generation_seconds = time.perf_counter() - generation_started
         duration, sample_rate, channels = inspect_wav(temporary_output)

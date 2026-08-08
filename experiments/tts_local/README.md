@@ -240,7 +240,9 @@ exact MOSS-TTS-v1.5 Q4_K_M first-class GGUF
     -> WAV + JSON report
 ```
 
-The setup and runner use the first-class components from the `moss-tts-firstclass` branch: `convert_hf_to_gguf.py`, `llama-quantize`, `llama-moss-tts`, and the official prompt/audio helpers. They are invoked with argument arrays, never a command shell. This is llama.cpp, not Ollama; Ollama is neither installed nor invoked.
+The setup and runner use the first-class components from the `moss-tts-firstclass` branch: `convert_hf_to_gguf.py`, `llama-quantize`, `llama-moss-tts`, and the official prompt/audio helpers. They are invoked with argument arrays, never a command shell. On native Windows, the runner deliberately stops `llama-moss-tts` after it writes raw audio codes, then invokes the official ONNX audio decoder as a separate Python subprocess. This bypasses the pinned first-class CLI's decoder-helper path, which builds a POSIX-single-quoted command and launches it through `std::system`; that shell orchestration is not native-Windows-safe. This is an orchestration workaround, not a model limitation.
+
+The inference flow is therefore `llama-moss-tts -> raw.codes.bin -> moss-tts-audio-decode.py -> temporary WAV`, with the final WAV moved atomically into place only after validation. This is llama.cpp, not Ollama; Ollama is neither installed nor invoked.
 
 Official sources: [MOSS llama.cpp backend](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/llama_cpp/README.md), [conversion guide](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/llama_cpp/conversion/README.md), [v1.5 model card](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5), [first-class guide](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md), and [quantizer options](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/tools/quantize/README.md).
 
