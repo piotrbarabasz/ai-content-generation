@@ -1223,7 +1223,7 @@ Test requirements: Add English capability, language forwarding, effective identi
 Parallelizable: no
 Notes: Do not add MOSS or another experimental model to the production registry and do not run a real model in CI.
 
-- [ ] T078 Validate English long-form resumable narration and artifact parity
+- [X] T078 Validate English long-form resumable narration and artifact parity
 Milestone: M007
 Epic: E015
 Risk: high
