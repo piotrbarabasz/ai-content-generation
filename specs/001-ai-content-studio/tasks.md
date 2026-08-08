@@ -1191,7 +1191,7 @@ Test requirements: Add offline static checks for milestone/epic completion consi
 Parallelizable: no
 Notes: Preserve the historical record; do not rewrite M006 as if it had originally been English-first and do not add an experimental provider to TTSFactory.
 
-- [ ] T076 Add validated localization and export configuration
+- [X] T076 Add validated localization and export configuration
 Milestone: M007
 Epic: E014
 Risk: high
