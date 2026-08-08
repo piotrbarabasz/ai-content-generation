@@ -1255,7 +1255,7 @@ Test requirements: Add metadata validation, deterministic ordering, artifact inc
 Parallelizable: no
 Notes: This task creates upload-ready artifacts only; it must not call the YouTube API or claim that a bundle was published.
 
-- [ ] T080 Add deterministic English caption and subtitle export for YouTube handoff
+- [X] T080 Add deterministic English caption and subtitle export for YouTube handoff
 Milestone: M007
 Epic: E016
 Risk: high
