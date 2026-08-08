@@ -1272,7 +1272,7 @@ Notes: Keep caption timing separate from narrative segmentation and rendering; l
 
 ## Phase 28: YouTube publishing and localization handoff
 
-- [ ] T081 Add a YouTube publishing provider boundary with offline tests and optional runtime dependencies
+- [X] T081 Add a YouTube publishing provider boundary with offline tests and optional runtime dependencies
 Milestone: M007
 Epic: E017
 Risk: high
