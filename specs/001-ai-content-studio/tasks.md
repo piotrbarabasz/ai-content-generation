@@ -1240,7 +1240,7 @@ Notes: Preserve technical chunking as distinct from NarrativeSegment and RenderS
 
 ## Phase 27: YouTube-ready export
 
-- [ ] T079 Add YouTube-ready export metadata and platform handoff artifacts
+- [X] T079 Add YouTube-ready export metadata and platform handoff artifacts
 Milestone: M007
 Epic: E016
 Risk: high
