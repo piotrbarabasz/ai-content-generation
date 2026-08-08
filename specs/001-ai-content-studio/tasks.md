@@ -1287,7 +1287,7 @@ Test requirements: Add protocol/factory, registry composition, lazy dependency, 
 Parallelizable: no
 Notes: Do not use a real account or network in pytest, do not bypass approval and do not place `if platform == "youtube"` in workflow orchestration.
 
-- [ ] T082 Add auto-dubbing handoff state, manual acceptance and custom-dub fallback metadata
+- [X] T082 Add auto-dubbing handoff state, manual acceptance and custom-dub fallback metadata
 Milestone: M007
 Epic: E017
 Risk: high

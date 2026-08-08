@@ -1,6 +1,6 @@
 id: M007
 title: English-First YouTube Production
-status: planned
+status: completed
 goal: Deliver a production-ready English narration and YouTube handoff path while preserving provider-neutral generation and separating localization from content generation.
 epics:
   - E014

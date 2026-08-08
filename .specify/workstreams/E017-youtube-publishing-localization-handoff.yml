@@ -4,7 +4,7 @@ milestone: M007
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E017-youtube-publishing-localization-handoff
-status: planned
+status: completed
 risk: high
 depends_on:
   - E016
