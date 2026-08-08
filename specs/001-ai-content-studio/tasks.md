@@ -1208,7 +1208,7 @@ Notes: Keep localization within export/publishing configuration; do not replace 
 
 ## Phase 26: English narration production baseline
 
-- [ ] T077 Add a reproducible English Chatterbox production baseline and manual smoke path
+- [X] T077 Add a reproducible English Chatterbox production baseline and manual smoke path
 Milestone: M007
 Epic: E015
 Risk: high
