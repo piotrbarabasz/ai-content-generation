@@ -18,7 +18,6 @@ from app.domain.provider_config import ProviderConfig
 from app.domain.types import JsonDict
 from app.providers.interfaces import TTSProvider
 from app.providers.tts_factory import build_tts_provider
-from app.providers.tts_settings import TTSSettings, TTSSettingsError
 
 from .assembly import WavAssemblyError, inspect_pcm_wav, persist_pcm_wav_atomically
 from .catalog import TTSCatalog, TTSCatalogError
@@ -28,6 +27,7 @@ from .post_processing import (
     process_pcm_wav_tempo,
     validate_tempo,
 )
+from .selection import TTSSelectionError, map_catalog_selection
 
 
 PREVIEW_TEXT_LIMIT = 400
@@ -43,11 +43,6 @@ _PRIVATE_KEY_RE = re.compile(
 )
 _PATH_KEY_RE = re.compile(r"(?:^|_)(?:path|file|dir|directory|location|uri|url)$", re.IGNORECASE)
 
-_MODEL_SETTING_KEYS = {
-    "chatterbox_v3": "model_variant",
-    "piper": "model_key",
-    "xtts_v2_eval": "model_variant",
-}
 _REFERENCE_SETTING_KEYS = {
     "chatterbox_v3": "audio_prompt_path",
     "mock": "audio_prompt_path",
@@ -266,85 +261,70 @@ class TTSPreviewService:
         synthesis_settings: Mapping[str, Any] | None,
     ) -> _PreparedRequest:
         normalized_text = _normalize_preview_text(text)
-        normalized_tempo = validate_tempo(tempo)
         settings = _normalize_synthesis_settings(synthesis_settings)
-
         try:
-            provider_descriptor = self._catalog.get_provider(provider)
-            model_descriptor = provider_descriptor.get_model(model)
-            voice_descriptor = provider_descriptor.get_voice(model_descriptor.id, voice)
-        except TTSCatalogError as exc:
+            mapped = map_catalog_selection(
+                catalog=self._catalog,
+                provider=provider,
+                model=model,
+                voice=voice,
+                language=language,
+                tempo=tempo,
+                synthesis_settings=settings,
+                reference_audio_artifact_id=reference_audio_artifact_id,
+                usage_policy=None,
+                require_reference_metadata=False,
+            )
+        except (TTSSelectionError, ValueError) as exc:
             raise TTSPreviewError(str(exc)) from exc
-
-        normalized_language = _normalize_language(language)
-        if not provider_descriptor.supports_language(normalized_language):
-            raise TTSPreviewError("The selected TTS provider does not support the requested language.")
-        if not model_descriptor.supports_language(normalized_language):
-            raise TTSPreviewError("The selected TTS model does not support the requested language.")
-        if not voice_descriptor.supports_language(normalized_language):
-            raise TTSPreviewError("The selected TTS voice does not support the requested language.")
-        if not voice_descriptor.preview_supported:
+        mapped_tts = mapped.provider_config["tts"]
+        mapped_voice = mapped.voice_config
+        provider_name = str(mapped_tts["providerName"])
+        voice_mode = str(mapped_voice["voice_mode"])
+        try:
+            selected_voice = self._catalog.get_provider(provider_name).get_voice(
+                str(model), str(mapped_voice["voice_id"])
+            )
+        except TTSCatalogError as exc:  # Defensive: the mapper already resolved these ids.
+            raise TTSPreviewError(str(exc)) from exc
+        if not selected_voice.preview_supported:
             raise TTSPreviewError("The selected TTS voice does not support previews.")
-
         reference = self._resolve_reference(
             reference_audio_artifact_id,
-            required=voice_descriptor.reference_audio_required,
-            accepted=voice_descriptor.voice_mode == "reference",
+            required=voice_mode == "reference",
+            accepted=voice_mode == "reference",
         )
-        try:
-            provider_descriptor.capabilities.validate_request(
-                language_id=normalized_language,
-                voice_mode=voice_descriptor.voice_mode,
-                reference_audio_present=reference is not None,
-                usage_policy=provider_descriptor.usage_policy,
-            )
-        except ValueError as exc:
-            raise TTSPreviewError(str(exc)) from exc
-
-        provider_settings: JsonDict = dict(settings)
-        provider_settings.update(
-            {
-                "provider": provider_descriptor.id,
-                "usage_policy": provider_descriptor.usage_policy,
-                "language_id": normalized_language,
-            }
-        )
-        model_setting = _MODEL_SETTING_KEYS.get(provider_descriptor.id)
-        if model_setting is not None:
-            provider_settings[model_setting] = model_descriptor.id
+        provider_settings: JsonDict = dict(mapped_tts["settings"])
+        provider_settings["language_id"] = mapped.language
+        voice_config: JsonDict = {
+            "voice_id": mapped_voice["voice_id"],
+            "voice_mode": voice_mode,
+            "language_id": mapped.language,
+            **{
+                key: value
+                for key, value in provider_settings.items()
+                if key not in {"provider", "usage_policy", "model_variant", "model_key", "language_id"}
+            },
+        }
         if reference is not None:
-            reference_setting = _REFERENCE_SETTING_KEYS.get(provider_descriptor.id)
+            reference_setting = _REFERENCE_SETTING_KEYS.get(provider_name)
             if reference_setting is None:
                 raise TTSPreviewError("The selected TTS provider cannot accept reference audio.")
             provider_settings[reference_setting] = reference.runtime_path
-            if provider_descriptor.id == "xtts_v2_eval":
-                provider_settings["approved_label"] = reference.approval_label
-
-        try:
-            TTSSettings.from_mapping(provider_settings, provider=provider_descriptor.id)
-        except TTSSettingsError as exc:
-            raise TTSPreviewError(str(exc)) from exc
-
-        voice_config: JsonDict = {
-            "language_id": normalized_language,
-            "voice_mode": voice_descriptor.voice_mode,
-            **dict(settings),
-        }
-        if reference is not None:
-            reference_setting = _REFERENCE_SETTING_KEYS[provider_descriptor.id]
             voice_config[reference_setting] = reference.runtime_path
-            if provider_descriptor.id == "xtts_v2_eval":
+            if provider_name == "xtts_v2_eval":
+                provider_settings["approved_label"] = reference.approval_label
                 voice_config["approved_label"] = reference.approval_label
 
         return _PreparedRequest(
             text=normalized_text,
             selection={
-                "provider": provider_descriptor.id,
-                "model": model_descriptor.id,
-                "voice": voice_descriptor.id,
-                "language": normalized_language,
+                "provider": provider_name,
+                "model": selected_voice.model_id,
+                "voice": str(mapped_voice["voice_id"]),
+                "language": mapped.language,
             },
-            tempo=normalized_tempo,
+            tempo=float(mapped_voice["post_processing"]["tempo"]),
             provider_settings=provider_settings,
             voice_config=voice_config,
             reference_checksum=reference.checksum if reference is not None else None,

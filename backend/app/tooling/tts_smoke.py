@@ -22,7 +22,7 @@ from app.tts.benchmark import build_benchmark_report
 from app.tts.assembly import WavAssemblyError, inspect_pcm_wav, persist_pcm_wav_atomically
 from app.tts.post_processing import process_pcm_wav_tempo, validate_tempo
 from app.tts.manifest import ChunkManifest, SynthesisManifest, sanitize_synthesis_identity
-from app.providers.tts_settings import TTSSettings
+from app.providers.tts_settings import TTSSettings, supported_settings_for_provider
 from app.providers.xtts_v2 import XTTSV2EvalProvider
 
 
@@ -32,6 +32,35 @@ class TTSSmokeError(RuntimeError):
 
 _KNOBS = ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p")
 _PIPER_KNOBS = ("length_scale", "volume", "noise_scale", "noise_w_scale")
+_CLI_PROVIDER_SETTINGS = {
+    "model_variant": "model_variant",
+    "audio_prompt": "audio_prompt_path",
+    "model_key": "model_key",
+    "model_path": "model_path",
+    "approved_label": "approved_label",
+    **{name: name for name in _KNOBS},
+    **{name: name for name in _PIPER_KNOBS},
+}
+
+
+class _TTSSmokeArgumentParser(argparse.ArgumentParser):
+    """Record which provider-specific options the user supplied explicitly."""
+
+    def parse_known_args(self, args=None, namespace=None):
+        raw_args = list(sys.argv[1:] if args is None else args)
+        parsed, extras = super().parse_known_args(raw_args, namespace)
+        explicit: set[str] = set()
+        for action in self._actions:
+            if action.dest not in _CLI_PROVIDER_SETTINGS:
+                continue
+            if any(
+                token == option or token.startswith(f"{option}=")
+                for token in raw_args
+                for option in action.option_strings
+            ):
+                explicit.add(action.dest)
+        setattr(parsed, "_explicit_provider_settings", frozenset(explicit))
+        return parsed, extras
 
 
 def _provider_capabilities(provider_name: str) -> TTSCapabilities:
@@ -90,7 +119,7 @@ def _attach_capabilities(provider: Any, provider_name: str) -> Any:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the parser without importing optional provider dependencies."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _TTSSmokeArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
         "--provider",
         choices=("mock", "chatterbox_v3", "piper", "xtts_v2_eval"),
@@ -194,51 +223,34 @@ def _create_provider(args: argparse.Namespace) -> Any:
         "usage_policy": args.usage_policy,
         "device": args.device,
         "language_id": args.language,
-        "model_variant": args.model_variant,
-        "audio_prompt_path": args.audio_prompt,
-        "model_key": getattr(args, "model_key", None),
-        "model_path": getattr(args, "model_path", None),
-        "exaggeration": getattr(args, "exaggeration", None),
-        "cfg_weight": getattr(args, "cfg_weight", None),
-        "temperature": getattr(args, "temperature", None),
-        "repetition_penalty": getattr(args, "repetition_penalty", None),
-        "min_p": getattr(args, "min_p", None),
-        "top_p": getattr(args, "top_p", None),
-        "length_scale": getattr(args, "length_scale", None),
-        "volume": getattr(args, "volume", None),
-        "noise_scale": getattr(args, "noise_scale", None),
-        "noise_w_scale": getattr(args, "noise_w_scale", None),
     }
-    if args.provider == "xtts_v2_eval":
-        provider_settings["reference_audio_path"] = args.audio_prompt
-        provider_settings["approved_label"] = getattr(args, "approved_label", None)
+    explicitly_supplied = getattr(args, "_explicit_provider_settings", None)
+    if explicitly_supplied is None:
+        candidate_fields = {
+            field_name
+            for field_name in _CLI_PROVIDER_SETTINGS
+            if getattr(args, field_name, None) is not None
+        }
+        supported = supported_settings_for_provider(args.provider)
+        candidate_fields = {
+            field_name
+            for field_name in candidate_fields
+            if _CLI_PROVIDER_SETTINGS[field_name] in supported
+        }
+    else:
+        candidate_fields = set(explicitly_supplied)
+    provider_settings.update(
+        {
+            _CLI_PROVIDER_SETTINGS[field_name]: getattr(args, field_name)
+            for field_name in candidate_fields
+        }
+    )
     settings = TTSSettings.from_mapping(provider_settings, provider=args.provider)
     provider_config = ProviderConfig.create(
         workflow_config_id="tts_smoke",
         provider_type=ProviderType.TTS,
         provider_name=settings.provider,
-        settings={
-            "provider": settings.provider,
-            "usage_policy": settings.usage_policy,
-            "device": settings.device,
-            "language_id": settings.language_id,
-            "model_variant": settings.model_variant,
-            "audio_prompt_path": settings.audio_prompt_path,
-            "reference_audio_path": settings.reference_audio_path,
-            "approved_label": settings.approved_label,
-            "model_key": settings.model_key,
-            "model_path": settings.model_path,
-            "length_scale": settings.length_scale,
-            "volume": settings.volume,
-            "noise_scale": settings.noise_scale,
-            "noise_w_scale": settings.noise_w_scale,
-            "exaggeration": settings.exaggeration,
-            "cfg_weight": settings.cfg_weight,
-            "temperature": settings.temperature,
-            "repetition_penalty": settings.repetition_penalty,
-            "min_p": settings.min_p,
-            "top_p": settings.top_p,
-        },
+        settings=provider_settings,
     )
     return build_tts_provider(provider_config, provider_factories=_provider_factories())
 

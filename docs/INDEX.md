@@ -58,6 +58,7 @@
 - `docs/tts/PIPER_SMOKE.md`
 - `docs/tts/XTTS_SETUP.md`
 - `docs/tts/PROVIDER_COMPARISON.md`
+- `docs/tts/TTS_SELECTION_API.md`
 
 <!-- M006 MULTI-PROVIDER TTS DOCS INDEX END -->
 
