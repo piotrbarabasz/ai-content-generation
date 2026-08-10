@@ -41,7 +41,7 @@ class AgentRiskRoutingTests(unittest.TestCase):
         self.assertEqual(fast["sandbox_mode"], "workspace-write")
 
         self.assertEqual(high["name"], "spec_programmer_high")
-        self.assertEqual(high["model"], "gpt-5.6")
+        self.assertEqual(high["model"], "gpt-5.6-sol")
         self.assertEqual(high["model_reasoning_effort"], "high")
         self.assertEqual(high["sandbox_mode"], "workspace-write")
 
