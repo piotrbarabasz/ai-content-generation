@@ -1340,7 +1340,7 @@ Notes: Reuse `piper_catalog.py` as the single source of curated Piper assets. Pr
 
 ## Phase 30: Voice preview
 
-- [ ] T085 Expose TTS catalog API
+- [X] T085 Expose TTS catalog API
 Milestone: M008
 Epic: E019
 Risk: medium
