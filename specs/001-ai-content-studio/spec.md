@@ -417,3 +417,62 @@ A producer wants the application to generate high-quality English source content
 - **SC-020**: Static and behavioral tests prove that CoreWorkflowEngine and VoiceoverModule contain no concrete Chatterbox or YouTube selection branches.
 
 <!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION EXTENSION END -->
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW EXTENSION START -->
+
+## TTS Selection and Voice Preview
+
+### User Story 7 - Discover, preview and persist a TTS voice (Priority: P1)
+
+A producer wants a future UI to list available TTS providers, models and voices, filter them by source language and usage policy, listen to a short preview, and save the exact selection so production voiceover uses the same effective synthesis configuration.
+
+**Independent Test**: With deterministic fake runtimes, an API client fetches the TTS catalog, chooses a compatible provider/model/voice tuple, creates and retrieves a WAV preview, persists the canonical selection in `WorkflowConfig`, and executes `VoiceoverModule` with a matching effective synthesis identity apart from preview-only text and artifacts.
+
+**Acceptance Scenarios**:
+
+1. **Given** the production TTS providers are registered, **When** the client requests the catalog, **Then** it receives deterministic provider, model and voice descriptors without model loading, CUDA initialization, network access, secrets or private filesystem paths.
+2. **Given** a language or usage-policy filter, **When** the client requests the catalog, **Then** only compatible provider/model/voice choices remain and their relative ordering is stable.
+3. **Given** a valid catalog selection and short text, **When** the client requests a preview, **Then** the backend composes the provider through `ProviderConfig`, `TTSSettings` and `TTSFactory`, synthesizes and validates WAV audio, applies provider-neutral tempo post-processing, and stores the result under ignored runtime storage.
+4. **Given** the same normalized preview request is repeated, **When** preview creation runs concurrently or sequentially, **Then** one deterministic cache identity is used and duplicate expensive synthesis for that identity is prevented.
+5. **Given** an opaque approved reference-audio artifact identifier, **When** a reference voice is previewed or persisted, **Then** the backend resolves it inside controlled storage and no API payload accepts or returns an arbitrary filesystem path.
+6. **Given** a selected provider/model/voice tuple, **When** the client persists a workflow configuration, **Then** the canonical mapping writes the selection to `providerConfig` and `voiceConfig`, retains tempo as post-processing, and keeps the source language in `WorkflowConfig.language`.
+7. **Given** the persisted workflow configuration, **When** `VoiceoverModule` executes, **Then** its provider/model/voice/language and relevant synthesis settings match the preview selection without a concrete-provider branch in the module or workflow engine.
+
+### Additional Functional Requirements
+
+- **FR-108**: The system MUST expose deterministic provider-neutral descriptors for TTS providers, models and voices, and MUST preserve the distinction between those three concepts.
+- **FR-109**: TTS catalog identifiers MUST be stable and unique in their declared scope, catalog payloads MUST be JSON-safe, and serialization order MUST be deterministic.
+- **FR-110**: TTS catalog descriptors MUST expose display labels, supported languages, usage policy, relevant capabilities, preview support and truthful reference-audio requirements without exposing secrets or private filesystem paths.
+- **FR-111**: Catalog construction MUST NOT load an optional TTS runtime, initialize a model or CUDA, make a network request, or generate audio.
+- **FR-112**: The initial production catalog MUST adapt existing Chatterbox Multilingual V3 and curated Piper metadata, MUST expose XTTS-v2 as evaluation-only, and MUST NOT automatically include providers under `experiments/tts_local`, including MOSS-TTS.
+- **FR-113**: Piper catalog discovery MUST reuse `piper_catalog.py` as its source and MUST NOT duplicate the curated voice list.
+- **FR-114**: `GET /api/v1/tts/catalog` MUST return the catalog using camelCase schemas and support optional `language` and `usagePolicy` filters with deterministic ordering.
+- **FR-115**: TTS preview synthesis MUST validate the selected provider/model/voice/language and usage policy against the catalog before provider composition or model loading.
+- **FR-116**: Preview synthesis MUST reuse `ProviderConfig`, `TTSSettings`, `TTSFactory`, `TTSProvider.synthesize`, existing PCM WAV validation and existing provider-neutral tempo post-processing rather than invoking `tts_smoke.py` or adding a parallel synthesis path.
+- **FR-117**: Preview text MUST be non-empty after normalization, MUST be rejected rather than silently truncated when it exceeds a documented limit of 400 characters, and MUST participate in cache identity.
+- **FR-118**: Preview cache identity MUST include provider, model, voice, language, normalized text, relevant effective synthesis settings, reference-audio checksum when applicable, and final tempo; tempo MUST remain separate from the native TTS model identity.
+- **FR-119**: Preview storage MUST use ignored controlled runtime storage, address audio by opaque preview identifier, reject traversal and arbitrary paths, and never return an absolute storage path in an API payload.
+- **FR-120**: `POST /api/v1/tts/previews` MUST return preview metadata and an opaque audio URL; `GET /api/v1/tts/previews/{preview_id}/audio` MUST return `audio/wav` for a known preview and 404 for an unknown identifier.
+- **FR-121**: Reference-voice requests MUST use an opaque approved reference-audio artifact identifier and MUST fail before synthesis when required reference audio, checksum or approval metadata is missing.
+- **FR-122**: One canonical translation MUST map a catalog selection into the existing `WorkflowConfig.provider_config` and `WorkflowConfig.voice_config`; no second persisted TTS selection configuration model may compete with those fields.
+- **FR-123**: The canonical workflow mapping MUST retain provider, model, voice or voice mode, usage policy and only necessary provider-specific settings; `WorkflowConfig.language` MUST remain the source language and tempo MUST be stored only as provider-neutral voice post-processing.
+- **FR-124**: Production workflow validation MUST reject stale or incompatible catalog selections, unsupported languages, missing reference-audio requirements and evaluation-only providers selected under production policy before model loading.
+- **FR-125**: Preview and production synthesis MUST derive the same effective provider/model/voice/language identity and relevant synthesis settings, excluding declared preview-only text, cache and output-artifact values.
+- **FR-126**: Preview artifacts and production narration chunk artifacts MUST use independent cache namespaces and MUST not be treated as interchangeable outputs.
+
+### Additional Non-Functional Requirements
+
+- **NFR-025**: Catalog and preview API payloads MUST use the existing camelCase API convention and remain independent of concrete Python provider classes.
+- **NFR-026**: Catalog responses MUST be cheap, deterministic and safe to call without any installed optional TTS runtime.
+- **NFR-027**: Preview generation MUST support single-flight concurrency control per cache identity so simultaneous identical requests cannot cause duplicate expensive model execution.
+- **NFR-028**: Default M008 tests MUST use deterministic fake providers and temporary controlled storage and MUST require no network, model download, GPU, FFmpeg process, private reference audio or optional TTS runtime.
+- **NFR-029**: Preview errors, metadata and cache records MUST redact private paths, credentials, tokens and reference-audio contents.
+
+### Additional Success Criteria
+
+- **SC-021**: An API client can deterministically discover Chatterbox, curated Piper and evaluation-only XTTS entries, filter them by language and usage policy, and never see MOSS or another experimental-only provider.
+- **SC-022**: Repeating an identical preview request returns the same preview identifier and validated WAV while changing text, provider, model, voice, language, relevant synthesis settings or reference-audio content changes the appropriate identity.
+- **SC-023**: A catalog selection round-trips through camelCase API schemas into `WorkflowConfig.provider_config` and `WorkflowConfig.voice_config`, with tempo preserved only under provider-neutral post-processing.
+- **SC-024**: An offline acceptance test proves catalog discovery, preview playback, workflow persistence and production `VoiceoverModule` execution agree on effective synthesis identity without concrete-provider branches in orchestration.
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW EXTENSION END -->

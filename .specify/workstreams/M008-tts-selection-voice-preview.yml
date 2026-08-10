@@ -1,0 +1,18 @@
+id: M008
+title: TTS Selection & Voice Preview
+status: planned
+goal: Prepare a provider-neutral backend contract for discovering TTS providers, models and voices, previewing an exact selection, and persisting that selection for production voiceover execution.
+epics:
+  - E018
+  - E019
+  - E020
+completion_criteria:
+  - A deterministic provider-neutral catalog distinguishes providers, models and voices without loading optional runtimes or exposing private paths or secrets.
+  - Chatterbox Multilingual V3, the curated Piper catalog and evaluation-only XTTS-v2 are represented truthfully, while experimental providers remain outside the production catalog.
+  - The catalog API supports deterministic language and usage-policy filtering without model loading, CUDA initialization, network access or audio generation.
+  - Voice previews reuse ProviderConfig, TTSSettings, TTSFactory, provider synthesis, WAV validation and provider-neutral tempo post-processing, with deterministic cache identity and controlled runtime storage.
+  - Preview creation and audio delivery accept only catalog selections and opaque artifact identifiers, never arbitrary filesystem paths.
+  - One canonical mapping persists catalog provider, model and voice selection into WorkflowConfig.provider_config and WorkflowConfig.voice_config while WorkflowConfig.language remains the source language.
+  - Preview and production VoiceoverModule execution agree on effective synthesis identity except for declared preview-only text and artifacts.
+  - CoreWorkflowEngine and VoiceoverModule contain no concrete TTS-provider selection branches.
+  - Default tests use deterministic fake providers and require no network, model download, GPU or optional TTS runtime.

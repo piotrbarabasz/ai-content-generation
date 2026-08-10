@@ -1303,3 +1303,118 @@ Parallelizable: no
 Notes: Auto-dubbing availability and acceptance are manual handoff facts in this milestone; do not invent an undocumented platform endpoint.
 
 <!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION TASKS EXTENSION END -->
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW TASKS EXTENSION START -->
+
+## Phase 29: TTS catalog and discovery
+
+- [ ] T083 Add provider-neutral TTS catalog domain contracts
+Milestone: M008
+Epic: E018
+Risk: medium
+Implementation files: `backend/app/tts/catalog.py`, `backend/app/tts/__init__.py`
+Test files: `backend/tests/unit/test_t083.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t083.py`
+Final PR review required: yes
+Goal: Introduce deterministic UI-facing descriptors and lookup/filtering behavior for TTS providers, models and voices without adding a competing provider abstraction.
+Dependencies: T082
+Acceptance criteria: Immutable provider-neutral contracts represent `TTSProviderDescriptor`, `TTSModelDescriptor`, `TTSVoiceDescriptor` and `TTSCatalog` or repository-conventional equivalents; provider, model and voice remain distinct concepts; provider descriptors expose stable id, display name, usage policy, supported languages, capabilities and ordered models; model descriptors expose stable id, display name, provider id, supported languages, ordered voices and public runtime/asset requirement flags; voice descriptors expose stable id, display name, voice mode, supported languages, preview support, truthful reference-audio requirement and optional JSON-safe public metadata; provider ids are globally unique, model ids are unique within a provider and voice ids are unique within a provider/model pair; invalid or blank ids, duplicate scoped ids, invalid language tags and inconsistent provider/model relationships fail deterministically; filtering by normalized language and usage policy removes incompatible nested entries and empty parents without mutating the source catalog; serialization is deterministic and JSON-safe; descriptors reject absolute paths, path-like private metadata and secret-bearing fields; constructing or serializing a catalog imports no optional runtime and performs no model loading, CUDA initialization, network request or synthesis.
+Test requirements: Add deterministic serialization and ordering, JSON round-trip, scoped uniqueness, language normalization/validation, nested filtering, immutability, private-path/secret rejection and no-runtime-loading tests.
+Parallelizable: no
+Notes: Keep these contracts in the existing provider-neutral `backend/app/tts` service package. Do not add a second ProviderRegistry, instantiate a concrete provider or collapse provider, model and voice into one identifier.
+
+- [ ] T084 Add catalog adapters for existing TTS providers
+Milestone: M008
+Epic: E018
+Risk: medium
+Implementation files: `backend/app/providers/tts_catalog.py`, `backend/app/providers/chatterbox_v3.py`, `backend/app/providers/piper_catalog.py`, `backend/app/providers/piper_tts.py`, `backend/app/providers/xtts_v2.py`, `backend/app/providers/__init__.py`
+Test files: `backend/tests/unit/test_t084.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t084.py`
+Final PR review required: yes
+Goal: Populate the generic catalog from existing production-provider metadata through an explicit future-safe adapter registration boundary.
+Dependencies: T083
+Acceptance criteria: The catalog registers only explicit production catalog adapters and does not scan provider modules or experiment directories; Chatterbox is exposed as provider `chatterbox_v3`, model `v3`, and voices `builtin` and `reference`, with reference audio required only for the reference voice; Piper maps every curated `piper_catalog.py` entry exactly once without duplicating the curated list, uses the catalog provider key as the model id, exposes the curated speaker name as its catalog voice id, and preserves public language, quality, sample-rate, checksum and license evidence without local asset paths; XTTS is exposed as provider `xtts_v2_eval`, model `xtts_v2`, reference voice only, `usagePolicy=evaluation_only`, and approved reference audio required; existing `TTSCapabilities` language, voice-mode, usage-policy and native speaking-rate facts are preserved, while provider-neutral tempo is not advertised as native speaking-rate support; adapter registration rejects duplicates and supports adding another explicitly approved provider without changing catalog or API schemas; importing and building adapters performs no optional runtime import, model construction, CUDA initialization, download, network request or synthesis; `experiments/tts_local`, MOSS and unregistered providers never appear in the production catalog.
+Test requirements: Add exact Chatterbox, complete curated Piper mapping, XTTS evaluation-policy, capability-preservation, duplicate-registration, deterministic adapter order, no-optional-import, no-model-load and MOSS-exclusion tests.
+Parallelizable: no
+Notes: Reuse `piper_catalog.py` as the single source of curated Piper assets. Provider modules may expose lightweight static metadata seams, but catalog construction must not construct runtime-backed provider instances.
+
+## Phase 30: Voice preview
+
+- [ ] T085 Expose TTS catalog API
+Milestone: M008
+Epic: E019
+Risk: medium
+Implementation files: `backend/app/api/main.py`, `backend/app/api/dependencies.py`, `backend/app/api/routes/tts.py`, `backend/app/api/schemas.py`
+Test files: `backend/tests/unit/test_t085.py`, `backend/tests/integration/test_tts_catalog_api.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t085.py backend/tests/integration/test_tts_catalog_api.py`
+Final PR review required: yes
+Goal: Expose the deterministic provider-neutral catalog at `GET /api/v1/tts/catalog` using existing FastAPI routing and camelCase schema conventions.
+Dependencies: T084
+Acceptance criteria: The route is registered through the existing API router convention and returns a Pydantic-validated `{providers: [...]}` response; response fields use camelCase and expose only the provider-neutral descriptor contract; optional `language` and camelCase `usagePolicy` query parameters apply the catalog's nested filtering rules; unsupported filter values receive a stable client error rather than an empty or partially invalid payload; provider, model and voice ordering remains deterministic; repeated requests do not mutate catalog state; endpoint execution performs no optional runtime import, provider construction, model loading, CUDA initialization, network request or audio generation; OpenAPI documents the response and filters without exposing Python class names or filesystem locations.
+Test requirements: Add TestClient HTTP response, OpenAPI schema, camelCase serialization, language filter, usage-policy filter, combined filter, invalid filter, deterministic repeat and injected no-runtime-loading tests.
+Parallelizable: no
+Notes: This endpoint is discovery-only. Do not add preview generation, model downloads, provider health probes or filesystem inspection in this task.
+
+- [ ] T086 Add reusable TTS preview synthesis service and cache
+Milestone: M008
+Epic: E019
+Risk: high
+Implementation files: `backend/app/tts/preview.py`, `backend/app/tts/__init__.py`
+Test files: `backend/tests/unit/test_t086.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t086.py`
+Final PR review required: yes
+Goal: Generate short validated voice previews through the same provider configuration and synthesis path used by production, with deterministic identity, controlled storage and single-flight cache behavior.
+Dependencies: T085
+Acceptance criteria: A reusable application service accepts provider, model, voice, language, tempo, text, optional approved `referenceAudioArtifactId` and validated synthesis settings; text is whitespace-normalized, rejected when empty and rejected rather than truncated above 400 characters; catalog selection, source language, usage policy, preview support and reference requirements are validated before provider composition or model loading; the service creates the equivalent existing `ProviderConfig` and voice configuration, composes through `build_tts_provider`, obtains effective synthesis identity, calls `TTSProvider.synthesize`, validates PCM WAV output with existing validation, and applies tempo through existing provider-neutral post-processing without invoking `tts_smoke.py`; an injected artifact resolver converts only approved opaque reference-audio ids to controlled runtime inputs and contributes a checksum to identity without persisting or returning a private path; cache identity deterministically includes provider/model/voice/language, normalized text, effective synthesis settings and reference checksum, while final preview identity separately includes tempo and post-processing version; changing text, provider, model, voice, language, relevant settings, reference content or tempo changes the appropriate identity; a per-identity single-flight lock with an inside-lock cache recheck prevents duplicate concurrent synthesis; cache hits validate manifest and WAV integrity, and corrupt or incomplete entries are regenerated safely; preview manifests and WAV files are stored only under an injected ignored runtime root such as `.runtime/tts-previews`, use relative controlled names and remain separate from production narration chunk caches; returned metadata contains opaque preview id, duration, checksum, selection, tempo and cache status but no absolute path.
+Test requirements: Use fake provider factories, generated PCM WAV fixtures, an in-process fake tempo processor, a fake approved-artifact resolver and temporary storage only. Cover empty/over-limit text, normalization, catalog validation, missing reference, reference checksum, identity changes, cache hit, corrupt cache, concurrent identical calls, single synthesis, WAV validation, tempo identity, path redaction and preview/production-cache namespace separation without real models, network, GPU or FFmpeg.
+Parallelizable: no
+Notes: Preview text and output artifact are preview-only values; do not treat tempo as native provider capability or reuse a preview WAV as a production narration chunk.
+
+- [ ] T087 Expose preview HTTP API and audio delivery
+Milestone: M008
+Epic: E019
+Risk: high
+Implementation files: `backend/app/api/main.py`, `backend/app/api/dependencies.py`, `backend/app/api/routes/tts.py`, `backend/app/api/schemas.py`
+Test files: `backend/tests/integration/test_t087.py`
+Validation commands: `python -m pytest backend/tests/integration/test_t087.py`
+Final PR review required: yes
+Goal: Create cached previews and deliver their WAV bytes through opaque identifiers without accepting or leaking filesystem paths.
+Dependencies: T086
+Acceptance criteria: `POST /api/v1/tts/previews` accepts a strict camelCase schema containing provider, model, voice, language, tempo, text, optional `referenceAudioArtifactId` and optional synthesis settings; unknown fields, client-supplied path fields and unsupported settings are rejected; the response contains `previewId`, a relative `audioUrl`, provider, model, voice, language, tempo, durationSeconds, checksum and cached status and never contains a runtime path; repeated identical requests return the same preview id and set cached truthfully; changes to text, voice or tempo produce the expected distinct preview identity; `GET /api/v1/tts/previews/{preview_id}/audio` resolves only a known validated preview record and returns `audio/wav`; unknown or syntactically invalid identifiers return 404 without probing arbitrary files; traversal strings, encoded traversal and absolute path forms cannot escape the preview store; catalog-selection, language, usage-policy, text-limit and missing-reference errors map to stable 4xx responses while provider/runtime failures do not leak internals; API dependencies support deterministic fake service injection and tests execute no real provider, model, network, GPU or FFmpeg process.
+Test requirements: Add TestClient coverage for preview creation, cached repeat, changed text, changed voice, tempo variation, WAV body and content type, strict schema, invalid catalog selection, unsupported language/policy, empty/over-limit text, missing reference audio, unknown id, raw and encoded traversal, path redaction and fake-service-only execution.
+Parallelizable: no
+Notes: The audio route takes an opaque preview id, never a storage key or user path. Keep generated WAV files ignored and outside the repository.
+
+## Phase 31: Workflow selection integration
+
+- [ ] T088 Map catalog selections to WorkflowConfig
+Milestone: M008
+Epic: E020
+Risk: high
+Implementation files: `backend/app/tts/selection.py`, `backend/app/tts/preview.py`, `backend/app/tts/__init__.py`, `backend/app/domain/workflow_config.py`, `backend/app/providers/tts_settings.py`, `backend/app/providers/tts_factory.py`, `backend/app/api/schemas.py`, `backend/app/api/routes/workflow_configs.py`
+Test files: `backend/tests/unit/test_t088.py`, `backend/tests/unit/test_workflow_config_validation.py`, `backend/tests/unit/test_t047_api_schema_sync.py`
+Validation commands: `python -m pytest backend/tests/unit/test_t088.py backend/tests/unit/test_workflow_config_validation.py backend/tests/unit/test_t047_api_schema_sync.py`
+Final PR review required: yes
+Goal: Define and enforce one canonical translation from a provider-neutral catalog selection into the existing `WorkflowConfig.provider_config` and `WorkflowConfig.voice_config` fields.
+Dependencies: T087
+Acceptance criteria: A provider-neutral selection input is validated against the catalog and mapped without importing or naming concrete Python provider classes; no second persisted TTS selection configuration model is added; preview synthesis is refactored to consume this same mapper rather than retaining a parallel selection translation; the canonical output stores the provider under `providerConfig.tts` with existing `providerName`, enabled and settings semantics and stores voice id/mode plus `postProcessing.tempo` under `voiceConfig`; `WorkflowConfig.language` remains the only source-language field and must be supported by the selected provider/model/voice; Chatterbox builtin maps to provider `chatterbox_v3`, model variant `v3` and builtin voice mode without reference audio; Chatterbox reference requires an approved opaque reference-audio artifact id and metadata; Piper maps the selected curated model id to existing `model_key` semantics and preserves its distinct catalog voice id/mode; XTTS remains evaluation-only and is rejected under production workflow policy before provider construction or model loading; only settings declared by the selected catalog item are accepted, API camelCase values normalize into existing internal `TTSSettings`, and unknown or stale provider/model/voice ids fail; tempo is validated and preserved only as provider-neutral post-processing and is never translated to native speaking-rate settings; workflow creation validates catalog compatibility, reference requirements and usage policy while preserving backward-compatible mock workflow configurations; schema serialization round-trips the exact effective selection without absolute paths or secrets.
+Test requirements: Add Chatterbox builtin mapping, Chatterbox reference requirement/artifact-id, Piper model/voice mapping, evaluation-only production rejection, unsupported language, stale ids, foreign setting rejection, tempo preservation, backward-compatible mock configuration, camelCase request/domain/response round-trip and no-model-load tests.
+Parallelizable: no
+Notes: The API selection schema may be a transient command DTO shared with preview validation, but persisted state remains `providerConfig`, `voiceConfig` and top-level `language` only.
+
+- [ ] T089 Add end-to-end TTS selection acceptance
+Milestone: M008
+Epic: E020
+Risk: high
+Implementation files: `docs/tts/TTS_SELECTION_API.md`, `docs/INDEX.md`
+Test files: `backend/tests/integration/test_t089.py`, `backend/tests/static/test_t089.py`
+Validation commands: `python -m pytest backend/tests/integration/test_t089.py backend/tests/static/test_t089.py`
+Final PR review required: yes
+Goal: Prove and document the complete backend path a future UI will use from catalog discovery through preview playback, workflow persistence and production voiceover execution.
+Dependencies: T088
+Acceptance criteria: One offline acceptance scenario calls `GET /api/v1/tts/catalog`, chooses a provider/model/voice, calls `POST /api/v1/tts/previews`, retrieves playable PCM WAV from the returned audio URL, persists the canonical selection through the existing WorkflowConfig API and executes `VoiceoverModule`; preview and production effective synthesis identity agree on provider, model, voice, language and relevant synthesis settings, excluding explicitly preview-only text, cache and output-artifact values; tempo is applied through provider-neutral post-processing in both paths and is absent from native speaking-rate capability; repeated preview requests prove deterministic cache reuse; preview cache records and production narration chunk caches use separate roots, keys and artifacts; deterministic fake Chatterbox-, Piper- and XTTS-shaped runtimes cover production/evaluation policy without optional imports, model loading, network, GPU or real provider execution; static assertions prove `CoreWorkflowEngine` and `VoiceoverModule` contain no concrete provider selection branch and the production catalog contains no MOSS/experimental registration; `docs/tts/TTS_SELECTION_API.md` documents catalog fields and filters, preview request/response and audio retrieval, error behavior, reference-audio artifact handling, canonical `providerConfig`/`voiceConfig` mapping, tempo semantics, cache boundaries and the future UI sequence; `docs/INDEX.md` links the new contract.
+Test requirements: Add full TestClient-to-domain-to-module acceptance with injected fake providers and temporary stores, effective-identity parity, deterministic preview cache, independent production cache, tempo separation, evaluation-policy rejection, no-runtime/network guards, architecture static guards and documentation-link/contract tests.
+Parallelizable: no
+Notes: This task adds acceptance evidence and documentation only; do not add a UI, provider-specific workflow branch, real model smoke run, committed WAV, deployment step or provider download.
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW TASKS EXTENSION END -->

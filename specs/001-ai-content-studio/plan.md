@@ -428,3 +428,152 @@ When the corresponding source artifacts exist, the YouTube-ready bundle contains
 - automatic publish, merge or deployment without human approval.
 
 <!-- M007 ENGLISH-FIRST YOUTUBE PRODUCTION PLAN EXTENSION END -->
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW PLAN EXTENSION START -->
+
+## M008 TTS Selection & Voice Preview
+
+M008 prepares the backend boundary needed by a future TTS-selection UI. It extends the existing TTS provider system with deterministic discovery metadata, a reusable cached preview service and one canonical workflow-selection mapping. It does not introduce a UI, a second provider registry, a second persisted selection model or provider-specific orchestration.
+
+No new ADR is required. The milestone applies the provider abstraction and workflow configuration decisions already recorded by the constitution and `docs/decisions/0001-modular-workflow-engine.md`; it does not reverse or add a competing architectural boundary.
+
+### Delivery order
+
+1. E018 defines provider-neutral catalog contracts and adapts existing Chatterbox, Piper and XTTS metadata without loading optional runtimes.
+2. E019 exposes the filtered catalog, adds reusable preview synthesis and cache services, and delivers preview WAV audio through opaque identifiers.
+3. E020 maps the same selection into the existing workflow configuration fields and proves preview-to-production identity parity through `VoiceoverModule`.
+
+The task dependency chain is intentionally linear: T083 -> T084 -> T085 -> T086 -> T087 -> T088 -> T089.
+
+### Architecture boundaries
+
+- `backend/app/tts/catalog.py` owns immutable provider-neutral provider/model/voice descriptors, selection lookup and deterministic filtering/serialization.
+- `backend/app/providers/tts_catalog.py` adapts existing provider capabilities and the curated Piper catalog into those descriptors through a small registration interface. It must not instantiate concrete TTS providers or import optional runtime packages.
+- `backend/app/tts/preview.py` owns preview request normalization, catalog validation, provider composition, effective identity, single-flight cache behavior, WAV validation, tempo post-processing and controlled runtime persistence.
+- `backend/app/tts/selection.py` owns the canonical translation from a catalog selection into the existing `providerConfig.tts` and `voiceConfig` payloads. The translation is an application boundary, not a second persisted configuration model.
+- `ProviderConfig`, `TTSSettings`, `build_tts_provider`, `ProviderRegistry` and `TTSProvider` remain the only provider composition path for both preview and production.
+- `WorkflowConfig.language` remains the source content and narration language. The selection mapper validates it against catalog metadata but does not duplicate or replace it.
+- Tempo remains `voiceConfig.postProcessing.tempo` and is applied by the existing provider-neutral WAV post-processing service. It is never advertised as native speaking-rate capability.
+- Approved reference audio crosses the API as `referenceAudioArtifactId`. Application code resolves that opaque identifier inside controlled artifact/runtime storage and supplies any runtime path only behind the API boundary.
+- Preview outputs live under a dedicated ignored `.runtime/tts-previews/` namespace. Production chunk caches and preview caches have separate namespaces and manifests.
+- `CoreWorkflowEngine` and `VoiceoverModule` continue to depend only on provider-neutral configuration and `TTSProvider`; neither may branch on Chatterbox, Piper or XTTS.
+
+### Catalog model
+
+The catalog keeps provider, model and voice identity explicit:
+
+- Provider descriptors contain `id`, `displayName`, `usagePolicy`, `supportedLanguages`, provider-level `capabilities` and ordered `models`.
+- Model descriptors contain `id`, `displayName`, `providerId`, `supportedLanguages`, ordered `voices`, and public runtime or asset requirement flags. They contain no local asset paths.
+- Voice descriptors contain `id`, `displayName`, `voiceMode`, `supportedLanguages`, `previewSupported`, `referenceAudioRequired` and optional JSON-safe public metadata.
+- Provider IDs are globally unique; model IDs are unique within a provider; voice IDs are unique within a provider/model pair. The full selection key is `(providerId, modelId, voiceId)`.
+
+Initial mapping:
+
+- Chatterbox: provider `chatterbox_v3`, model `v3`, voices `builtin` and `reference`; only `reference` requires approved reference audio.
+- Piper: provider `piper`; each curated `piper_catalog.py` provider key is a model ID and exposes its curated speaker name as the voice ID with `voiceMode=catalog`. The model key remains the runtime asset selector.
+- XTTS: provider `xtts_v2_eval`, model `xtts_v2`, voice `reference`, `usagePolicy=evaluation_only`, with approved reference audio required.
+
+Experimental providers under `experiments/tts_local`, including MOSS, are not registration sources and cannot appear by directory discovery.
+
+### Proposed HTTP contract
+
+`GET /api/v1/tts/catalog`
+
+- Optional query parameters: `language` and camelCase `usagePolicy`.
+- Returns `{ "providers": [...] }` using the descriptor fields above and deterministic ordering.
+- Filtering removes incompatible nested voices/models and then empty models/providers; it does not mutate the registered catalog.
+
+`POST /api/v1/tts/previews`
+
+```json
+{
+  "provider": "chatterbox_v3",
+  "model": "v3",
+  "voice": "builtin",
+  "language": "en",
+  "tempo": 0.92,
+  "text": "Welcome to today's video.",
+  "referenceAudioArtifactId": null,
+  "synthesisSettings": {}
+}
+```
+
+The request rejects unknown fields, empty text, text over 400 characters, invalid catalog tuples, unsupported languages or usage policies, unapproved/missing required reference audio, unsupported synthesis settings and client-supplied filesystem paths.
+
+```json
+{
+  "previewId": "<opaque-content-id>",
+  "audioUrl": "/api/v1/tts/previews/<opaque-content-id>/audio",
+  "provider": "chatterbox_v3",
+  "model": "v3",
+  "voice": "builtin",
+  "language": "en",
+  "tempo": 0.92,
+  "durationSeconds": 4.2,
+  "checksum": "<sha256>",
+  "cached": false
+}
+```
+
+`GET /api/v1/tts/previews/{preview_id}/audio`
+
+- Returns validated `audio/wav` bytes for a known preview ID.
+- Returns 404 for unknown IDs and rejects identifiers that do not match the opaque-ID format.
+- Resolves only preview records inside the dedicated preview store; it never accepts a path or returns a storage location.
+
+### Canonical workflow selection mapping
+
+The API selection DTO is reusable input, not persisted alongside the workflow. The mapper emits only existing workflow fields:
+
+```json
+{
+  "language": "en",
+  "providerConfig": {
+    "tts": {
+      "providerName": "chatterbox_v3",
+      "enabled": true,
+      "settings": {
+        "modelVariant": "v3",
+        "usagePolicy": "production"
+      }
+    }
+  },
+  "voiceConfig": {
+    "voiceId": "builtin",
+    "voiceMode": "builtin",
+    "postProcessing": {
+      "tempo": 0.92
+    }
+  }
+}
+```
+
+Provider-specific fields are included only when required: Piper persists its curated `modelKey`; reference modes persist `referenceAudioArtifactId` plus approved reference metadata. The mapper normalizes camelCase API values into the internal settings expected by `TTSSettings` and validates the resulting `ProviderConfig` before persistence. A production workflow cannot persist the evaluation-only XTTS entry.
+
+### Preview cache and identity
+
+The preview service derives a normalized synthesis identity from the selected provider before synthesis. The cache key includes the catalog tuple, source language, normalized preview text, effective provider synthesis settings and approved reference-audio checksum. Final preview identity additionally includes validated tempo and post-processing version. This keeps tempo out of the native model identity while ensuring a different final tempo produces a different playable preview.
+
+One lock or future-equivalent single-flight primitive is keyed by the final preview identity. Inside the lock the service rechecks the manifest before synthesis. A cache hit validates the stored manifest and WAV before returning it; corrupt or incomplete entries are regenerated without trusting a stale completed record.
+
+### Testing strategy
+
+- Unit tests cover descriptor validation, deterministic JSON serialization, unique scoped IDs, adapter mapping, catalog lookup/filtering, selection mapping and cache identity.
+- API tests use FastAPI's test client and injected services to cover camelCase schemas, filters, preview creation, cache hits, WAV delivery, 404 behavior and traversal-resistant identifiers.
+- Preview tests inject fake provider factories, an in-process tempo processor and temporary controlled storage; they do not invoke FFmpeg or optional runtimes.
+- Acceptance tests use deterministic fake Chatterbox/Piper/XTTS-shaped providers and compare preview and production effective identity while keeping preview and chunk caches separate.
+- Static assertions retain the no-concrete-provider-branch boundary in `CoreWorkflowEngine` and `VoiceoverModule` and keep experimental providers out of the production catalog.
+
+### Out of scope
+
+- implementing a frontend or UI component,
+- adding provider or model download endpoints,
+- accepting arbitrary local paths or raw secrets from API clients,
+- exposing experimental MOSS or directory-discovered providers,
+- invoking `tts_smoke.py` from the application,
+- using preview audio as a production narration chunk,
+- adding automatic provider fallback or recommendation ranking,
+- changing completed M007 tasks or workstream history,
+- loading real models, CUDA or network resources in default tests.
+
+<!-- M008 TTS SELECTION AND VOICE PREVIEW PLAN EXTENSION END -->
