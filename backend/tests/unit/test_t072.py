@@ -246,7 +246,7 @@ def test_factory_composes_supported_providers_through_the_registry(
         assert seen[provider_name].received_settings.usage_policy == "evaluation_only"
 
 
-def test_factory_rejects_xtts_production_policy_before_registry_registration(
+def test_factory_rejects_xtts_production_policy_before_construction_or_registration(
 ) -> None:
     registry = ProviderRegistry()
     seen: dict[str, SelectedProvider] = {}
@@ -269,7 +269,7 @@ def test_factory_rejects_xtts_production_policy_before_registry_registration(
             )
 
     assert registry.snapshot() == ()
-    assert "xtts_v2_eval" in seen
+    assert "xtts_v2_eval" not in seen
 
 
 def test_smoke_uses_the_same_factory_path_as_direct_composition(monkeypatch: pytest.MonkeyPatch) -> None:

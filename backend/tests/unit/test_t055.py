@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from app.providers.tts_settings import TTSSettingsError
 from app.tooling import tts_smoke
 
 
@@ -111,3 +112,98 @@ def test_help_does_not_import_optional_runtime(monkeypatch, capsys):
         tts_smoke.main(["--help"])
     assert "chatterbox" not in sys.modules
     assert "--provider" in capsys.readouterr().out
+
+
+def _capture_smoke_provider_settings(monkeypatch, args):
+    captured = {}
+
+    def capture(provider_config, **_kwargs):
+        captured.update(provider_config.settings)
+        return object()
+
+    monkeypatch.setattr(tts_smoke, "build_tts_provider", capture)
+    tts_smoke._create_provider(args)
+    return captured
+
+
+def test_smoke_default_mock_forwards_only_common_settings(tmp_path, monkeypatch):
+    args = tts_smoke.build_parser().parse_args(
+        ["--text", "hello", "--output", str(tmp_path / "speech.wav")]
+    )
+
+    captured = _capture_smoke_provider_settings(monkeypatch, args)
+
+    assert captured == {
+        "provider": "mock",
+        "usage_policy": "production",
+        "device": "cpu",
+        "language_id": "pl",
+    }
+    assert not set(tts_smoke._KNOBS).intersection(captured)
+    assert not {"model_key", "model_path", *tts_smoke._PIPER_KNOBS}.intersection(captured)
+
+
+def test_smoke_selects_only_chatterbox_or_piper_settings(tmp_path, monkeypatch):
+    chatterbox_args = tts_smoke.build_parser().parse_args(
+        [
+            "--provider", "chatterbox_v3",
+            "--text", "hello",
+            "--output", str(tmp_path / "chatterbox.wav"),
+            "--model-variant", "v3",
+            "--cfg-weight", "0.25",
+            "--temperature", "0.7",
+        ]
+    )
+    chatterbox = _capture_smoke_provider_settings(monkeypatch, chatterbox_args)
+    assert chatterbox["model_variant"] == "v3"
+    assert chatterbox["cfg_weight"] == 0.25
+    assert chatterbox["temperature"] == 0.7
+    assert not {"model_key", "model_path", *tts_smoke._PIPER_KNOBS}.intersection(chatterbox)
+
+    piper_args = tts_smoke.build_parser().parse_args(
+        [
+            "--provider", "piper",
+            "--text", "cześć",
+            "--output", str(tmp_path / "piper.wav"),
+            "--model-key", "pl_PL-gosia-medium",
+            "--length-scale", "1.25",
+            "--volume", "0.75",
+            "--noise-scale", "0.2",
+            "--noise-w-scale", "0.9",
+        ]
+    )
+    piper = _capture_smoke_provider_settings(monkeypatch, piper_args)
+    assert piper["model_key"] == "pl_PL-gosia-medium"
+    assert piper["length_scale"] == 1.25
+    assert piper["volume"] == 0.75
+    assert piper["noise_scale"] == 0.2
+    assert piper["noise_w_scale"] == 0.9
+    assert not {"audio_prompt_path", "model_variant", *tts_smoke._KNOBS}.intersection(piper)
+
+
+@pytest.mark.parametrize(
+    ("provider", "flag", "value", "message"),
+    [
+        ("mock", "--length-scale", "1.0", "only supported by Piper"),
+        ("chatterbox_v3", "--length-scale", "1.0", "only supported by Piper"),
+        ("piper", "--cfg-weight", "0.25", "not supported by Piper"),
+    ],
+)
+def test_smoke_rejects_explicit_incompatible_provider_flags(
+    tmp_path,
+    provider,
+    flag,
+    value,
+    message,
+):
+    args = tts_smoke.build_parser().parse_args(
+        [
+            "--provider", provider,
+            "--text", "hello",
+            "--output", str(tmp_path / "speech.wav"),
+            flag, value,
+        ]
+    )
+
+    with pytest.raises(TTSSettingsError, match=message):
+        tts_smoke._create_provider(args)

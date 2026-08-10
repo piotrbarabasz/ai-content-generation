@@ -88,6 +88,12 @@ _PROVIDER_FIELDS = {
         {"model_variant", "audio_prompt_path", "reference_audio_path", "approved_label"}
     ),
 }
+_PROVIDER_DISPLAY_NAMES = {
+    "mock": "mock",
+    "chatterbox_v3": "Chatterbox V3",
+    "piper": "Piper",
+    "xtts_v2_eval": "XTTS v2 evaluation",
+}
 _NUMERIC_FIELDS = frozenset(
     {
         "exaggeration",
@@ -238,12 +244,10 @@ class TTSSettings:
         configured_provider = normalized.get("provider", provider)
         if configured_provider != provider:
             raise TTSSettingsError("TTS settings provider must match ProviderConfig provider_name.")
-        supported = _COMMON_PROVIDER_FIELDS | _PROVIDER_FIELDS.get(str(configured_provider), frozenset())
+        supported = supported_settings_for_provider(str(configured_provider))
         foreign = sorted(set(normalized) - supported)
         if foreign:
-            raise TTSSettingsError(
-                f"Unsupported settings for TTS provider '{configured_provider}': {', '.join(foreign)}."
-            )
+            raise TTSSettingsError(_unsupported_settings_message(str(configured_provider), foreign))
         return cls(
             provider=configured_provider,
             **{key: value for key, value in normalized.items() if key != "provider"},
@@ -266,6 +270,40 @@ class TTSSettings:
                 raise TTSSettingsError(f"Duplicate TTS provider setting: {key}.")
             normalized[key] = value
         return normalized
+
+
+def supported_settings_for_provider(provider: str) -> frozenset[str]:
+    """Return canonical setting names accepted by one provider."""
+
+    if not isinstance(provider, str) or provider not in _PROVIDERS:
+        raise TTSSettingsError(
+            "Unsupported TTS provider; use 'mock', 'chatterbox_v3', 'piper' or 'xtts_v2_eval'."
+        )
+    return _COMMON_PROVIDER_FIELDS | _PROVIDER_FIELDS[provider]
+
+
+def _unsupported_settings_message(provider: str, fields: list[str]) -> str:
+    summary = f"Unsupported settings for TTS provider '{provider}': {', '.join(fields)}."
+    details: list[str] = []
+    for field_name in fields:
+        owners = tuple(
+            owner
+            for owner, supported_fields in _PROVIDER_FIELDS.items()
+            if field_name in supported_fields
+        )
+        if len(owners) == 1:
+            details.append(
+                f"TTS setting '{field_name}' is only supported by "
+                f"{_PROVIDER_DISPLAY_NAMES[owners[0]]}."
+            )
+        elif owners:
+            owner_names = ", ".join(_PROVIDER_DISPLAY_NAMES[owner] for owner in owners)
+            details.append(
+                f"TTS setting '{field_name}' is not supported by "
+                f"{_PROVIDER_DISPLAY_NAMES.get(provider, provider)}; supported providers: "
+                f"{owner_names}."
+            )
+    return " ".join((summary, *details))
 
 
 def _validate_numeric_value(field_name: str, value: object) -> None:
