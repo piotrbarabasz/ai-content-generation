@@ -221,6 +221,19 @@ class ChatterboxV3Provider(TTSProvider):
             usage_policy="production",
         )
 
+    @classmethod
+    def catalog_capabilities(cls) -> TTSCapabilities:
+        """Return the production catalog capabilities without constructing a provider."""
+
+        return TTSCapabilities(
+            provider_name="chatterbox_v3",
+            supported_languages=("en", "pl"),
+            voice_modes=("builtin", "reference"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+
     def _get_backend(self) -> Any:
         normalized_device = self.device.lower()
         if not (normalized_device == "cpu" or normalized_device.startswith("cuda")):

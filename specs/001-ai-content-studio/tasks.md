@@ -1323,7 +1323,7 @@ Test requirements: Add deterministic serialization and ordering, JSON round-trip
 Parallelizable: no
 Notes: Keep these contracts in the existing provider-neutral `backend/app/tts` service package. Do not add a second ProviderRegistry, instantiate a concrete provider or collapse provider, model and voice into one identifier.
 
-- [ ] T084 Add catalog adapters for existing TTS providers
+- [X] T084 Add catalog adapters for existing TTS providers
 Milestone: M008
 Epic: E018
 Risk: medium

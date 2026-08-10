@@ -293,6 +293,19 @@ class PiperTTSProvider(TTSProvider):
             usage_policy="production",
         )
 
+    @classmethod
+    def catalog_capabilities(cls) -> TTSCapabilities:
+        """Return the production catalog capabilities without constructing a provider."""
+
+        return TTSCapabilities(
+            provider_name="piper",
+            supported_languages=("pl",),
+            voice_modes=("catalog", "local_path"),
+            reference_audio_required=False,
+            speaking_rate_supported=False,
+            usage_policy="production",
+        )
+
     def _effective_language_id(self, voice_config: JsonDict | None) -> str:
         return resolve_language_id(voice_config, default_language_id=self.language_id) or self.language_id
 
