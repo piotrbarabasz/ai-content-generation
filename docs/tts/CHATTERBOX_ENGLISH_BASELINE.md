@@ -5,6 +5,12 @@ baseline. The production adapter already advertises and validates English as
 `language_id=en`; provider selection still goes through `ProviderConfig`,
 `TTSSettings`, `TTSFactory`, and `ProviderRegistry`.
 
+The preferred English narration settings are `language=en` and `tempo=0.92`.
+Tempo is provider-neutral post-processing of the completed WAV, not native
+Chatterbox speaking-rate control. FFmpeg's `atempo` filter preserves pitch
+while slowing playback. `tempo=1.0` skips FFmpeg entirely, and changing tempo
+does not invalidate or regenerate cached raw TTS chunks.
+
 The reproducible one-minute input is
 `backend/tests/fixtures/narrations/story_en_01_1min.txt`. Its word count and
 SHA-256 checksum are recorded in the adjacent `metadata.json`.
@@ -15,7 +21,17 @@ Run this from the repository root after setting up `.venv-tts311`:
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path backend)
-& .\.venv-tts311\Scripts\python.exe -m app.tooling.tts_smoke --provider chatterbox_v3 --input-text-file backend/tests/fixtures/narrations/story_en_01_1min.txt --output .runtime/tts-smoke/chatterbox-en.wav --report .runtime/tts-smoke/chatterbox-en.json --language en --device cuda --overwrite
+
+& .\.venv-tts311\Scripts\python.exe `
+    -m app.tooling.tts_smoke `
+    --provider chatterbox_v3 `
+    --input-text-file backend/tests/fixtures/narrations/story_en_01_1min.txt `
+    --output .runtime/tts-smoke/chatterbox-en-slow.wav `
+    --report .runtime/tts-smoke/chatterbox-en-slow.json `
+    --language en `
+    --device cuda `
+    --tempo 0.92 `
+    --overwrite
 ```
 
 Use `--device cpu` only when that isolated runtime is intentionally configured

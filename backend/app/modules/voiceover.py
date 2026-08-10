@@ -17,6 +17,7 @@ from app.tts.benchmark import build_benchmark_report
 from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
 from app.tts.chunk_synthesis import ResumableChunkSynthesizer
 from app.tts.chunking import NarrationChunkingSettings, chunk_narration
+from app.tts.post_processing import process_pcm_wav_tempo, tempo_from_voice_config
 from app.workflow.execution import ModuleExecutionContext, ModuleResult
 from app.workflow.module import ModuleDefinition
 
@@ -174,7 +175,9 @@ def _provider_voice_config(voice_config: Mapping[str, object]) -> JsonDict:
     return {
         key: value
         for key, value in voice_config.items()
-        if key not in {"resumable_chunking", "resumableChunking"}
+        if key not in {
+            "resumable_chunking", "resumableChunking", "post_processing", "postProcessing"
+        }
     }
 
 
@@ -284,6 +287,7 @@ class VoiceoverModule:
 
         provider_voice_config = _provider_voice_config(voice_config)
         resumable = _resumable_settings(voice_config)
+        tempo = tempo_from_voice_config(voice_config)
         synthesis_manifest_payload: JsonDict | None = None
         benchmark_payload: JsonDict | None = None
         if resumable is None:
@@ -321,7 +325,29 @@ class VoiceoverModule:
                 generation_wall_time_seconds=monotonic() - started,
             ).to_payload()
 
+        postprocess_started = monotonic()
+        post_processing = process_pcm_wav_tempo(audio_bytes, tempo)
+        postprocess_wall_seconds = monotonic() - postprocess_started
+        audio_bytes = post_processing.audio_bytes
+        sample_rate = post_processing.audio_parameters.sample_rate
+        duration_seconds = round(post_processing.output_duration_seconds, 3)
+        post_processing_evidence = post_processing.evidence()
         _validate_wave_bytes(audio_bytes, expected_sample_rate=sample_rate)
+
+        if benchmark_payload is not None:
+            benchmark_payload.update(
+                {
+                    "postprocess_wall_seconds": round(postprocess_wall_seconds, 6),
+                    "source_audio_duration_seconds": round(
+                        post_processing.input_duration_seconds, 6
+                    ),
+                    "final_audio_duration_seconds": round(
+                        post_processing.output_duration_seconds, 6
+                    ),
+                    "tempo": tempo,
+                    "post_processing": post_processing_evidence,
+                }
+            )
 
         source_ref = _optional_text(
             _pick(
@@ -351,6 +377,7 @@ class VoiceoverModule:
             "duration_seconds": duration_seconds,
             "word_count": len(normalized_text.split()),
             "chunk_count": chunk_count,
+            "post_processing": post_processing_evidence,
         }
 
         voiceover_manifest = self._artifact_store.save_artifact(
@@ -368,6 +395,7 @@ class VoiceoverModule:
                 "audio_format": "wav",
                 "text_reference_id": text_reference_id,
                 "voice_config": voice_config,
+                "post_processing": post_processing_evidence,
             },
         )
 
@@ -378,6 +406,7 @@ class VoiceoverModule:
             "duration_seconds": duration_seconds,
             "word_timings": _word_timings(normalized_text, duration_seconds),
             "voice_config": voice_config,
+            "post_processing": post_processing_evidence,
             "provider": self._tts_provider.provider_name,
             "source_ref": source_ref,
             "sample_rate": sample_rate,

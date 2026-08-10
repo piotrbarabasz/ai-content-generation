@@ -67,7 +67,7 @@ def test_long_form_workflow_preset_payload_matches_the_registry_default() -> Non
         },
         "renderConfig": {},
         "captionConfig": {},
-        "voiceConfig": {},
+        "voiceConfig": {"postProcessing": {"tempo": 0.92}},
         "assetConfig": {},
         "approvalPolicy": {},
         "exportConfig": {

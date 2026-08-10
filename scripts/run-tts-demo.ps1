@@ -1,6 +1,8 @@
 param(
     [ValidateSet('tts311')]
     [string]$Profile = 'tts311',
+    [string]$Language = 'pl',
+    [double]$Tempo = 1.0,
     [string]$Text,
     [string]$Output
 )
@@ -44,7 +46,8 @@ Write-Host ''
     --provider chatterbox_v3 `
     --text $Text `
     --output $OutputPath `
-    --language pl `
+    --language $Language `
+    --tempo $Tempo `
     --device cuda `
     --overwrite
 
