@@ -1308,7 +1308,7 @@ Notes: Auto-dubbing availability and acceptance are manual handoff facts in this
 
 ## Phase 29: TTS catalog and discovery
 
-- [ ] T083 Add provider-neutral TTS catalog domain contracts
+- [X] T083 Add provider-neutral TTS catalog domain contracts
 Milestone: M008
 Epic: E018
 Risk: medium
