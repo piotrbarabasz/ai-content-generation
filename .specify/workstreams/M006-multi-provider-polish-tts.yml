@@ -1,6 +1,6 @@
 id: M006
 title: Multi-Provider Polish TTS
-status: planned
+status: completed
 goal: Add selectable local Polish TTS providers for Chatterbox Multilingual V3, Piper and an evaluation-only XTTS-v2 integration while preserving provider-neutral orchestration, isolated optional runtimes, truthful synthesis identity, offline CI and explicit usage-policy boundaries.
 epics:
   - E011

@@ -25,6 +25,18 @@
 - `specs/001-ai-content-studio/tasks.md`
 - `specs/001-ai-content-studio/quickstart.md`
 
+## Planned Workstream
+
+- `.specify/workstreams/M008-tts-selection-voice-preview.yml`
+- `.specify/workstreams/E018-tts-catalog-discovery.yml`
+- `.specify/workstreams/E019-voice-preview.yml`
+- `.specify/workstreams/E020-workflow-selection-integration.yml`
+
+## Architecture Decisions
+
+- `docs/decisions/0001-modular-workflow-engine.md`
+- `docs/decisions/0002-english-first-localization-boundary.md`
+
 <!-- M004 TTS DOCS INDEX START -->
 
 ## TTS
@@ -33,6 +45,7 @@
 - `docs/tts/CHATTERBOX_MANUAL_SPIKE.md`
 - `docs/tts/CHATTERBOX_SETUP.md`
 - `docs/tts/CHATTERBOX_SMOKE.md`
+- `docs/tts/CHATTERBOX_ENGLISH_BASELINE.md`
 
 <!-- M004 TTS DOCS INDEX END -->
 
@@ -47,3 +60,7 @@
 - `docs/tts/PROVIDER_COMPARISON.md`
 
 <!-- M006 MULTI-PROVIDER TTS DOCS INDEX END -->
+
+## Publishing
+
+- `docs/publishing/YOUTUBE_HANDOFF.md`

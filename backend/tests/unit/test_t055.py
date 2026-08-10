@@ -23,6 +23,27 @@ def test_mock_smoke_writes_valid_wav_and_report(tmp_path):
     assert report["frame_count"] > 0
     assert report["duration_seconds"] > 0
     assert report["voice"] == "builtin"
+    assert report["tempo"] == 1.0
+    assert report["post_processing"]["processor"] == "none"
+
+
+def test_tempo_is_parsed_processed_once_and_reported(tmp_path, monkeypatch):
+    output = tmp_path / "speech.wav"
+    calls = []
+    original = tts_smoke.process_pcm_wav_tempo
+
+    def capture(audio_bytes, tempo):
+        calls.append(tempo)
+        return original(audio_bytes, 1.0)
+
+    monkeypatch.setattr(tts_smoke, "process_pcm_wav_tempo", capture)
+    assert tts_smoke.main(
+        ["--text", "slow narration", "--output", str(output), "--tempo", "0.92"]
+    ) == 0
+    report = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+    assert calls == [0.92]
+    assert report["tempo"] == 0.92
+    assert report["post_processing"]["processor"] == "none"
 
 
 def test_input_text_file_and_settings_are_forwarded(tmp_path, monkeypatch):

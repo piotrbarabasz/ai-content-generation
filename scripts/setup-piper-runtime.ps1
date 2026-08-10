@@ -69,8 +69,18 @@ else:
     }, sort_keys=True))
 '@
 
-    $output = & $Path -c $probe $Key 2>&1
-    if ($LASTEXITCODE -ne 0 -or -not $output) {
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $pythonArguments = @('-', $Key)
+        $output = $probe | & $Path @pythonArguments 2>&1
+        $pythonExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if ($pythonExitCode -ne 0 -or -not $output) {
         Fail "Failed to resolve Piper catalog metadata:`n$($output | Out-String)"
     }
 

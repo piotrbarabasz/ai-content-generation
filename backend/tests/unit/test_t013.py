@@ -161,10 +161,15 @@ def test_workflow_preset_registry_lists_and_builds_payload_defaults() -> None:
         },
         "renderConfig": {},
         "captionConfig": {},
-        "voiceConfig": {},
+        "voiceConfig": {"postProcessing": {"tempo": 0.92}},
         "assetConfig": {},
         "approvalPolicy": {},
-        "exportConfig": {},
+        "exportConfig": {
+            "localizationStrategy": "platform_auto_dub",
+            "localizationTargets": ["pl"],
+            "manualAcceptanceRequired": True,
+            "customAudioFallbackEnabled": True,
+        },
     }
 
 

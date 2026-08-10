@@ -162,8 +162,11 @@ def test_captions_module_generates_caption_track_and_json_artifact() -> None:
         assert captions["transcription_provider"] == "mock"
         assert captions["scene_plan"]["scene_plan_id"] == scene_result.output["scene_plan"]["scene_plan_id"]
         assert captions["captions_json"][0]["text"].startswith("Captions for")
-        assert captions["captions_srt"].startswith("1\n00:00:00,000 --> 00:00:02,000\n")
+        assert captions["captions_srt"].startswith(
+            "1\r\n00:00:00,000 --> 00:00:02,000\r\n"
+        )
         assert caption_track["caption_storage_key"].endswith("captions.json")
+        assert caption_track["srt_storage_key"].endswith("captions.en.srt")
         assert artifact["name"] == "captions.json"
         assert artifact["artifact_type"] == "captions"
         assert {manifest.name for manifest in stored_manifests} == {
@@ -175,6 +178,7 @@ def test_captions_module_generates_caption_track_and_json_artifact() -> None:
             "voiceover.wav",
             "speech_timeline.json",
             "captions.json",
+            "captions.en.srt",
         }
         stored_payload = json.loads(store.read_artifact(artifact["storage_key"]).decode("utf-8"))
         assert stored_payload["transcript_ref"].startswith("mock://transcript/")

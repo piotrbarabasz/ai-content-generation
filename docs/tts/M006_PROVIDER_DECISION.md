@@ -94,6 +94,23 @@ xtts_v2_eval / approved reference audio
 
 XTTS is skipped with an actionable reason when no approved reference WAV is supplied.
 
+## Final outcome and product direction
+
+M006 completed the planned production/evaluation integrations and produced enough runtime evidence to make a product decision. It did not establish that Polish must remain the source production language, and the historical implementation details above remain the record of what the milestone delivered.
+
+The final outcome is:
+
+- Chatterbox Multilingual V3 remains the current general production-capable TTS baseline.
+- Piper remains useful for fast, deterministic local narration and previews, but it is not the selected product quality baseline.
+- XTTS-v2 remains evaluation-only under the existing usage policy and is not approved for production selection.
+- MOSS-TTS and the other models under `experiments/tts_local` remain experimental R&D; they are not part of the production provider registry or `TTSFactory`.
+- The project will no longer delay core product development while searching for an ideal Polish local TTS.
+- English is the primary language for source content and production narration.
+- Additional-language localization is delegated to platform capabilities first, initially YouTube automatic dubbing for Polish when available and appropriate.
+- Custom localized narration remains a fallback when platform localization is unavailable, unsuitable or rejected through human review.
+
+This changes the product sequence to English source production, YouTube-ready export, platform localization handoff and only then optional custom localized audio. It does not change the provider-neutral TTS architecture established by M004-M006.
+
 ## Out of scope
 
 - model training or fine-tuning;

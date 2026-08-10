@@ -29,6 +29,10 @@ piper = [
 xtts = [
   "TTS",
 ]
+youtube = [
+  "google-api-python-client>=2.177,<3",
+  "google-auth>=2.40,<3",
+]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}

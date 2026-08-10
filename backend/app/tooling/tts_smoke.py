@@ -19,7 +19,8 @@ from app.providers.piper_tts import PiperTTSProvider
 from app.providers.tts_factory import build_tts_provider
 from app.providers.tts_capabilities import TTSCapabilities
 from app.tts.benchmark import build_benchmark_report
-from app.tts.assembly import WavAssemblyError, inspect_pcm_wav
+from app.tts.assembly import WavAssemblyError, inspect_pcm_wav, persist_pcm_wav_atomically
+from app.tts.post_processing import process_pcm_wav_tempo, validate_tempo
 from app.tts.manifest import ChunkManifest, SynthesisManifest, sanitize_synthesis_identity
 from app.providers.tts_settings import TTSSettings
 from app.providers.xtts_v2 import XTTSV2EvalProvider
@@ -104,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", type=Path, help="Destination JSON report (default: next to WAV).")
     parser.add_argument("--language", default="pl", help="Chatterbox language id (default: pl).")
     parser.add_argument("--device", default="cpu", help="Chatterbox device (default: cpu).")
+    parser.add_argument("--tempo", type=float, default=1.0, help="Final WAV tempo (default: 1.0).")
     parser.add_argument("--audio-prompt", type=Path, help="Optional local speaker-reference WAV.")
     parser.add_argument("--model-variant", choices=("v3", "xtts_v2"), default="v3")
     parser.add_argument("--model-key", help="Piper catalog voice key.")
@@ -290,6 +292,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.audio_prompt is not None:
         voice_config["audio_prompt_path"] = str(args.audio_prompt)
     voice_config.update({name: getattr(args, name) for name in _KNOBS if getattr(args, name) is not None})
+    tempo = validate_tempo(args.tempo)
     started = time.perf_counter()
     provider = _create_provider(args)
     effective_identity = _effective_synthesis_identity(
@@ -304,10 +307,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     generation_seconds = time.perf_counter() - started
     if result.audio_format != "wav":
         raise TTSSmokeError("Provider did not return WAV audio.")
-    args.output.write_bytes(result.audio_bytes)
+    postprocess_started = time.perf_counter()
+    processed = process_pcm_wav_tempo(result.audio_bytes, tempo)
+    postprocess_seconds = time.perf_counter() - postprocess_started
+    persist_pcm_wav_atomically(processed.audio_bytes, args.output)
     parameters = _validate_wav(args.output)
     duration_seconds = parameters.duration_seconds
-    checksum = hashlib.sha256(result.audio_bytes).hexdigest()
+    checksum = hashlib.sha256(processed.audio_bytes).hexdigest()
     chunk = ChunkManifest("smoke-0001", 0, "completed", "smoke", "smoke", "smoke", checksum, duration_seconds, parameters)
     manifest = SynthesisManifest(
         config_hash="smoke", chunks={chunk.chunk_id: chunk}, final_status="completed",
@@ -325,6 +331,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # Keep the legacy field aligned with the effective identity-backed
         # benchmark model; CLI selection must not overwrite reported identity.
         "model_variant": report["model"], "generation_seconds": report["generation_wall_time_seconds"],
+        "language_id": report["language"],
         "checksum_sha256": checksum, "voice": voice,
         "output_wav": str(args.output),
         "effective_synthesis_identity": sanitize_synthesis_identity(effective_identity),
@@ -334,6 +341,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "compression_type": parameters.compression_type,
         "frame_count": parameters.frame_count,
         "duration_seconds": parameters.duration_seconds,
+        "tempo": tempo,
+        "postprocess_wall_seconds": round(postprocess_seconds, 6),
+        "source_audio_duration_seconds": processed.input_duration_seconds,
+        "final_audio_duration_seconds": processed.output_duration_seconds,
+        "post_processing": processed.evidence(),
     })
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report

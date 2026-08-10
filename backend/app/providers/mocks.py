@@ -13,6 +13,7 @@ from .interfaces import (
     CaptionProvider,
     LLMProvider,
     PublishingProvider,
+    PublishingRequest,
     StorageProvider,
     TTSProvider,
     TranscriptionProvider,
@@ -39,8 +40,19 @@ class MockPublishingProvider(PublishingProvider):
     def __init__(self, provider_name: str = "mock") -> None:
         self.provider_name = provider_name
 
-    def publish(self, export_bundle: JsonDict, target: str) -> JsonDict:
-        normalized_bundle = _coerce_json_dict(export_bundle)
+    def publish(
+        self,
+        export_bundle: PublishingRequest | JsonDict,
+        target: str | None = None,
+    ) -> JsonDict:
+        if isinstance(export_bundle, PublishingRequest):
+            normalized_bundle = dict(export_bundle.handoff)
+            target = export_bundle.target
+            idempotency_key = export_bundle.idempotency_key
+        else:
+            normalized_bundle = _coerce_json_dict(export_bundle)
+            target = str(target or normalized_bundle.get("platform") or "").strip()
+            idempotency_key = str(normalized_bundle.get("idempotencyKey") or "")
         signature = _stable_signature(
             {
                 "provider": self.provider_name,
@@ -55,6 +67,14 @@ class MockPublishingProvider(PublishingProvider):
             "status": "published",
             "publish_ref": f"mock://publish/{_slugify(target)}/{publish_id}",
             "bundle_signature": signature[:12],
+            "idempotency_key": idempotency_key or publish_id,
+            "platform": target,
+            "privacy_status": str(
+                _coerce_json_dict(normalized_bundle.get("metadata") if isinstance(normalized_bundle.get("metadata"), dict) else {}).get("privacyStatus")
+                or "unlisted"
+            ),
+            "caption_upload": {"status": "mocked"},
+            "video_id": publish_id,
         }
 
 

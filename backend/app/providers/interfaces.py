@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from app.domain.enums import ProviderType
@@ -143,5 +145,66 @@ class PublishingProvider(Protocol):
     provider_type: ProviderType
     provider_name: str
 
-    def publish(self, export_bundle: JsonDict, target: str) -> JsonDict:
+    def publish(
+        self,
+        export_bundle: "PublishingRequest | JsonDict",
+        target: str | None = None,
+    ) -> "PublicationResult | JsonDict":
         """Publish an export bundle to a target platform."""
+
+
+@dataclass(frozen=True, slots=True)
+class PublishingRequest:
+    """Typed request containing an approved platform export handoff."""
+
+    handoff: JsonDict
+    target: str
+    idempotency_key: str
+
+    @classmethod
+    def create(
+        cls,
+        handoff: Mapping[str, Any],
+        *,
+        target: str | None = None,
+    ) -> "PublishingRequest":
+        normalized = dict(handoff)
+        effective_target = str(target or normalized.get("platform") or "").strip().lower()
+        if not effective_target:
+            raise ValueError("PublishingRequest target platform is required.")
+        identity = str(normalized.get("idempotencyKey") or "").strip()
+        if not identity:
+            identity = hashlib.sha256(
+                _stable_signature(normalized).encode("utf-8")
+            ).hexdigest()
+        return cls(handoff=normalized, target=effective_target, idempotency_key=identity)
+
+    @property
+    def approved(self) -> bool:
+        return self.handoff.get("approved") is True
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationResult:
+    """Provider-neutral publication result returned by concrete adapters."""
+
+    provider: str
+    platform: str
+    video_id: str
+    publish_ref: str
+    privacy_status: str
+    caption_upload: JsonDict
+    idempotency_key: str
+    status: str = "published"
+
+    def to_payload(self) -> JsonDict:
+        return {
+            "provider": self.provider,
+            "platform": self.platform,
+            "video_id": self.video_id,
+            "publish_ref": self.publish_ref,
+            "privacy_status": self.privacy_status,
+            "caption_upload": dict(self.caption_upload),
+            "idempotency_key": self.idempotency_key,
+            "status": self.status,
+        }

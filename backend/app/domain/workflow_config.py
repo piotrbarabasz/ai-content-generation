@@ -12,6 +12,7 @@ from app.domain.enums import (
     TargetPlatform,
     WorkflowPreset,
 )
+from app.domain.export_config import ExportConfig
 from app.domain.types import JsonDict
 
 
@@ -64,7 +65,7 @@ class WorkflowConfig(DomainEntity):
         voice_config: JsonDict | None = None,
         asset_config: JsonDict | None = None,
         approval_policy: JsonDict | None = None,
-        export_config: JsonDict | None = None,
+        export_config: JsonDict | ExportConfig | None = None,
         provider_validator: ProviderValidator | None = None,
     ) -> "WorkflowConfig":
         try:
@@ -86,7 +87,11 @@ class WorkflowConfig(DomainEntity):
                 voice_config=voice_config or {},
                 asset_config=asset_config or {},
                 approval_policy=approval_policy or {},
-                export_config=export_config or {},
+                export_config=(
+                    export_config.to_payload()
+                    if isinstance(export_config, ExportConfig)
+                    else dict(export_config or {})
+                ),
             )
         except ValueError as exc:
             raise DomainValidationError(str(exc)) from exc
@@ -129,6 +134,14 @@ class WorkflowConfig(DomainEntity):
         if not self.tone:
             raise DomainValidationError("WorkflowConfig tone is required.")
 
+        raw_export_config = dict(self.export_config)
+        validated_export_config = ExportConfig.from_mapping(
+            raw_export_config,
+            source_language=self.language,
+        )
+        # Preserve the historical empty object while canonicalizing configured policies.
+        self.export_config = validated_export_config.to_payload() if raw_export_config else {}
+
         conflicts = set(self.enabled_modules).intersection(self.disabled_modules)
         if conflicts:
             names = ", ".join(sorted(conflicts))
@@ -154,6 +167,12 @@ class WorkflowConfig(DomainEntity):
 
         if provider_validator is not None:
             provider_validator(self)
+
+    @property
+    def effective_export_config(self) -> ExportConfig:
+        """Return the typed export policy without changing source-language semantics."""
+
+        return ExportConfig.from_mapping(self.export_config, source_language=self.language)
 
     def provider_config_items(self) -> tuple[tuple[str, JsonDict], ...]:
         """Return provider configuration entries in deterministic order."""

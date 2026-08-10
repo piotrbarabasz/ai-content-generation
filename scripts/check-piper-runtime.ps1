@@ -47,8 +47,18 @@ from app.providers.piper_catalog import list_piper_voice_catalog
 print(json.dumps([entry.to_catalog_payload() for entry in list_piper_voice_catalog()], sort_keys=True))
 '@
 
-    $output = & $Path -c $probe 2>&1
-    if ($LASTEXITCODE -ne 0 -or -not $output) {
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $pythonArguments = @('-')
+        $output = $probe | & $Path @pythonArguments 2>&1
+        $pythonExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if ($pythonExitCode -ne 0 -or -not $output) {
         Fail "Failed to load Piper catalog metadata:`n$($output | Out-String)"
     }
 
