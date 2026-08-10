@@ -1355,7 +1355,7 @@ Test requirements: Add TestClient HTTP response, OpenAPI schema, camelCase seria
 Parallelizable: no
 Notes: This endpoint is discovery-only. Do not add preview generation, model downloads, provider health probes or filesystem inspection in this task.
 
-- [ ] T086 Add reusable TTS preview synthesis service and cache
+- [X] T086 Add reusable TTS preview synthesis service and cache
 Milestone: M008
 Epic: E019
 Risk: high

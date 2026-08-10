@@ -13,6 +13,16 @@ from .chunking import (
     chunk_narration,
     normalize_narration,
 )
+from .preview import (
+    ApprovedReferenceAudio,
+    PREVIEW_MANIFEST_VERSION,
+    PREVIEW_POST_PROCESSING_VERSION,
+    PREVIEW_TEXT_LIMIT,
+    TTSPreviewError,
+    TTSPreviewNotFoundError,
+    TTSPreviewResult,
+    TTSPreviewService,
+)
 
 __all__ = [
     "TTSCatalog",
@@ -24,4 +34,12 @@ __all__ = [
     "NarrationChunkingSettings",
     "chunk_narration",
     "normalize_narration",
+    "ApprovedReferenceAudio",
+    "PREVIEW_MANIFEST_VERSION",
+    "PREVIEW_POST_PROCESSING_VERSION",
+    "PREVIEW_TEXT_LIMIT",
+    "TTSPreviewError",
+    "TTSPreviewNotFoundError",
+    "TTSPreviewResult",
+    "TTSPreviewService",
 ]
