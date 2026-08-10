@@ -289,6 +289,19 @@ class XTTSV2EvalProvider(TTSProvider):
             usage_policy="evaluation_only",
         )
 
+    @classmethod
+    def catalog_capabilities(cls) -> TTSCapabilities:
+        """Return the evaluation catalog capabilities without constructing a provider."""
+
+        return TTSCapabilities(
+            provider_name="xtts_v2_eval",
+            supported_languages=("pl",),
+            voice_modes=("reference",),
+            reference_audio_required=True,
+            speaking_rate_supported=False,
+            usage_policy="evaluation_only",
+        )
+
     def _effective_language_id(self, voice_config: JsonDict | None) -> str:
         return resolve_language_id(voice_config, default_language_id=self.language_id) or self.language_id
 

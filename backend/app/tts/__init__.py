@@ -1,5 +1,12 @@
 """Provider-neutral helpers for reliable text-to-speech work."""
 
+from .catalog import (
+    TTSCatalog,
+    TTSCatalogError,
+    TTSModelDescriptor,
+    TTSProviderDescriptor,
+    TTSVoiceDescriptor,
+)
 from .chunking import (
     NarrationChunk,
     NarrationChunkingSettings,
@@ -8,6 +15,11 @@ from .chunking import (
 )
 
 __all__ = [
+    "TTSCatalog",
+    "TTSCatalogError",
+    "TTSModelDescriptor",
+    "TTSProviderDescriptor",
+    "TTSVoiceDescriptor",
     "NarrationChunk",
     "NarrationChunkingSettings",
     "chunk_narration",

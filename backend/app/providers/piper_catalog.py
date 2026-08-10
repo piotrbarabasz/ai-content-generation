@@ -116,6 +116,33 @@ class PiperVoiceCatalogEntry:
         payload["model_card_url"] = self.model_card_url()
         return payload
 
+    def to_public_metadata_payload(self) -> JsonDict:
+        """Return public metadata without local asset paths."""
+
+        repository_owner, repository_name = self.source_repository.split("/", 1)
+        checksum_names = ("onnx", "onnx_json", "model_card")
+        checksum_values = tuple(checksum for _, checksum in self.checksums)
+        return {
+            "provider_key": self.provider_key,
+            "voice_name": self.voice_name,
+            "language_id": self.language_id,
+            "quality": self.quality,
+            "expected_sample_rate_hz": self.expected_sample_rate_hz,
+            "source_repository": {
+                "owner": repository_owner,
+                "name": repository_name,
+            },
+            "source_revision": self.source_revision,
+            "checksums": {
+                checksum_name: checksum_value
+                for checksum_name, checksum_value in zip(checksum_names, checksum_values, strict=True)
+            },
+            "license_identifier": {
+                "engine": self.engine_license_identifier,
+                "model": self.model_license_identifier,
+            },
+        }
+
 
 def _catalog_entry(
     *,
