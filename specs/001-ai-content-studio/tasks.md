@@ -1402,7 +1402,7 @@ Test requirements: Add Chatterbox builtin mapping, Chatterbox reference requirem
 Parallelizable: no
 Notes: The API selection schema may be a transient command DTO shared with preview validation, but persisted state remains `providerConfig`, `voiceConfig` and top-level `language` only.
 
-- [ ] T089 Add end-to-end TTS selection acceptance
+- [X] T089 Add end-to-end TTS selection acceptance
 Milestone: M008
 Epic: E020
 Risk: high
