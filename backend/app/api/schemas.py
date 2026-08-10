@@ -252,6 +252,103 @@ class ExportBundleSchema(ApiSchema):
     created_at: datetime
 
 
+class TTSCapabilities(ApiSchema):
+    model_config = ConfigDict(title="TTS Capabilities")
+
+    provider_name: str
+    supported_languages: list[str]
+    voice_modes: list[str]
+    reference_audio_required: bool
+    speaking_rate_supported: bool
+    usage_policy: str
+
+
+class TTSVoice(ApiSchema):
+    model_config = ConfigDict(title="TTS Voice")
+
+    id: str
+    display_name: str
+    provider_id: str
+    model_id: str
+    voice_mode: str
+    supported_languages: list[str]
+    preview_supported: bool
+    reference_audio_required: bool
+    public_metadata: dict[str, Any] | None = None
+
+
+class TTSModel(ApiSchema):
+    model_config = ConfigDict(title="TTS Model")
+
+    id: str
+    display_name: str
+    provider_id: str
+    supported_languages: list[str]
+    runtime_required: bool
+    asset_required: bool
+    voices: list[TTSVoice] = Field(default_factory=list)
+
+
+class TTSProvider(ApiSchema):
+    model_config = ConfigDict(title="TTS Provider")
+
+    id: str
+    display_name: str
+    usage_policy: str
+    supported_languages: list[str]
+    capabilities: TTSCapabilities
+    models: list[TTSModel] = Field(default_factory=list)
+
+
+class TTSCatalog(ApiSchema):
+    model_config = ConfigDict(title="TTS Catalog")
+
+    providers: list[TTSProvider] = Field(default_factory=list)
+
+
+class VoicePreviewCreateRequest(ApiSchema):
+    """Strict public input for one provider-neutral TTS preview."""
+
+    model_config = ConfigDict(
+        title="Voice Preview Create Request",
+        populate_by_name=False,
+        validate_by_alias=True,
+        validate_by_name=False,
+    )
+
+    provider: str
+    model: str
+    voice: str
+    language: str
+    tempo: float
+    text: str
+    reference_audio_artifact_id: str | None = Field(
+        default=None,
+        alias="referenceAudioArtifactId",
+    )
+    synthesis_settings: dict[str, Any] | None = Field(
+        default=None,
+        alias="synthesisSettings",
+    )
+
+
+class VoicePreview(ApiSchema):
+    """Path-free metadata returned for one synthesized preview."""
+
+    model_config = ConfigDict(title="Voice Preview")
+
+    preview_id: str
+    audio_url: str
+    provider: str
+    model: str
+    voice: str
+    language: str
+    tempo: float
+    duration_seconds: float
+    checksum: str
+    cached: bool
+
+
 __all__ = [
     "ApiSchema",
     "ArtifactSchema",
@@ -263,6 +360,13 @@ __all__ = [
     "LocalizationTargetSchema",
     "ProjectCreateRequest",
     "ProjectSchema",
+    "TTSCapabilities",
+    "TTSCatalog",
+    "TTSModel",
+    "TTSProvider",
+    "TTSVoice",
+    "VoicePreview",
+    "VoicePreviewCreateRequest",
     "WorkflowConfigCreateRequest",
     "WorkflowConfigSchema",
     "WorkflowRunCreateRequest",

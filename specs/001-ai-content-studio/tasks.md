@@ -1340,7 +1340,7 @@ Notes: Reuse `piper_catalog.py` as the single source of curated Piper assets. Pr
 
 ## Phase 30: Voice preview
 
-- [ ] T085 Expose TTS catalog API
+- [X] T085 Expose TTS catalog API
 Milestone: M008
 Epic: E019
 Risk: medium
@@ -1355,7 +1355,7 @@ Test requirements: Add TestClient HTTP response, OpenAPI schema, camelCase seria
 Parallelizable: no
 Notes: This endpoint is discovery-only. Do not add preview generation, model downloads, provider health probes or filesystem inspection in this task.
 
-- [ ] T086 Add reusable TTS preview synthesis service and cache
+- [X] T086 Add reusable TTS preview synthesis service and cache
 Milestone: M008
 Epic: E019
 Risk: high
@@ -1370,7 +1370,7 @@ Test requirements: Use fake provider factories, generated PCM WAV fixtures, an i
 Parallelizable: no
 Notes: Preview text and output artifact are preview-only values; do not treat tempo as native provider capability or reuse a preview WAV as a production narration chunk.
 
-- [ ] T087 Expose preview HTTP API and audio delivery
+- [X] T087 Expose preview HTTP API and audio delivery
 Milestone: M008
 Epic: E019
 Risk: high
