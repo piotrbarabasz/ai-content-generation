@@ -4,7 +4,7 @@ milestone: M008
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E020-workflow-selection-integration
-status: active
+status: completed
 risk: high
 depends_on:
   - E019
