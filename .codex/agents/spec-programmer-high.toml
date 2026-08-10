@@ -1,6 +1,6 @@
 name = "spec_programmer_high"
 description = "High- and critical-risk implementation agent restricted to the approved implementation and test files in a manager package."
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''
