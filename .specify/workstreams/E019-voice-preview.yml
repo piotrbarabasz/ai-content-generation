@@ -4,7 +4,7 @@ milestone: M008
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E019-voice-preview
-status: active
+status: completed
 risk: high
 depends_on:
   - E018
