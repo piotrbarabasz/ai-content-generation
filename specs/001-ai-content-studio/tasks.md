@@ -1370,7 +1370,7 @@ Test requirements: Use fake provider factories, generated PCM WAV fixtures, an i
 Parallelizable: no
 Notes: Preview text and output artifact are preview-only values; do not treat tempo as native provider capability or reuse a preview WAV as a production narration chunk.
 
-- [ ] T087 Expose preview HTTP API and audio delivery
+- [X] T087 Expose preview HTTP API and audio delivery
 Milestone: M008
 Epic: E019
 Risk: high

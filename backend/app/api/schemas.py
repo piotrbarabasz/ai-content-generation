@@ -306,6 +306,49 @@ class TTSCatalog(ApiSchema):
     providers: list[TTSProvider] = Field(default_factory=list)
 
 
+class VoicePreviewCreateRequest(ApiSchema):
+    """Strict public input for one provider-neutral TTS preview."""
+
+    model_config = ConfigDict(
+        title="Voice Preview Create Request",
+        populate_by_name=False,
+        validate_by_alias=True,
+        validate_by_name=False,
+    )
+
+    provider: str
+    model: str
+    voice: str
+    language: str
+    tempo: float
+    text: str
+    reference_audio_artifact_id: str | None = Field(
+        default=None,
+        alias="referenceAudioArtifactId",
+    )
+    synthesis_settings: dict[str, Any] | None = Field(
+        default=None,
+        alias="synthesisSettings",
+    )
+
+
+class VoicePreview(ApiSchema):
+    """Path-free metadata returned for one synthesized preview."""
+
+    model_config = ConfigDict(title="Voice Preview")
+
+    preview_id: str
+    audio_url: str
+    provider: str
+    model: str
+    voice: str
+    language: str
+    tempo: float
+    duration_seconds: float
+    checksum: str
+    cached: bool
+
+
 __all__ = [
     "ApiSchema",
     "ArtifactSchema",
@@ -322,6 +365,8 @@ __all__ = [
     "TTSModel",
     "TTSProvider",
     "TTSVoice",
+    "VoicePreview",
+    "VoicePreviewCreateRequest",
     "WorkflowConfigCreateRequest",
     "WorkflowConfigSchema",
     "WorkflowRunCreateRequest",
