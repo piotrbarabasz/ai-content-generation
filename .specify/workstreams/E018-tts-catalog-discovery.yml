@@ -4,7 +4,7 @@ milestone: M008
 feature: specs/001-ai-content-studio
 base_branch: master
 branch: epic/E018-tts-catalog-discovery
-status: active
+status: completed
 risk: medium
 depends_on:
   - E017
