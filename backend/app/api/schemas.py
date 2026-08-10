@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.domain.artifact import Artifact
 from app.domain.enums import ContentGenre, ContentType, DurationProfile, TargetPlatform, WorkflowPreset
@@ -14,6 +14,7 @@ from app.domain.export_config import LocalizationStrategy
 from app.domain.project import Project
 from app.domain.workflow_config import WorkflowConfig
 from app.domain.workflow_run import WorkflowRun
+from app.providers.tts_settings import TTSSettings
 
 
 def _to_camel(value: str) -> str:
@@ -126,6 +127,98 @@ class WorkflowConfigCreateRequest(ApiSchema):
     asset_config: dict[str, Any] = Field(default_factory=dict)
     approval_policy: dict[str, Any] = Field(default_factory=dict)
     export_config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("provider_config", mode="before")
+    @classmethod
+    def _normalize_tts_provider_config(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not isinstance(value.get("tts"), dict):
+            return value
+        normalized = dict(value)
+        tts = dict(normalized["tts"])
+        has_camel_name = "providerName" in tts
+        has_snake_name = "provider_name" in tts
+        if has_camel_name and has_snake_name:
+            raise ValueError(
+                "Workflow providerConfig.tts cannot contain both providerName and provider_name."
+            )
+        if has_snake_name:
+            if tts["provider_name"] != "mock":
+                raise ValueError(
+                    "Workflow providerConfig.tts must use providerName for non-mock providers."
+                )
+            tts["providerName"] = tts.pop("provider_name")
+        if "settings" in tts:
+            tts["settings"] = TTSSettings.normalize_mapping(tts["settings"])
+        normalized["tts"] = tts
+        return normalized
+
+    @field_validator("voice_config", mode="before")
+    @classmethod
+    def _normalize_tts_voice_config(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        aliases = {
+            "voiceId": "voice_id",
+            "voiceMode": "voice_mode",
+            "postProcessing": "post_processing",
+            "referenceAudioArtifactId": "reference_audio_artifact_id",
+            "referenceAudioMetadata": "reference_audio_metadata",
+        }
+        normalized = {aliases.get(key, key): item for key, item in value.items()}
+        metadata = normalized.get("reference_audio_metadata")
+        if isinstance(metadata, dict) and "approvalLabel" in metadata:
+            normalized["reference_audio_metadata"] = {
+                ("approval_label" if key == "approvalLabel" else key): item
+                for key, item in metadata.items()
+            }
+        return normalized
+
+    @field_serializer("provider_config")
+    def _serialize_tts_provider_config(self, value: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(value.get("tts"), dict):
+            return value
+        serialized = dict(value)
+        tts = dict(serialized["tts"])
+        settings = tts.get("settings")
+        if isinstance(settings, dict):
+            setting_aliases = {
+                "usage_policy": "usagePolicy",
+                "language_id": "languageId",
+                "model_variant": "modelVariant",
+                "audio_prompt_path": "audioPromptPath",
+                "reference_audio_path": "referenceAudioPath",
+                "approved_label": "approvedLabel",
+                "model_key": "modelKey",
+                "model_path": "modelPath",
+                "length_scale": "lengthScale",
+                "noise_scale": "noiseScale",
+                "noise_w_scale": "noiseWScale",
+                "cfg_weight": "cfgWeight",
+                "repetition_penalty": "repetitionPenalty",
+                "min_p": "minP",
+                "top_p": "topP",
+            }
+            tts["settings"] = {setting_aliases.get(key, key): item for key, item in settings.items()}
+        serialized["tts"] = tts
+        return serialized
+
+    @field_serializer("voice_config")
+    def _serialize_tts_voice_config(self, value: dict[str, Any]) -> dict[str, Any]:
+        aliases = {
+            "voice_id": "voiceId",
+            "voice_mode": "voiceMode",
+            "post_processing": "postProcessing",
+            "reference_audio_artifact_id": "referenceAudioArtifactId",
+            "reference_audio_metadata": "referenceAudioMetadata",
+        }
+        serialized = {aliases.get(key, key): item for key, item in value.items()}
+        metadata = serialized.get("referenceAudioMetadata")
+        if isinstance(metadata, dict):
+            serialized["referenceAudioMetadata"] = {
+                ("approvalLabel" if key == "approval_label" else key): item
+                for key, item in metadata.items()
+            }
+        return serialized
 
     def to_domain(self) -> WorkflowConfig:
         return WorkflowConfig.create(

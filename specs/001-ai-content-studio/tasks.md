@@ -1387,7 +1387,7 @@ Notes: The audio route takes an opaque preview id, never a storage key or user p
 
 ## Phase 31: Workflow selection integration
 
-- [ ] T088 Map catalog selections to WorkflowConfig
+- [X] T088 Map catalog selections to WorkflowConfig
 Milestone: M008
 Epic: E020
 Risk: high

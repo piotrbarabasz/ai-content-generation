@@ -13,6 +13,12 @@ from .chunking import (
     chunk_narration,
     normalize_narration,
 )
+from .selection import (
+    TTSSelectionError,
+    WorkflowTTSMapping,
+    map_catalog_selection,
+    validate_workflow_tts_mapping,
+)
 from .preview import (
     ApprovedReferenceAudio,
     PREVIEW_MANIFEST_VERSION,
@@ -34,6 +40,10 @@ __all__ = [
     "NarrationChunkingSettings",
     "chunk_narration",
     "normalize_narration",
+    "TTSSelectionError",
+    "WorkflowTTSMapping",
+    "map_catalog_selection",
+    "validate_workflow_tts_mapping",
     "ApprovedReferenceAudio",
     "PREVIEW_MANIFEST_VERSION",
     "PREVIEW_POST_PROCESSING_VERSION",

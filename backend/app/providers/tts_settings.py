@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,56 @@ _FIELDS = frozenset(
         "top_p",
     }
 )
+_FIELD_ALIASES = {
+    "usagePolicy": "usage_policy",
+    "languageId": "language_id",
+    "modelVariant": "model_variant",
+    "audioPromptPath": "audio_prompt_path",
+    "referenceAudioPath": "reference_audio_path",
+    "approvedLabel": "approved_label",
+    "modelKey": "model_key",
+    "modelPath": "model_path",
+    "lengthScale": "length_scale",
+    "noiseScale": "noise_scale",
+    "noiseWScale": "noise_w_scale",
+    "cfgWeight": "cfg_weight",
+    "repetitionPenalty": "repetition_penalty",
+    "minP": "min_p",
+    "topP": "top_p",
+}
+_COMMON_PROVIDER_FIELDS = frozenset({"provider", "usage_policy", "device", "language_id"})
+_PROVIDER_FIELDS = {
+    "mock": frozenset(
+        {
+            "model_variant",
+            "audio_prompt_path",
+            "exaggeration",
+            "cfg_weight",
+            "temperature",
+            "repetition_penalty",
+            "min_p",
+            "top_p",
+        }
+    ),
+    "chatterbox_v3": frozenset(
+        {
+            "model_variant",
+            "audio_prompt_path",
+            "exaggeration",
+            "cfg_weight",
+            "temperature",
+            "repetition_penalty",
+            "min_p",
+            "top_p",
+        }
+    ),
+    "piper": frozenset(
+        {"model_key", "model_path", "length_scale", "volume", "noise_scale", "noise_w_scale"}
+    ),
+    "xtts_v2_eval": frozenset(
+        {"model_variant", "audio_prompt_path", "reference_audio_path", "approved_label"}
+    ),
+}
 _NUMERIC_FIELDS = frozenset(
     {
         "exaggeration",
@@ -180,22 +231,48 @@ class TTSSettings:
     ) -> "TTSSettings":
         """Create settings from ProviderConfig settings without accepting unknown keys."""
 
-        if values is None:
-            values = {}
-        if not isinstance(values, Mapping):
-            raise TTSSettingsError("TTS provider settings must be an object.")
-        unknown = sorted(set(values) - _FIELDS)
+        normalized = cls.normalize_mapping(values)
+        unknown = sorted(set(normalized) - _FIELDS)
         if unknown:
             raise TTSSettingsError(f"Unknown TTS provider settings: {', '.join(unknown)}.")
-        configured_provider = values.get("provider", provider)
+        configured_provider = normalized.get("provider", provider)
         if configured_provider != provider:
             raise TTSSettingsError("TTS settings provider must match ProviderConfig provider_name.")
-        return cls(provider=configured_provider, **{key: value for key, value in values.items() if key != "provider"})
+        supported = _COMMON_PROVIDER_FIELDS | _PROVIDER_FIELDS.get(str(configured_provider), frozenset())
+        foreign = sorted(set(normalized) - supported)
+        if foreign:
+            raise TTSSettingsError(
+                f"Unsupported settings for TTS provider '{configured_provider}': {', '.join(foreign)}."
+            )
+        return cls(
+            provider=configured_provider,
+            **{key: value for key, value in normalized.items() if key != "provider"},
+        )
+
+    @classmethod
+    def normalize_mapping(cls, values: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Normalize API camelCase keys without accepting aliases twice."""
+
+        if values is None:
+            return {}
+        if not isinstance(values, Mapping):
+            raise TTSSettingsError("TTS provider settings must be an object.")
+        normalized: dict[str, Any] = {}
+        for raw_key, value in values.items():
+            if not isinstance(raw_key, str):
+                raise TTSSettingsError("TTS provider setting names must be strings.")
+            key = _FIELD_ALIASES.get(raw_key, raw_key)
+            if key in normalized:
+                raise TTSSettingsError(f"Duplicate TTS provider setting: {key}.")
+            normalized[key] = value
+        return normalized
 
 
 def _validate_numeric_value(field_name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TTSSettingsError(f"TTS {field_name} must be numeric or null.")
+    if not math.isfinite(float(value)):
+        raise TTSSettingsError(f"TTS {field_name} must be finite.")
 
 
 def _validate_piper_numeric(field_name: str, value: object) -> None:

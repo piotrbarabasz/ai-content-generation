@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.domain.base import DomainEntity, DomainValidationError, new_id
 from app.domain.enums import (
@@ -17,6 +17,9 @@ from app.domain.types import JsonDict
 
 
 ProviderValidator = Callable[["WorkflowConfig"], None]
+
+if TYPE_CHECKING:
+    from app.tts.catalog import TTSCatalog
 
 
 def _coerce_str_list(values: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -67,6 +70,7 @@ class WorkflowConfig(DomainEntity):
         approval_policy: JsonDict | None = None,
         export_config: JsonDict | ExportConfig | None = None,
         provider_validator: ProviderValidator | None = None,
+        tts_catalog: "TTSCatalog | None" = None,
     ) -> "WorkflowConfig":
         try:
             config = cls(
@@ -96,7 +100,7 @@ class WorkflowConfig(DomainEntity):
         except ValueError as exc:
             raise DomainValidationError(str(exc)) from exc
 
-        config.validate(provider_validator=provider_validator)
+        config.validate(provider_validator=provider_validator, tts_catalog=tts_catalog)
         return config
 
     @classmethod
@@ -105,6 +109,7 @@ class WorkflowConfig(DomainEntity):
         payload: dict[str, Any],
         *,
         provider_validator: ProviderValidator | None = None,
+        tts_catalog: "TTSCatalog | None" = None,
     ) -> "WorkflowConfig":
         aliases = {
             "projectId": "project_id",
@@ -124,9 +129,18 @@ class WorkflowConfig(DomainEntity):
             "exportConfig": "export_config",
         }
         normalized = {aliases.get(key, key): value for key, value in payload.items()}
-        return cls.create(provider_validator=provider_validator, **normalized)
+        return cls.create(
+            provider_validator=provider_validator,
+            tts_catalog=tts_catalog,
+            **normalized,
+        )
 
-    def validate(self, *, provider_validator: ProviderValidator | None = None) -> None:
+    def validate(
+        self,
+        *,
+        provider_validator: ProviderValidator | None = None,
+        tts_catalog: "TTSCatalog | None" = None,
+    ) -> None:
         if not self.project_id:
             raise DomainValidationError("WorkflowConfig project_id is required.")
         if not self.language:
@@ -165,8 +179,45 @@ class WorkflowConfig(DomainEntity):
                 "long_form_script_voiceover workflowPreset cannot use short_video contentType."
             )
 
+        self._validate_tts_selection(tts_catalog)
+
         if provider_validator is not None:
             provider_validator(self)
+
+    def _validate_tts_selection(self, catalog: "TTSCatalog | None") -> None:
+        raw_tts = self.provider_config.get("tts")
+        if raw_tts is None:
+            return
+        if not isinstance(raw_tts, Mapping):
+            raise DomainValidationError("Workflow providerConfig.tts must be an object.")
+        has_camel_name = "providerName" in raw_tts
+        has_snake_name = "provider_name" in raw_tts
+        if has_camel_name and has_snake_name:
+            raise DomainValidationError(
+                "Workflow providerConfig.tts cannot contain both providerName and provider_name."
+            )
+        provider_name = raw_tts.get("providerName", raw_tts.get("provider_name", "mock"))
+        if has_snake_name and provider_name != "mock":
+            raise DomainValidationError(
+                "Workflow providerConfig.tts must use providerName for non-mock providers."
+            )
+        if provider_name == "mock":
+            return
+        if catalog is None:
+            from app.providers.tts_catalog import build_tts_catalog
+
+            catalog = build_tts_catalog()
+        from app.tts.selection import TTSSelectionError, validate_workflow_tts_mapping
+
+        try:
+            validate_workflow_tts_mapping(
+                catalog=catalog,
+                provider_config=self.provider_config,
+                voice_config=self.voice_config,
+                language=self.language,
+            )
+        except TTSSelectionError as exc:
+            raise DomainValidationError(str(exc)) from exc
 
     @property
     def effective_export_config(self) -> ExportConfig:

@@ -79,6 +79,10 @@ def build_tts_provider(
         )
     except TTSSettingsError as exc:
         raise TTSFactoryError(str(exc)) from exc
+    if settings.provider == "xtts_v2_eval" and settings.usage_policy == "production":
+        raise TTSFactoryError(
+            "TTS provider 'xtts_v2_eval' is evaluation-only and cannot be used in production mode."
+        )
     factories = _default_provider_factories() if provider_factories is None else provider_factories
     provider_factory = factories.get(settings.provider)
     if provider_factory is None:
