@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import io
@@ -52,7 +52,8 @@ def test_english_fixture_metadata_and_manual_command_are_reproducible() -> None:
         (fixture.parent / "metadata.json").read_text(encoding="utf-8")
     )
     record = next(item for item in metadata["fixtures"] if item["file"] == fixture.name)
-    payload = fixture.read_bytes()
+    text = fixture.read_text(encoding="utf-8")
+    payload = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
     assert record["language"] == "en"
     assert record["actual_word_count"] == 157
     assert hashlib.sha256(payload).hexdigest() == record["sha256"]
