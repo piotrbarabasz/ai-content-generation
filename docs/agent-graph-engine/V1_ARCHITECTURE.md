@@ -122,6 +122,12 @@ Każdy node działa na niezmiennym snapshotcie `GraphState` o numerze `state_ver
 
 Node nie otrzymuje mutowalnego store i nie może sam uruchomić następnego node'a. Write-capable node otrzymuje dodatkowo lease wyłącznego writer locka i dokładną allowlistę.
 
+### 5.3 Tożsamość implementacji i instalacja v1
+
+Docelowa implementacja powstaje w niezależnym repozytorium `piotrbarabasz/agent-graph-engine`, w Pythonie 3.11+. Package/import namespace to `agentgraph`, a nazwa CLI to `agentgraph`. Rozpoczęcie Graph Core nie zależy od publikacji pakietu do PyPI: development i pierwsze integracje mogą używać editable/local source installation albo instalacji bezpośrednio z Git.
+
+Publikacja PyPI, standalone binary i formalne release governance są osobnymi, późniejszymi zadaniami. Licencja oraz public/private visibility repozytorium są decyzjami repository governance i nie blokują technicznej implementacji Graph Core.
+
 ## 6. Graph v1
 
 ### 6.1 Główny graf
@@ -133,7 +139,7 @@ flowchart TD
     PF -->|pass| SW[SELECT_WORK]
     PF -->|environment/infrastructure| B([BLOCKED])
     SW -->|work selected| EX[EXPLORE]
-    SW -->|no work| ER[EPIC_REVIEW]
+    SW -->|no work| ER[DELIVERY_REVIEW]
     EX --> BP[BUILD_TASK_PACKAGE]
     BP --> AR[ASSESS_RISK]
     AR -->|low / medium / high| IM[IMPLEMENT]
@@ -152,9 +158,9 @@ flowchart TD
     PR --> VA
     DG --> VA
     CT --> MW[MORE_WORK]
-    MW -->|yes and below task limit| SW
+    MW -->|yes and below work item limit| SW
     MW -->|no| ER
-    MW -->|run task limit reached| FN[FINALIZE]
+    MW -->|run work item limit reached| FN[FINALIZE]
     ER -->|pass| HC2{HUMAN_CHECKPOINT\ndelivery}
     ER -->|fail| F
     HC2 -->|approved| CP[CREATE_PR]
@@ -170,9 +176,9 @@ flowchart TD
 
 `repair_count` oznacza liczbę rozpoczętych napraw po pierwszym nieudanym `VALIDATE` lub `REVIEW`. Przed wejściem do `PROGRAMMER_REPAIR` albo `DEBUGGER` engine wykonuje atomic increment. Guard dopuszcza naprawę wyłącznie, gdy `repair_count < max_repair_cycles` przed inkrementacją. Po osiągnięciu limitu jedyną krawędzią jest `FAILED → FINALIZE`. LLM nie dostaje narzędzia do modyfikacji licznika ani polityki.
 
-### 6.3 Zakres bez epica
+### 6.3 Neutralny DeliveryScope
 
-`milestone`, `epic` i `task` są opcjonalnymi pozycjami hierarchii. Każdy adapter musi dostarczyć co najmniej neutralny `work_item`. Node o stabilnej nazwie `EPIC_REVIEW` oznacza w core **delivery-scope review**; gdy adapter nie ma epica, review obejmuje work items zakończone w bieżącym runie. Nazwa node'a jest zachowana w v1 dla jednoznacznego grafu, nie narzuca modelu danych adapterom.
+Core wymaga wyłącznie neutralnego `work_item` oraz `DeliveryScope`. `DELIVERY_REVIEW` wykonuje semantic review całego aktualnego `DeliveryScope`. Adapter definiuje scope jako jeden work item, grupę work items zakończonych w runie albo inną wersjonowaną jednostkę dostawy. Dla `SpecKitAdapter` scope może odpowiadać epicowi, ale `milestone`, `epic` i `task` występują wyłącznie jako opcjonalne adapter-defined hierarchy metadata. Nie są wymaganymi polami ani pojęciami workflow core.
 
 ## 7. GraphState Contract
 
@@ -193,7 +199,7 @@ flowchart TD
 | `run.id`, `run.attempt`, `run.parent_run_id` | GraphEngine | START/recovery | tak | `id`, `attempt` zawsze | UUIDv7; attempt rośnie tylko przy resume/restart policy |
 | `run.created_at`, `updated_at`, `started_by`, `mode` | GraphEngine | START/engine | tak | zawsze | deterministic UTC; mode `execute|read_only|shadow` |
 | `run.status` | GraphEngine | transition executor/FINALIZE | tak | zawsze | `running|waiting_checkpoint|blocked|failed|cancelled|completed` |
-| `repository.project_id` | ProjectRegistry | DISCOVER_PROJECT | tak | zawsze po discover | deterministic registry lookup |
+| `repository.project_id` | ProjectRegistry | DISCOVER_PROJECT | tak | zawsze po discover | immutable ID związane z jednym canonical working-copy root; remote nie definiuje ID |
 | `repository.root`, `canonical_root` | ProjectRegistry | DISCOVER_PROJECT/rebind | tak | zawsze po discover | local discovery; absolutne ścieżki tylko w external runtime |
 | `repository.remote.name`, `url`, `normalized_url`, `provider` | GitAdapter | DISCOVER_PROJECT/PREFLIGHT | tak | conditional: remote może nie istnieć | external deterministic; credentials zawsze usunięte |
 | `repository.base_branch` | ConfigResolver | DISCOVER_PROJECT | tak | przed PREFLIGHT | config lub remote HEAD/autodetect |
@@ -204,7 +210,7 @@ flowchart TD
 | `project.test_frameworks`, `linters`, `type_checkers`, `build_systems` | ProjectInspector | DISCOVER_PROJECT | tak | może być puste | deterministic inspection |
 | `project.conventions` | ProjectInspector | DISCOVER_PROJECT | tak | zawsze | wykryte pliki, command sources, AGENTS/instructions references |
 | `work.source.adapter`, `config`, `capabilities`, `source_revision` | WorkSourceAdapter | DISCOVER_PROJECT/PREFLIGHT | tak | zawsze | adapter; config bez sekretów |
-| `work.milestone`, `work.epic`, `work.task` | WorkSourceAdapter | SELECT_WORK/CLOSE_TASK | tak | opcjonalne | adapter refs `{id,title,status,revision,metadata}` |
+| `work.hierarchy[]` | WorkSourceAdapter | SELECT_WORK/CLOSE_TASK | tak | opcjonalne | neutralne adapter metadata `{level,id,title,status,revision,metadata}`; core nie interpretuje nazw poziomów |
 | `work.item` | WorkSourceAdapter | SELECT_WORK/CLOSE_TASK | tak | od SELECT_WORK do close | neutralny ref; jedyna obowiązkowa jednostka pracy |
 | `work.completed_items` | GraphEngine + adapter evidence | CLOSE_TASK | tak | zawsze jako lista | append-only w runie |
 | `work.dependencies` | WorkSourceAdapter | SELECT_WORK | tak | dla wybranego itemu | refs + status + evidence; może być puste |
@@ -231,8 +237,8 @@ flowchart TD
 | `repair.count` | GraphEngine | edge executor | tak | zawsze | deterministic, start `0` |
 | `repair.max_cycles` | PolicyEngine | START | tak | zawsze | resolved config/default; immutable podczas runu |
 | `repair.classification`, `history` | FailureClassifier + GraphEngine | CLASSIFY_FAILURE/edge executor | tak | conditional | LLM/deterministic classification; append-only history |
-| `checkpoints[]` | CheckpointService | HUMAN_CHECKPOINT | tak | jako lista | human/external; id, kind, nonce hash, decision, actor, time, state_version, expiry |
-| `commits[]` | GitAdapter | CLOSE_TASK/delivery operations | tak | jako lista | external deterministic; SHA, parents, message, work item, tree, policy receipt |
+| `checkpoints[]` | CheckpointService | HUMAN_CHECKPOINT | tak | jako lista | local CLI; id, kind, nonce hash, decision, actor, timestamp, expiry, single-use status, exact state/package/head/tree digests i requested operation set |
+| `commits[]` | GitAdapter | CLOSE_TASK/delivery operations | tak | jako lista | external deterministic; SHA, parents, message, work item, package digest, validation/review evidence refs, tree SHA i policy receipt |
 | `push.remote`, `branch`, `head_sha`, `status`, `attempts` | GitAdapter | CREATE_PR delivery substep | tak | conditional | external deterministic; no agent writes |
 | `pull_request.provider`, `id`, `url`, `draft`, `state`, `head_sha`, `base` | RemoteProvider | CREATE_PR | tak | conditional | external verified response; draft musi być true w v1 |
 | `failure.category`, `code`, `reason`, `node`, `evidence_refs` | GraphEngine | każdy node przez validated result; FINALIZE | tak | conditional | structured; category z zamkniętego enum |
@@ -359,8 +365,8 @@ terminal: false
 | 4 | PREFLIGHT | SUCCEEDED | baseline persisted, branch/head/source revision valid | SELECT_WORK |
 | 5 | PREFLIGHT | infrastructure/environment/external failure | no write node started | FINALIZE (blocked) |
 | 6 | PREFLIGHT | policy/contract failure | no write node started | FINALIZE (failed) |
-| 7 | SELECT_WORK | SUCCEEDED + item exists | dependencies satisfied, run task limit not reached | EXPLORE |
-| 8 | SELECT_WORK | SUCCEEDED + no item + completed_items nonempty | delivery scope resolved | EPIC_REVIEW |
+| 7 | SELECT_WORK | SUCCEEDED + item exists | dependencies satisfied, run work item limit not reached | EXPLORE |
+| 8 | SELECT_WORK | SUCCEEDED + no item + completed_items nonempty | delivery scope resolved | DELIVERY_REVIEW |
 | 9 | SELECT_WORK | SUCCEEDED + no item + completed_items empty | nothing to do | FINALIZE (completed/no-op) |
 | 10 | SELECT_WORK | BLOCKED/FAILED | source revision/evidence persisted | FINALIZE |
 | 11 | EXPLORE | SUCCEEDED | read-only evidence schema valid | BUILD_TASK_PACKAGE |
@@ -391,13 +397,13 @@ terminal: false
 | 36 | PROGRAMMER_REPAIR | SUCCEEDED + no drift | append repair history | VALIDATE |
 | 37 | DEBUGGER | SUCCEEDED + no drift | append repair history | VALIDATE |
 | 38 | repair node | non-success | no nested retry | FINALIZE |
-| 39 | CLOSE_TASK | adapter close CAS succeeds; optional policy-controlled task commit verified | receipt binds work revision, tree and review | MORE_WORK |
+| 39 | CLOSE_TASK | adapter close CAS succeeds; resolved commit mode completes | for `per_work_item`, GitAdapter creates/reconciles exactly one commit bound to item/package/validation/review/tree/policy evidence | MORE_WORK |
 | 40 | CLOSE_TASK | source revision conflict/external failure | do not infer closure | FINALIZE (blocked) |
 | 41 | MORE_WORK | below max and adapter reports ready work | clear item-scoped state, preserve run evidence | SELECT_WORK |
-| 42 | MORE_WORK | no more ready work | all completed items in delivery scope | EPIC_REVIEW |
-| 43 | MORE_WORK | max_tasks_per_run reached | resumable terminal receipt | FINALIZE (completed/paused) |
-| 44 | EPIC_REVIEW | PASS + safe_to_create_pr | required checks fresh, security/scope gates pass | HUMAN_CHECKPOINT(kind=delivery) |
-| 45 | EPIC_REVIEW | FAIL/non-success | no PR side effect | FINALIZE (failed/blocked) |
+| 42 | MORE_WORK | no more ready work | all completed items in delivery scope | DELIVERY_REVIEW |
+| 43 | MORE_WORK | max_work_items_per_run reached | resumable terminal receipt | FINALIZE (completed/paused) |
+| 44 | DELIVERY_REVIEW | PASS + safe_to_create_pr | required checks fresh, security/scope gates pass | HUMAN_CHECKPOINT(kind=delivery) |
+| 45 | DELIVERY_REVIEW | FAIL/non-success | no PR side effect | FINALIZE (failed/blocked) |
 | 46 | HUMAN_CHECKPOINT delivery | approved for head/tree/review digest | push and draft PR authorized, merge not authorized | CREATE_PR |
 | 47 | HUMAN_CHECKPOINT delivery | rejected/expired | branch remains local | FINALIZE (blocked) |
 | 48 | CREATE_PR | branch push reconciled and draft PR verified | idempotent by base/head; draft=true | FINALIZE (completed) |
@@ -423,9 +429,9 @@ terminal: false
 | CLASSIFY_FAILURE | LLM_READ_ONLY | sklasyfikuj niejednoznaczny failure; oczywiste klasy mogą być wstępnie wyznaczone deterministic rules |
 | PROGRAMMER_REPAIR | LLM_WRITE | napraw brakujące/niepoprawne zachowanie lub design w niezmienionej allowliście |
 | DEBUGGER | LLM_WRITE | odtwórz wskazany defect/test/logic failure i zastosuj minimalny fix |
-| CLOSE_TASK | EXTERNAL_OPERATION | adapter CAS zamyka work item; opcjonalny engine-owned commit według policy; bez LLM |
-| MORE_WORK | DETERMINISTIC | zlicz zadania, wyczyść item scope i wybierz ścieżkę loop/delivery |
-| EPIC_REVIEW | LLM_READ_ONLY | review całego delivery scope, cross-task consistency, security, required checks evidence |
+| CLOSE_TASK | EXTERNAL_OPERATION | adapter CAS zamyka work item; GitAdapter realizuje resolved commit mode; dla Spec Kit domyślnie dokładnie jeden engine-owned commit per work item; bez LLM |
+| MORE_WORK | DETERMINISTIC | zlicz work items, wyczyść item scope i wybierz ścieżkę loop/delivery |
+| DELIVERY_REVIEW | LLM_READ_ONLY | semantic review całego aktualnego `DeliveryScope`, cross-item consistency, security i required checks evidence |
 | CREATE_PR | EXTERNAL_OPERATION | policy-gated push reconcile i idempotentne utworzenie/odnalezienie draft PR |
 | FINALIZE | DETERMINISTIC | terminal receipt, status, archive scheduling, lock release i jednoznaczne resume instructions |
 
@@ -438,7 +444,7 @@ terminal: false
 1. **Explorer/Package Builder** — jedna read-only capability używana w dwóch node'ach z różnymi output schemas. Może być ten sam model/provider, lecz osobne invocations i receipts.
 2. **Risk Assessor** — read-only; zwraca czynniki i rekomendowany poziom, nigdy route ani checkpoint policy.
 3. **Programmer** — write; provider wybiera profil `fast` lub `high` wskazany przez engine.
-4. **Reviewer** — niezależny read-only context, bez historii rozumowania programmera; używany dla task review i delivery review z osobnymi schemas.
+4. **Reviewer** — niezależny read-only context, bez historii rozumowania programmera; używany dla work-item review i delivery review z osobnymi schemas.
 5. **Failure Classifier/Debugger** — classifier jest read-only, debugger write. Provider może współdzielić model, ale capability i invocation są rozdzielone.
 
 ### 12.2 Los roli `spec_manager`
@@ -476,7 +482,7 @@ reconcile(operation_id) -> WorkMutationResult
 
 `WorkItem` ma obowiązkowe: `id`, `title`, `status`, `revision`, `source_uri`, `metadata`, `requirements`, `acceptance_criteria`; opcjonalne `parent_refs` i `hierarchy`. `DependencySet` rozróżnia `completed`, `incomplete`, `unknown` i zawiera evidence. Engine nie interpretuje `T###`, checkboxów ani YAML manifestów.
 
-Capability flags obejmują: `supports_hierarchy`, `supports_milestones`, `supports_epics`, `supports_atomic_completion`, `supports_revision_cas`, `supports_remote_mutation`. Jeśli źródło nie ma epica/milestone'u, adapter zwraca brak refów, a `DeliveryScope` może być run-scoped.
+Capability flags obejmują: `supports_hierarchy`, `hierarchy_level_names`, `supports_atomic_completion`, `supports_revision_cas`, `supports_remote_mutation`. Nazwy i liczba poziomów hierarchii są opaque adapter metadata. Adapter bez hierarchii zwraca pustą listę, a `DeliveryScope` może być pojedynczym itemem lub scope'em bieżącego runu.
 
 `SpecKitAdapter` v1 odpowiada za parsing `spec.md`, `plan.md`, `tasks.md`, opcjonalnych artifacts, `.specify/workstreams`, dependency/ownership consistency i dokładną zmianę jednego checkboxa. `GitHubIssuesAdapter`, `MarkdownAdapter` i `JiraAdapter` mają używać tego samego DTO bez sztucznego tworzenia epiców.
 
@@ -504,7 +510,7 @@ execute(check, execution_context) -> ValidationCheckResult
 validate_freshness(evidence, repo_snapshot, package_digest) -> FreshnessResult
 ```
 
-`ValidationCheck` zawiera: `id`, `kind` (`task_test|broader_test|lint|static_analysis|build|repository_check`), argv jako lista, cwd relative to repo, env allowlist, timeout, blocking, order, provenance (`task|adapter|inspector|config|engine`), network policy i artifact expectations. Core nie zna `pytest`, `npm`, powłoki ani separatorów shellowych. V1 uruchamia checks sekwencyjnie w kolejności task-focused → lint/static → broader/build → repository checks, z możliwością deterministic fail-fast tylko gdy plan to deklaruje.
+`ValidationCheck` zawiera: `id`, `kind` (`work_item_test|broader_test|lint|static_analysis|build|repository_check`), argv jako lista, cwd relative to repo, env allowlist, timeout, blocking, order, provenance (`work_item|adapter|inspector|config|engine`), network policy i artifact expectations. Core nie zna `pytest`, `npm`, powłoki ani separatorów shellowych. V1 uruchamia checks sekwencyjnie w kolejności work-item-focused → lint/static → broader/build → repository checks, z możliwością deterministic fail-fast tylko gdy plan to deklaruje.
 
 ### 13.4 GitAdapter
 
@@ -558,7 +564,7 @@ reconcile(invocation_id) -> AgentInvocationStatus
 ```text
 ~/.agentgraph/
 ├── config.yml                         # global user defaults, optional
-├── registry.json                      # project aliases; atomic and locked
+├── registry.json                      # canonical-root bindings; atomic and locked
 ├── projects/
 │   └── <project-id>/
 │       ├── project.json               # immutable id + recognized paths/remotes
@@ -588,14 +594,14 @@ Runtime root można zmienić globalnym ustawieniem lub `AGENTGRAPH_HOME`; nie za
 
 ### 14.2 Project identity
 
-`project_id` jest niezmiennym identyfikatorem `prj_<26-char base32 random/UUIDv7 payload>` nadawanym przy pierwszej rejestracji, a nie hashem ścieżki. `project.json` przechowuje:
+Każdy canonical working copy ma w v1 własny, niezmienny `project_id` w formacie `prj_<26-char base32 random/UUIDv7 payload>`. ProjectRegistry nadaje go przy pierwszej rejestracji i wiąże dokładnie z jednym aktywnym canonical repository root. Identyfikator nie jest wyprowadzany z remote. `project.json` przechowuje:
 
 - canonical path po rozwiązaniu symlinków i normalizacji case zgodnej z systemem;
 - znormalizowany remote bez credentials (SCP/SSH/HTTPS sprowadzone do `host/owner/repo`);
 - opcjonalny Git object-format, initial/root commit i aktualny remote name;
-- historię aliasów path/remote oraz timestamp ostatniego potwierdzenia.
+- historię zweryfikowanych rebindów canonical root, remote metadata oraz timestamp ostatniego potwierdzenia.
 
-Rozpoznawanie jest deterministyczne: dokładny canonical path + zgodny Git identity → istniejący projekt; nieznana ścieżka + dokładnie jeden zgodny remote/root-commit kandydat → bezpieczny rebind; więcej kandydatów → wymagany jawny wybór; brak remote → path identity. Rebind nie zmienia `project_id`. Dwa równoległe klony tego samego remote są domyślnie osobnymi working copies, chyba że użytkownik jawnie wybierze istniejący project record.
+Rozpoznawanie jest deterministyczne: dokładny canonical root odnajduje istniejący project record; inny root zawsze otrzymuje nowy `project_id`, nawet jeżeli ma ten sam normalized remote i root commit. Normalized remote jest wyłącznie metadata do provenance, wykrywania relacji i weryfikacji jawnego `project rebind`; nigdy samodzielnie nie wybiera ani nie definiuje project ID. Rebind istniejącego ID do nowej ścieżki wymaga jawnej operacji, niedostępności starego root oraz zgodności Git identity/remote evidence. Dwa klony tego samego remote pozostają dwoma odrębnymi runtime identities. Shared identity dla multi-worktree i wielu working copies jest poza v1.
 
 ### 14.3 Atomic writes i locking
 
@@ -660,7 +666,7 @@ git:                                   # optional
 
 policy:                                # optional overrides of engine defaults
   max_repair_cycles: 2
-  max_tasks_per_run: 20
+  max_work_items_per_run: 20
   commit_mode: per_work_item            # per_work_item | delivery | disabled
   push: checkpointed                    # checkpointed | disabled
   pull_request: draft                   # draft | disabled
@@ -670,7 +676,6 @@ policy:                                # optional overrides of engine defaults
 checkpoints:                           # optional tightening/UX selection
   critical_risk: human                 # immutable minimum in v1
   before_push: human
-  before_merge: human                  # retained for forward compatibility; merge remains unavailable
 
 validation:                            # optional
   autodetect: true
@@ -688,6 +693,8 @@ providers:                             # optional provider selection, no secrets
 
 Adapter-specific `work.options` jest walidowane przez wybrany adapter, ale nadal odrzuca nieznane pola. Komendy są argv arrays; scalar shell commands nie są dozwolone w core schema.
 
+Core obsługuje trzy neutralne wartości `policy.commit_mode`: `per_work_item`, `delivery` i `disabled`. Dla `SpecKitAdapter` domyślną wartością v1 jest `per_work_item`, także gdy pole nie występuje w minimalnym `.agentgraph.yml`. Inny adapter może zadeklarować rekomendowany default, lecz resolved value jest zamrażana przez PolicyEngine na początku runu.
+
 ### 15.3 Required, optional, autodetectable, defaults
 
 | Klasa | Pola |
@@ -695,7 +702,7 @@ Adapter-specific `work.options` jest walidowane przez wybrany adapter, ale nadal
 | Wymagane w repo | `version`, `work.adapter` |
 | Opcjonalne project overrides | `project.name`, inspector, adapter paths/options, Git remote/base/branch strategy, policy limits/modes, checkpoint UX, validation additions, provider selection |
 | Autodetectable | project name, repo root/remote, base branch, Python/generic profile, package manager, tests/lint/type/build candidates, standard Spec Kit roots |
-| Engine defaults poza repo | wszystkie timeouts, heartbeat, output limits, redaction, repair=2, tasks/run=20, one writer, critical checkpoint, before-push checkpoint, draft-only PR, merge/deploy forbidden, retention/GC |
+| Engine defaults poza repo | wszystkie timeouts, heartbeat, output limits, redaction, repair=2, work items/run=20, one writer, critical checkpoint, before-push checkpoint, draft-only PR, merge/deploy forbidden, retention/GC |
 
 Precedence: CLI run override → `.agentgraph.yml` → global `~/.agentgraph/config.yml` → engine defaults. Bezpieczeństwo ma regułę monotoniczną: project/CLI może zaostrzyć policy, ale nie może wyłączyć critical checkpoint, writer serialization, allowlist enforcement, merge/deploy prohibition ani redakcji. Timeouts z obecnego `.specify/autopilot.yml` przechodzą do globalnych profili Codex/validation/push, nie do minimalnego pliku repo.
 
@@ -713,15 +720,19 @@ Twarde policy v1:
 - push wymaga delivery checkpointu;
 - PR musi być draft;
 - merge, auto-merge i deployment są niedostępne;
-- commit jest wykonywany tylko przez GitAdapter po PASS review/close, nigdy swobodną komendą agenta;
+- commit jest wykonywany tylko przez GitAdapter po successful validation, niezależnym PASS review i successful CLOSE_TASK; LLM nigdy nie otrzymuje capability commit;
+- w `commit_mode=per_work_item` GitAdapter tworzy albo reconciliuje dokładnie jeden commit dla zakończonego work item; receipt wiąże work item, package digest, validation evidence, review evidence, tree SHA i policy decision;
+- core obsługuje także `commit_mode=delivery` oraz `disabled`; `SpecKitAdapter` defaultuje v1 do `per_work_item`;
 - stale validation/review/checkpoint receipts są nieważne po zmianie tree/head/package/source revision;
-- `max_repair_cycles` i `max_tasks_per_run` są immutable w runie.
+- `max_repair_cycles`, `max_work_items_per_run` i resolved `commit_mode` są immutable w runie.
 
 ### 16.2 Checkpoint record
 
-Checkpoint wiąże decyzję z `project_id`, `run_id`, `kind`, `state_version`, `task_package_digest`, `head_sha/tree_digest`, `requested_action`, `nonce_hash`, actor, channel, timestamp i expiry. Approval jest single-use. Rejection zachowuje wszystkie artefakty, zapisuje reason i kończy run jako blocked. Zmiana package/head unieważnia approval.
+`CheckpointService` v1 działa wyłącznie jako lokalny, interaktywny checkpoint CLI. `request()` generuje kryptograficznie losowy nonce i wyświetla redacted action summary; `approve()` przyjmuje nonce oraz actor string z lokalnej sesji. Record wiąże decyzję z `project_id`, `run_id`, `kind`, exact `state_version`, `task_package_digest`, `head_sha/tree_digest`, pełnym `requested_operation_set`, `nonce_hash`, actor, local CLI channel, timestamp i expiry. Approval jest single-use i po wykorzystaniu zostaje atomowo oznaczony jako consumed.
 
-Delivery checkpoint autoryzuje dokładnie zestaw operacji wymieniony w request (np. commit brakujących zatwierdzonych zmian, push konkretnego SHA i utworzenie draft PR dla base/head). Nie autoryzuje merge. Przed każdym side effectem policy token jest ponownie sprawdzany.
+Actor string jest lokalną informacją audytową, nie silną kryptograficzną tożsamością użytkownika. Signed approvals i remote approval service nie należą do v1. Rejection zachowuje wszystkie artefakty, zapisuje reason i kończy run jako blocked. Wygaśnięcie, zmiana state version, package digest, head/tree digest albo requested operation set unieważnia approval.
+
+Delivery checkpoint autoryzuje dokładnie zestaw operacji wymieniony w request: w `commit_mode=delivery` może obejmować delivery commit, a następnie push konkretnego SHA i utworzenie draft PR dla dokładnego base/head. Przy `per_work_item` wcześniejsze commity są już związane z item receipts, więc checkpoint autoryzuje tylko pozostałe delivery operations. Nie autoryzuje merge. Przed każdym side effectem policy token jest ponownie sprawdzany.
 
 ## 17. Recovery Model
 
@@ -755,7 +766,7 @@ Run może zakończyć recovery tylko jednym z rezultatów: `RESUMABLE_AT(node, s
 |---|---|---|---|---|---|
 | `local_autopilot/epic_pipeline.py` | epic lifecycle, tasks loop, checks, receipts, push/PR/closure | bardzo wysokie: Spec Kit, repo paths, GitHub, Python | REPLACE | GraphEngine + DeliveryScope nodes | zachowania rozłożyć na jawne node'y; stary plik usunąć po cutover |
 | `local_autopilot/milestone_pipeline.py` | sekwencja epiców i merge-wait closure | wysokie: M/E hierarchy | REPLACE | WorkSource hierarchy + MORE_WORK | core nie wymaga milestone; merge workflow poza v1 |
-| `local_autopilot/task_pipeline.py` | preflight→Codex→validate→close→commit | bardzo wysokie: Spec Kit i lokalne moduły | REPLACE | task subgraph | rozdzielić semantic review, validate i close |
+| `local_autopilot/task_pipeline.py` | preflight→Codex→validate→close→commit | bardzo wysokie: Spec Kit i lokalne moduły | REPLACE | work-item subgraph | rozdzielić semantic review, validate i close |
 | `local_autopilot/task_state_machine.py` | liniowy task lifecycle, receipts, reconcile | wysokie: tasks.md/.specify | REPLACE | GraphState + edge table + journal | uniwersalne guards zachować jako testowane reguły |
 | `local_autopilot/models.py` | run/request/result DTO | średnie, M/E/T-specific | REPLACE | versioned core models | nowe modele są bogatsze i adapter-neutralne |
 | `local_autopilot/codex_adapter.py` | Codex detection, prompt, JSON contract | średnie: `$speckit-loop`, Codex CLI | ADAPT | `CodexProvider` | zachować CLI detection/output schema; usunąć Spec Kit prompt i transition logic |
@@ -810,7 +821,7 @@ Migracja jest stranglerem; obecny autopilot pozostaje bez zmian do jawnego cutov
 | 3. Universal infrastructure | process runner, GitAdapter read operations, evidence/logging/redaction | przenośne repo snapshot i bezpieczne subprocessy | work source i writes | Windows/Linux tests, timeout/cancel/tree-kill, no-shell and secret-redaction tests |
 | 4. SpecKit adapter | read-only discovery, hierarchy, dependencies, artifacts, revision, completion contract stub | neutralne WorkItems z tego repo | task mutation, Codex, commit | golden fixtures z obecnych manifests/tasks + consistency parity |
 | 5. Read-only graph | DISCOVER→PREFLIGHT→SELECT→EXPLORE→PACKAGE→RISK w shadow mode | realny read-only run i external runtime | implementation, close, Git writes | output package/risk reviewed against current `$speckit-loop` on several tasks; repo byte-identical |
-| 6. First write-capable vertical slice | CodexProvider programmer, allowlist sandbox, VALIDATE, REVIEW; one explicit low-risk task in disposable clone | jeden task dochodzi do PASS review bez closure/commit | repair, multi-task, PR | no scope drift, independent review evidence, crash resume from post-write |
+| 6. First write-capable vertical slice | CodexProvider programmer, allowlist sandbox, VALIDATE, REVIEW; one explicit low-risk work item in disposable clone | jeden work item dochodzi do PASS review bez closure/commit | repair, multi-item loop, PR | no scope drift, independent review evidence, crash resume from post-write |
 | 7. Repair graph | CLASSIFY_FAILURE, programmer repair, debugger, counter/limit | deterministycznie bounded repair loop | delivery | tests for 0/1/2/max cycles, timeout not retried, no allowlist expansion |
 | 8. Delivery graph | adapter close CAS, commit policy, delivery review/checkpoint, push reconcile, GitHub draft PR | idempotent draft PR flow | merge/deploy | duplicate-run does not duplicate close/commit/PR; stale approval blocked |
 | 9. Integration with this repo | dodać minimalny `.agentgraph.yml` w osobnym, przyszłym zadaniu; configure external engine | engine steruje `ai-content-generation` | usunięcie starego autopilota | full run in disposable clone passes current project checks and leaves only intended tracked changes |
@@ -824,7 +835,8 @@ Migracja jest stranglerem; obecny autopilot pozostaje bez zmian do jawnego cutov
 V1 zawiera:
 
 - local, single-host execution i CLI;
-- Python 3.11+ implementation engine'u, wybrane ze względu na bezpieczną migrację obecnych komponentów;
+- niezależne repo `piotrbarabasz/agent-graph-engine`, Python 3.11+, package namespace `agentgraph` i CLI `agentgraph`;
+- editable/local-source lub direct-from-Git installation bez wymagania publikacji PyPI;
 - explicit graph i deterministic policy/transition engine;
 - external persistent runtime, locking, resume i crash recovery;
 - CodexProvider;
@@ -832,7 +844,7 @@ V1 zawiera:
 - SpecKitAdapter;
 - PythonProjectInspector oraz GenericProjectInspector;
 - typed validation bez Python-specific core;
-- baseline/scope enforcement, semantic task review, delivery review i bounded repairs;
+- baseline/scope enforcement, semantic work-item review, delivery review i bounded repairs;
 - critical-risk oraz before-push human checkpoints;
 - engine-owned commits według policy, push konkretnego SHA i draft PR creation;
 - sekwencyjne write agents.
@@ -849,10 +861,13 @@ Poza v1 pozostają:
 - distributed/remote execution i workers;
 - równoległe read/write agents oraz fine-grained workspace isolation;
 - web dashboard i remote approval service;
+- signed approval artifacts oraz checkpoint przed merge po przyszłym udostępnieniu merge capability;
+- shared project identity dla multi-worktree lub wielu working copies;
 - multi-repo graphs/transactions;
 - automatic merge, deployment, release i rollback orchestration;
 - long-running webhook/event-driven work discovery;
-- policy-as-code plugins ładowane z zewnętrznego registry.
+- policy-as-code plugins ładowane z zewnętrznego registry;
+- publikacja PyPI, standalone binary i formalne release governance.
 
 V1 celowo nie ma extension code execution ładowanego z repo użytkownika. Przyszłe pluginy również muszą być instalowane po stronie engine'u, nie importowane z target repo.
 
@@ -878,10 +893,13 @@ V1 celowo nie ma extension code execution ładowanego z repo użytkownika. Przys
 18. Write node może zmieniać tylko zamrożoną allowlistę; scope expansion kończy run jako blocked.
 19. Evidence użyte do decyzji jest związane z wersją źródła pracy, package digest i Git tree/head.
 20. Commit, push i PR wymagają policy tokenów; merge i deployment są niedostępne w v1.
-21. Work source hierarchy jest opcjonalna; core wymaga tylko neutralnego `work_item`.
+21. Work source hierarchy jest opcjonalna i opaque; core wymaga tylko neutralnego `work_item` i `DeliveryScope`, a nazwy milestone/epic/task mogą istnieć wyłącznie w adapter metadata.
 22. Repo-local secrets, credentials, generated engine runtime i cache nigdy nie są tracked.
 23. Rejection checkpointu zachowuje artefakty i zapisuje decyzję.
 24. Write side effects są idempotentne albo mają obowiązkowy reconcile contract.
+25. Każdy canonical working copy ma osobny `project_id`; normalized remote nigdy samodzielnie nie definiuje ani nie współdzieli runtime identity.
+26. `SpecKitAdapter` v1 rozwiązuje brak jawnego override do `commit_mode=per_work_item`, a każdy taki commit ma kompletne item/package/validation/review/tree/policy evidence.
+27. Human checkpoint v1 jest lokalny, interaktywny, single-use i związany z nonce, actor string, expiry oraz dokładnymi digestami i requested operation set.
 
 ## 23. Acceptance Criteria for Design Freeze
 
@@ -897,48 +915,13 @@ Design v1 jest zamrożony, gdy niezależny reviewer potwierdzi wszystkie punkty:
 - migration matrix obejmuje wszystkie znalezione komponenty, w tym dodatkowe milestone/UI/scope/hook/check modules;
 - migracja ma read-only shadow phase, drugi niezależny repo i osobny delete-after-cutover gate;
 - test plan przyszłej implementacji obejmuje exhaustive transitions, policy bypass attempts, fault injection, stale receipts i duplicate external operations;
+- `DELIVERY_REVIEW` operuje wyłącznie na neutralnym `DeliveryScope`, a source-specific hierarchy pozostaje opaque adapter metadata;
+- project identity, Spec Kit commit default, local checkpoint protocol oraz repository/package/CLI identity są zamrożone w kontraktach v1;
+- aktywny config surface nie deklaruje checkpointu ani capability dla zabronionego merge;
 - żaden punkt dokumentu nie autoryzuje implementacji, refaktoru, commit, push, PR, merge ani zmiany `.specify` w tym zadaniu.
+
+**DESIGN FREEZE VERDICT: READY FOR GRAPH CORE IMPLEMENTATION**
 
 ## 24. Open Questions Before Implementation
 
-Poniższe kwestie są jedynymi decyzjami, których nie można wiarygodnie rozstrzygnąć z obecnego repo i wymagań.
-
-### Q1. Tożsamość dwóch aktywnych klonów tego samego remote
-
-**Problem:** external runtime musi rozpoznać repo po path i remote, ale ten sam remote może mieć kilka klonów z różnymi branchami i worktrees.
-
-- Wariant A: każdy canonical working copy ma osobny `project_id` (rekomendowany). Izoluje locki, baseline i run history; wymaga jawnego rebind po przeniesieniu katalogu.
-- Wariant B: jeden `project_id` na normalized remote. Ułatwia historię globalną, ale blokuje równoległe klony i grozi pomieszaniem root/head.
-- Wariant C: project identity + osobne `workspace_id`. Najbardziej elastyczne, ale rozszerza modele i recovery v1.
-
-**Rekomendacja:** A w v1, z bezpiecznym external registry rebind; C dopiero przy multi-worktree/distributed support.
-
-### Q2. Domyślna granularność commitów
-
-**Problem:** obecny autopilot ma `auto_commit: true`, manifesty deklarują one commit per task, a nowszy manager-gated loop zabrania commitów. Wymagania nowego engine'u żądają policy control, ale nie ustalają domyślnej historii Git.
-
-- Wariant A: commit po każdym zamkniętym work item (rekomendowany dla Spec Kit). Najlepsze recovery i śledzenie evidence, więcej commitów.
-- Wariant B: jeden commit dla całego delivery scope. Czystsza historia, gorsze resume i związek task→SHA.
-- Wariant C: brak automatycznych commitów; checkpoint/human wykonuje je ręcznie. Najbardziej konserwatywne, ale utrudnia prawdziwie resumable delivery i draft PR automation.
-
-**Rekomendacja:** A jako domyślny profil SpecKitAdapter, przy neutralnym `policy.commit_mode` pozwalającym adapterom/projektom wybrać B lub C. Przed implementacją potrzebna jest decyzja właściciela repo, czy current integration może użyć A.
-
-### Q3. Siła i kanał lokalnego human checkpointu
-
-**Problem:** wymagany jest audytowalny human checkpoint, lecz nie określono, czy lokalne potwierdzenie CLI wystarcza, ani jak identyfikować approvera.
-
-- Wariant A: interaktywny CLI z losowym nonce i lokalnym actor string (rekomendowany dla local-only v1). Prosty, offline, ale nie daje silnej tożsamości.
-- Wariant B: podpisany plik approval/import. Lepszy audit i non-interactive resume, większa złożoność kluczy.
-- Wariant C: zewnętrzny approval service. Najsilniejszy audit, ale łamie local-only minimalizm i rozszerza v1.
-
-**Rekomendacja:** A w v1 z pełnym digest binding i single-use nonce; zaprojektować record tak, aby później obsłużył B bez zmiany GraphState.
-
-### Q4. Kanał dystrybucji i ownership nowego projektu
-
-**Problem:** repo określa nazwę i niezależność, ale nie licencję, organizację, registry, sposób aktualizacji ani wspierane platformy dystrybucji.
-
-- Wariant A: osobne repo Python package + CLI publikowane do prywatnego/publicznego PyPI (rekomendowany technicznie). Najlepiej wykorzystuje obecny kod i testy.
-- Wariant B: standalone binary bundle budowany z Pythona. Łatwiejsza instalacja, trudniejsze pluginy/debug.
-- Wariant C: source checkout/`pipx` z Git. Najszybszy start, słabszy release governance.
-
-**Rekomendacja:** A, z `pipx` jako sposobem instalacji CLI; decyzja organizacyjna o ownerze, licencji i registry musi poprzedzić utworzenie nowego repo.
+No blocking open questions remain for Graph Core implementation.
