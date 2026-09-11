@@ -6,14 +6,14 @@ This document preserves historical evidence from the former XTTS-v2 version of E
 
 ## Purpose
 
-Confirm that XTTS-v2 can generate a short Polish WAV on the target machine before the agent changes production dependency declarations. This spike is environment evidence, not a CI test and not an implementation task.
+Confirm that XTTS-v2 can generate a short Polish WAV on the target machine before changing optional dependency declarations. This spike is environment evidence, not a CI test and not an implementation task.
 
 ## Safety and repository rules
 
 - Use only a speaker recording that you own or have explicit permission to use.
 - Store speaker references under an ignored local directory such as `.runtime/voices/`.
 - Do not commit voice recordings, embeddings, model weights, generated WAV files or credentials.
-- Do not ask the autopilot to guess CUDA, PyTorch, torchaudio or Coqui package versions.
+- Use the documented compatible CUDA, PyTorch, torchaudio and Coqui package versions.
 
 ## Minimum experiment
 

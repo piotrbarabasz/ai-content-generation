@@ -12,7 +12,8 @@ import wave
 
 import pytest
 
-from app.api.dependencies import build_api_dependencies
+from app.api import dependencies as api_dependencies
+from app.api.dependencies import ApiSettings, build_api_dependencies
 from app.api.main import create_app
 from app.domain.enums import ProviderType
 from app.providers.tts_capabilities import TTSCapabilities
@@ -251,6 +252,54 @@ def _request(**overrides: Any) -> dict[str, Any]:
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.parametrize("configured_root", [None, Path(".local/custom-previews")])
+def test_api_preview_storage_and_reload_without_development_metadata(
+    tmp_path: Path, monkeypatch, configured_root: Path | None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    provider = _FakeProvider()
+    monkeypatch.setattr(api_dependencies, "build_tts_catalog", _catalog)
+
+    def preview_service(**kwargs):
+        return TTSPreviewService(
+            **kwargs,
+            provider_builder=lambda _: provider,
+            tempo_processor=_FakeTempoProcessor(),
+        )
+
+    monkeypatch.setattr(api_dependencies, "TTSPreviewService", preview_service)
+    settings = (
+        ApiSettings(tts_preview_root=configured_root)
+        if configured_root is not None
+        else None
+    )
+    dependencies = build_api_dependencies(settings)
+    app = _app(dependencies.tts_preview_service)
+    status, _, body = _post(app, _request())
+    assert status == 200
+    first = json.loads(body)
+    expected_root = configured_root or Path(".runtime/tts-previews")
+    assert list(expected_root.rglob("*.wav"))
+    assert list(expected_root.rglob("*.json"))
+    assert not Path(".specify").exists()
+
+    # A fresh service must reuse the persisted bytes, without a real provider run.
+    reloaded = build_api_dependencies(settings)
+    reloaded_app = _app(reloaded.tts_preview_service)
+    status, _, body = _post(reloaded_app, _request())
+    assert status == 200
+    repeated = json.loads(body)
+    assert repeated["previewId"] == first["previewId"]
+    assert repeated["cached"] is True
+    assert provider.synthesis_count == 1
+    status, headers, audio = asyncio.run(
+        _call(reloaded_app, "GET", repeated["audioUrl"])
+    )
+    assert status == 200
+    assert headers["content-type"] == "audio/wav"
+    assert sha256(audio).hexdigest() == first["checksum"]
 
 
 def test_preview_create_cache_identity_and_wav_delivery(tmp_path: Path) -> None:

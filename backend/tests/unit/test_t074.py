@@ -308,9 +308,9 @@ def test_m006_operational_decision_record_is_linked_and_descriptive() -> None:
     docs_index = (root / "docs" / "INDEX.md").read_text(encoding="utf-8")
     decision_doc = (root / "docs" / "tts" / "M006_PROVIDER_DECISION.md").read_text(encoding="utf-8")
 
-    assert "docs/tts/M006_PROVIDER_DECISION.md" in docs_index
-    assert "docs/tts/RUNTIME_PROFILES.md" in docs_index
-    assert "docs/tts/PROVIDER_COMPARISON.md" in docs_index
+    assert "(tts/M006_PROVIDER_DECISION.md)" in docs_index
+    assert "(tts/RUNTIME_PROFILES.md)" in docs_index
+    assert "(tts/PROVIDER_COMPARISON.md)" in docs_index
     assert "Provider roles" in decision_doc
     assert "Runtime profiles" in decision_doc
     assert "Licensing and usage policy" in decision_doc

@@ -1,13 +1,13 @@
 # TTS Runtime Profiles
 
 The local TTS stack is split into isolated virtual environments so the heavy
-runtime dependencies stay out of the default CI and agent interpreter.
+runtime dependencies stay out of the default application and test environment.
 
 ## Profile map
 
 | Profile | Environment | Purpose | Explicit interpreter |
 |---|---|---|---|
-| CI bootstrap | `.venv-ci311` | Default tests, hooks and agent tooling | `.venv-ci311\Scripts\python.exe` |
+| Application/tests | `.venv-ci311` | Lightweight backend and offline tests | `.venv-ci311\Scripts\python.exe` |
 | Chatterbox V3 | `.venv-tts311` | Optional local Chatterbox runtime and demo smoke | `.venv-tts311\Scripts\python.exe` |
 | Piper | `.venv-piper311` | Local Piper preview and comparison runtime | `.venv-piper311\Scripts\python.exe` |
 | XTTS-v2 | `.venv-xtts311` | Evaluation-only XTTS comparison runtime | `.venv-xtts311\Scripts\python.exe` |
@@ -15,7 +15,8 @@ runtime dependencies stay out of the default CI and agent interpreter.
 ## Rules
 
 - Use the explicit interpreter for the selected profile.
-- Do not activate a profile with `Activate.ps1` or re-point `agent.python`.
+- Do not activate a profile implicitly from a setup or runtime script.
+- Keep the base application environment separate from optional TTS dependencies.
 - Keep generated WAVs, reports, caches and comparison outputs under ignored
   runtime directories such as `.runtime/`.
 - Keep voice references and model caches outside tracked paths.

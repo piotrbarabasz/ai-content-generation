@@ -24,7 +24,7 @@ class T066RuntimeProfileTests(unittest.TestCase):
             "check-tts-runtime.ps1",
             "run-tts-demo.ps1",
             "Do not activate a profile",
-            "agent.python",
+            "Keep the base application environment separate",
             "Python 3.11",
             "torch",
             "torchaudio",
@@ -50,8 +50,7 @@ class T066RuntimeProfileTests(unittest.TestCase):
             self.assertIn(token, setup)
 
         for forbidden in [
-            "git config --local agent.python",
-            "git config --local core.hooksPath",
+            "git config",
             "Activate.ps1",
             "hf_",
             "sk-",
@@ -76,7 +75,7 @@ class T066RuntimeProfileTests(unittest.TestCase):
         ]:
             self.assertIn(token, check)
 
-        self.assertNotIn("git config --local agent.python", check)
+        self.assertNotIn("git config", check)
 
     def test_demo_script_uses_the_tts_profile_and_explicit_output_dir(self) -> None:
         demo = DEMO_PATH.read_text(encoding="utf-8")
@@ -90,7 +89,7 @@ class T066RuntimeProfileTests(unittest.TestCase):
         ]:
             self.assertIn(token, demo)
 
-        self.assertNotIn("git config --local agent.python", demo)
+        self.assertNotIn("git config", demo)
 
     def test_gitignore_covers_generated_envs_and_local_reference_audio(self) -> None:
         gitignore = GITIGNORE_PATH.read_text(encoding="utf-8")

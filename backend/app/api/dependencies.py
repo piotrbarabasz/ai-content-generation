@@ -17,7 +17,7 @@ class ApiSettings:
     version: str = "0.1.0"
     description: str = "FastAPI application for the AI Content Studio MVP."
     api_prefix: str = "/api/v1"
-    tts_preview_root: Path = Path(".specify/runtime/tts-previews")
+    tts_preview_root: Path = Path(".runtime/tts-previews")
 
 
 @dataclass(slots=True, frozen=True)

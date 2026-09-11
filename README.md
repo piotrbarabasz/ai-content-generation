@@ -1,183 +1,95 @@
 # AI Content Studio
 
-[![agent-system-validation](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/agent-system-validation.yml/badge.svg?branch=master)](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/agent-system-validation.yml)
+[![tests](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml)
 
-AI Content Studio is a Python-first modular workflow engine for AI-assisted content production. The MVP focuses on two workflows:
+AI Content Studio is a Python backend for configurable content production:
+short video and long-form script with optional voiceover. It contains domain
+models, a content workflow engine, artifact storage, modular processing,
+FastAPI endpoints, deterministic mocks and optional real TTS/publishing adapters.
 
-- Short Video (`short_video`)
-- Long-form Script + Voiceover (`long_form_script_voiceover`)
+The engine and modules work through direct application composition. The run API
+currently stores status records without invoking the engine, and mock rendering
+produces references rather than playable video. Completing that application path
+is the first priority in [the product roadmap](docs/ROADMAP.md).
 
-The first implementation slice establishes the backend foundation, domain models, workflow configuration validation, local development conventions and secret hygiene. Production provider integrations, workflow execution, modules and API endpoints are intentionally deferred to later tasks.
+## Setup and tests
 
-## Repository Layout
+Use Python 3.11+; Python 3.11 is the CI and documented optional TTS baseline.
+Create an isolated environment and activate it using your shell's normal command.
+On Windows, `py -3.11 -m venv .venv` selects Python 3.11 explicitly; on Linux/macOS,
+use `python3.11 -m venv .venv`. An existing `.venv-ci311` is also suitable.
 
-- `backend/app/` - backend package
-- `backend/app/domain/` - domain models and validation
-- `backend/app/api/` - API-facing schemas and future routes
-- `backend/tests/` - unit, integration and static tests
-- `docs/spec-kit/` - product, domain, module and preset source documents
-- `docs/source-repo-insights/` - source repository analysis for shorts and long-form pipelines
-- `specs/001-ai-content-studio/` - active feature specification, plan and tasks
-- `.specify/workstreams/` - milestone and epic manifests grouping feature tasks
+From the repository root, with that environment's `python` active:
 
-## Local Setup
-
-Use Python 3.11 or newer and prefer the active `python` from your virtual environment.
-
-```powershell
+```sh
 python -m pip install -e .
 python -m pytest backend/tests
+git diff --check
 ```
 
-The tests are written with `unittest` and are also pytest-discoverable once pytest is installed.
+Alternatively, `scripts/setup-dev.ps1` or `sh scripts/setup-dev.sh` installs the
+project and runs the test suite using the active Python. Setup does not install
+Git hooks. CI performs checkout, Python setup, editable installation and pytest.
+Default tests use mocks/fakes and require no provider credentials, GPU or models.
 
-## Developer Setup
+## API
 
-Install the local Git hooks once after clone. This is a one-time setup. The
-installer pins the active Python interpreter into local Git config as
-`agent.python`, and the hooks run on commit and push by reading that pinned
-interpreter first. A local `.venv` is recommended.
-
-```powershell
-scripts\setup-dev.ps1
-```
+The application entrypoint is `app.api.main:app`. To serve it locally, install
+an ASGI server in the application environment, for example:
 
 ```sh
-./scripts/setup-dev.sh
+python -m pip install uvicorn
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-If you only want to install the hooks, run:
+OpenAPI and interactive documentation are available at `/openapi.json` and `/docs`.
+Projects, configurations, runs, approvals and localization records are currently
+in-memory. Catalog discovery and cached voice-preview routes already work through
+application services; real synthesis requires its separately configured runtime.
+See [API and storage](docs/architecture/api-and-storage.md) for exact boundaries.
 
-```powershell
-scripts\install-git-hooks.ps1
-```
+## Repository layout
 
-```sh
-./scripts/install-git-hooks.sh
-```
+- `backend/app/domain/` ? validated entities and configuration.
+- `backend/app/workflow/` ? content execution, registries, presets and usage hooks.
+- `backend/app/modules/` ? content-processing and export modules.
+- `backend/app/providers/` ? protocols, mocks and optional adapters.
+- `backend/app/storage/` ? artifact persistence and manifests.
+- `backend/app/tts/` ? narration, cache, preview and selection services.
+- `backend/app/api/` ? HTTP schemas, routes and service dependencies.
+- `backend/app/tooling/` ? TTS smoke and provider comparison commands.
+- `backend/tests/` ? unit, integration and product static checks.
+- `scripts/` ? developer setup and explicit TTS runtime operations.
+- `experiments/tts_local/` ? isolated experiments outside the production catalog.
+- `docs/architecture/` ? current architecture; `docs/archive/` ? historical evidence.
 
-Verify the local hook path after installation:
+## TTS and publishing
 
-```powershell
-git config --local --get core.hooksPath
-```
+Chatterbox Multilingual V3 and curated Piper voices remain available behind the
+existing TTS contract. XTTS-v2 remains evaluation-only. Technical chunking,
+interruption/resume, PCM validation, benchmarks and provider-neutral tempo are
+implemented. Preview cache defaults to ignored `.runtime/tts-previews`.
 
-```sh
-git config --local --get core.hooksPath
-```
+Optional runtimes stay in separate environments. Follow the documented setup
+rather than installing heavy model packages into the base test environment:
 
-The expected value is:
+- [Runtime profiles](docs/tts/RUNTIME_PROFILES.md)
+- [Chatterbox setup](docs/tts/CHATTERBOX_SETUP.md)
+- [Piper setup](docs/tts/PIPER_SETUP.md)
+- [TTS catalog and voice preview API](docs/tts/TTS_SELECTION_API.md)
+- [YouTube publishing/localization handoff](docs/publishing/YOUTUBE_HANDOFF.md)
 
-```text
-.githooks
-```
+## Development
 
-Verify the pinned interpreter too:
+Read [AGENTS.md](AGENTS.md), inspect existing code, implement one coherent change
+and run its tests plus full pytest. No development orchestration system or task
+metadata is required. Keep source language separate from downstream localization,
+preserve artifacts and review history, and isolate providers behind contracts.
 
-```powershell
-git config --local --get agent.python
-```
+Use `.env.example` only as a placeholder reference; settings must be wired through
+explicit runtime configuration. Never commit secrets, private voices, weights,
+caches or generated outputs. Existing ignored data from retired tooling remains
+private and is not consumed by the application.
 
-If your environment already has a suitable Python 3.11+ interpreter active, the
-setup scripts reuse that interpreter for install, hook setup, and the tooling
-smoke test.
-
-The hook installation can be verified with:
-
-```powershell
-git config --local --get core.hooksPath
-```
-
-The expected value is `.githooks`.
-
-## Configuration
-
-Runtime configuration should come from environment variables or local config files that are excluded from version control. Use `.env.example` as a placeholder-only reference.
-
-Do not commit credentials, API keys, generated artifacts or agent runtime state.
-
-## Agent-assisted Spec Kit implementation
-
-The project Codex workflow implements one Spec Kit task per explicit run. The
-happy path is:
-
-`agent_task_preflight` -> manager -> explorer -> manager -> programmer ->
-`agent_task_finalize` -> reviewer -> closer
-
-The debugger is not part of the happy path. It is only used when the fresh
-finalize report or reviewer report shows a real FAIL that can be fixed inside
-the task allowlist. After any repair, the root orchestrator reruns
-`python -m backend.app.tooling.agent_task_finalize --task <task> --json`
-before handing evidence back to the reviewer.
-
-The root orchestrator captures `python -m backend.app.tooling.agent_task_preflight --selector <selector> --json`
-for task selection and baseline evidence, then runs the bounded implementation
-task, and finally captures `python -m backend.app.tooling.agent_task_finalize --task <task> --json`
-for review evidence. The manager selects or validates the task from the
-preflight report, gates it on real dependencies and the task baseline, and
-prepares a bounded package for implementation and independent review. It does
-not run the old prerequisite script or any extra repository validation module
-in the loop.
-
-The preflight JSON also exposes the selected feature context through
-`feature_dir`, `spec_path`, `plan_path`, `tasks_path` and `available_docs` so
-the loop can load the correct specification artifacts without guessing paths.
-
-Start the next dependency-ready task with:
-
-```text
-$speckit-loop next
-```
-
-Or request one exact task with:
-
-```text
-$speckit-loop T006
-$speckit-loop T006A
-```
-
-The task is closed only after the reviewer returns `PASS` and confirms it is safe to close. The loop never starts another task automatically and does not commit, push or deploy changes. Review the complete diff and validation results before making any manual commit.
-
-Delivery hierarchy is milestone -> epic -> task -> commit: an epic groups tasks on one branch and into one pull request, while each task remains an independent `$speckit-loop` run and a human-controlled commit.
-
-Before running `$speckit-loop`, place the active epic ID (for example `E001`)
-in the local ignored file `.specify/runtime/active-epic` and check out the
-branch declared by that epic manifest. The loop consumes the preflight report
-and does not run repository validation modules or raw Git inventory commands
-directly. If preflight fails, the loop stops immediately and does not start
-any agent.
-
-Task IDs are exact uppercase identifiers matching `T\d{3}[A-Z]?`, for example `T006` or `T006A`.
-
-After all tasks in an epic are complete, run `$speckit-epic-review` for a
-read-only review of the completed epic using the finalizer reports, tests,
-acceptance criteria, security and scope. It reports whether a human may create
-the PR; it never creates, merges or pushes one.
-
-When the review passes, the root orchestrator writes an ignored receipt at
-`.specify/runtime/reviews/<EPIC_ID>.json` using the current `HEAD` SHA and the
-current base SHA. A later commit or base-branch change invalidates that
-receipt, so `$speckit-epic-pr` must re-check both SHAs before trusting it.
-
-When the reviewed epic branch is already pushed, `$speckit-epic-pr` can create
-only a draft PR after all safety gates pass. It never pushes, merges, enables
-auto-merge or changes epic status; otherwise it prepares title and body for
-manual use.
-
-The GitHub Actions validation workflow runs the local hook runner in CI mode
-with an explicit base SHA and head SHA so the diff checks stay range-aware on
-both pull requests and pushes to `master`.
-
-## Design References
-
-- `docs/spec-kit/00-product-context.md`
-- `docs/spec-kit/01-source-repo-synthesis.md`
-- `docs/spec-kit/02-domain-model-draft.md`
-- `docs/spec-kit/03-module-contracts-draft.md`
-- `docs/spec-kit/04-workflow-presets-draft.md`
-- `docs/spec-kit/05-mvp-boundary.md`
-- `docs/spec-kit/06-analysis-remediation.md`
-- `docs/source-repo-insights/shorts/repo-modular-pipeline-insights.md`
-- `docs/source-repo-insights/shorts/repo-product-insights.md`
-- `docs/source-repo-insights/long-form/repo-modular-pipeline-insights.md`
-- `docs/source-repo-insights/long-form/repo-product-insights.md`
+See [documentation index](docs/INDEX.md), [architecture](docs/architecture/overview.md),
+[roadmap](docs/ROADMAP.md) and [historical task audit](docs/archive/legacy-task-audit.md).

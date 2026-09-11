@@ -1,1 +1,1 @@
-"""Repository tooling for static development metadata."""
+"""Human-operated TTS smoke and provider comparison tools."""

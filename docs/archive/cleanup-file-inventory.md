@@ -1,0 +1,470 @@
+# Cleanup file inventory
+
+Final local working-tree inventory for `2026-09-11`.
+
+- Branch: `chore/remove-legacy-agent-orchestration`
+- HEAD/base: `bdfd9c9aa82c126e54a03947ac1b3eee4720e847` (unchanged)
+- No staged files, commits, pushes, merges or deployments.
+- Local `core.hooksPath=.githooks` and `agent.python` were removed; unrelated Git
+  configuration and existing ignored runtime data were preserved.
+- Git reports the six document relocations as deletions plus untracked additions
+  because nothing was staged. Of 180 deleted paths, 174 are retired files and six
+  have preserved archive destinations.
+- The domain, modules, providers, storage, TTS services and workflow source files
+  match the baseline; the runtime code change is the API's default preview root.
+
+| Git category | Files |
+| --- | ---: |
+| Modified | 21 |
+| Deleted | 180 |
+| Added (untracked) | 17 |
+
+## Modified
+
+- `.gitignore`
+- `AGENTS.md`
+- `README.md`
+- `backend/app/api/dependencies.py`
+- `backend/app/tooling/__init__.py`
+- `backend/requirements.txt`
+- `backend/tests/integration/test_t087.py`
+- `backend/tests/static/test_secret_hygiene.py`
+- `backend/tests/static/test_t066.py`
+- `backend/tests/static/test_t069.py`
+- `backend/tests/static/test_t075.py`
+- `backend/tests/static/test_t089.py`
+- `backend/tests/unit/test_t074.py`
+- `docs/INDEX.md`
+- `docs/tts/M006_PROVIDER_DECISION.md`
+- `docs/tts/MANUAL_SPIKE.md`
+- `docs/tts/PIPER_SETUP.md`
+- `docs/tts/RUNTIME_PROFILES.md`
+- `pyproject.toml`
+- `scripts/setup-dev.ps1`
+- `scripts/setup-dev.sh`
+
+## Deleted
+
+- `.agents/skills/speckit-analyze/SKILL.md`
+- `.agents/skills/speckit-checklist/SKILL.md`
+- `.agents/skills/speckit-clarify/SKILL.md`
+- `.agents/skills/speckit-constitution/SKILL.md`
+- `.agents/skills/speckit-converge/SKILL.md`
+- `.agents/skills/speckit-epic-close/SKILL.md`
+- `.agents/skills/speckit-epic-close/agents/openai.yaml`
+- `.agents/skills/speckit-epic-pr/SKILL.md`
+- `.agents/skills/speckit-epic-pr/agents/openai.yaml`
+- `.agents/skills/speckit-epic-review/SKILL.md`
+- `.agents/skills/speckit-epic-review/agents/openai.yaml`
+- `.agents/skills/speckit-epic-start/SKILL.md`
+- `.agents/skills/speckit-implement/SKILL.md`
+- `.agents/skills/speckit-loop/SKILL.md`
+- `.agents/skills/speckit-plan/SKILL.md`
+- `.agents/skills/speckit-specify/SKILL.md`
+- `.agents/skills/speckit-tasks/SKILL.md`
+- `.agents/skills/speckit-taskstoissues/SKILL.md`
+- `.codex/agents/spec-closer.toml`
+- `.codex/agents/spec-debugger.toml`
+- `.codex/agents/spec-epic-reviewer.toml`
+- `.codex/agents/spec-explorer.toml`
+- `.codex/agents/spec-manager.toml`
+- `.codex/agents/spec-programmer-fast.toml`
+- `.codex/agents/spec-programmer-high.toml`
+- `.codex/agents/spec-programmer.toml`
+- `.codex/agents/spec-reviewer.toml`
+- `.codex/config.toml`
+- `.githooks/post-commit`
+- `.githooks/pre-commit`
+- `.githooks/pre-push`
+- `.github/workflows/agent-system-validation.yml`
+- `.specify/autopilot.yml`
+- `.specify/feature.json`
+- `.specify/init-options.json`
+- `.specify/integration.json`
+- `.specify/integrations/codex.manifest.json`
+- `.specify/integrations/speckit.manifest.json`
+- `.specify/memory/constitution.md`
+- `.specify/scripts/powershell/check-prerequisites.ps1`
+- `.specify/scripts/powershell/common.ps1`
+- `.specify/scripts/powershell/create-new-feature.ps1`
+- `.specify/scripts/powershell/setup-plan.ps1`
+- `.specify/scripts/powershell/setup-tasks.ps1`
+- `.specify/templates/checklist-template.md`
+- `.specify/templates/constitution-template.md`
+- `.specify/templates/plan-template.md`
+- `.specify/templates/spec-template.md`
+- `.specify/templates/tasks-template.md`
+- `.specify/workflows/speckit/workflow.yml`
+- `.specify/workflows/workflow-registry.json`
+- `.specify/workstreams/E001-execution-domain.yml`
+- `.specify/workstreams/E002-workflow-engine.yml`
+- `.specify/workstreams/E003-artifact-storage.yml`
+- `.specify/workstreams/E004-mvp-modules.yml`
+- `.specify/workstreams/E005-api-approvals.yml`
+- `.specify/workstreams/E006-tests-quality.yml`
+- `.specify/workstreams/E007-tts-contract-fixtures.yml`
+- `.specify/workstreams/E008-chatterbox-v3-provider.yml`
+- `.specify/workstreams/E009-long-narration-reliability.yml`
+- `.specify/workstreams/E010-long-narration-cache-integrity.yml`
+- `.specify/workstreams/E011-tts-runtime-baseline-capabilities.yml`
+- `.specify/workstreams/E012-piper-polish-tts-provider.yml`
+- `.specify/workstreams/E013-xtts-evaluation-provider-selection.yml`
+- `.specify/workstreams/E014-english-first-localization-boundary.yml`
+- `.specify/workstreams/E015-english-narration-production-baseline.yml`
+- `.specify/workstreams/E016-youtube-ready-export.yml`
+- `.specify/workstreams/E017-youtube-publishing-localization-handoff.yml`
+- `.specify/workstreams/E018-tts-catalog-discovery.yml`
+- `.specify/workstreams/E019-voice-preview.yml`
+- `.specify/workstreams/E020-workflow-selection-integration.yml`
+- `.specify/workstreams/M001-backend-foundation.yml`
+- `.specify/workstreams/M002-mvp-workflows.yml`
+- `.specify/workstreams/M003-integration-quality.yml`
+- `.specify/workstreams/M004-real-tts-voiceover.yml`
+- `.specify/workstreams/M005-tts-runtime-hardening.yml`
+- `.specify/workstreams/M006-multi-provider-polish-tts.yml`
+- `.specify/workstreams/M007-english-first-youtube-production.yml`
+- `.specify/workstreams/M008-tts-selection-voice-preview.yml`
+- `.specify/workstreams/schema.md`
+- `backend/app/tooling/agent_task_finalize.py`
+- `backend/app/tooling/agent_task_preflight.py`
+- `backend/app/tooling/epic_close_evidence.py`
+- `backend/app/tooling/epic_review_receipt.py`
+- `backend/app/tooling/git_hook_runner.py`
+- `backend/app/tooling/local_autopilot/__init__.py`
+- `backend/app/tooling/local_autopilot/__main__.py`
+- `backend/app/tooling/local_autopilot/codex_adapter.py`
+- `backend/app/tooling/local_autopilot/config.py`
+- `backend/app/tooling/local_autopilot/controller.py`
+- `backend/app/tooling/local_autopilot/epic_pipeline.py`
+- `backend/app/tooling/local_autopilot/github_adapter.py`
+- `backend/app/tooling/local_autopilot/main.py`
+- `backend/app/tooling/local_autopilot/milestone_pipeline.py`
+- `backend/app/tooling/local_autopilot/models.py`
+- `backend/app/tooling/local_autopilot/process_runner.py`
+- `backend/app/tooling/local_autopilot/recovery.py`
+- `backend/app/tooling/local_autopilot/repository.py`
+- `backend/app/tooling/local_autopilot/scope_proposal.py`
+- `backend/app/tooling/local_autopilot/state_store.py`
+- `backend/app/tooling/local_autopilot/task_pipeline.py`
+- `backend/app/tooling/local_autopilot/task_state_machine.py`
+- `backend/app/tooling/local_autopilot/ui.py`
+- `backend/app/tooling/local_autopilot/validation_receipt.py`
+- `backend/app/tooling/local_autopilot/workstreams.py`
+- `backend/app/tooling/process_runner.py`
+- `backend/app/tooling/repository_checks.py`
+- `backend/app/tooling/task_consistency.py`
+- `backend/app/tooling/workstream_validation.py`
+- `backend/tests/integration/test_process_runner_integration.py`
+- `backend/tests/static/test_agent_risk_routing.py`
+- `backend/tests/static/test_agent_system_flow.py`
+- `backend/tests/static/test_epic_pr_shell_safety.py`
+- `backend/tests/unit/tooling/__init__.py`
+- `backend/tests/unit/tooling/local_autopilot/conftest.py`
+- `backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py`
+- `backend/tests/unit/tooling/local_autopilot/test_codex_adapter.py`
+- `backend/tests/unit/tooling/local_autopilot/test_controller.py`
+- `backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py`
+- `backend/tests/unit/tooling/local_autopilot/test_github_adapter.py`
+- `backend/tests/unit/tooling/local_autopilot/test_linux_ci_runner.py`
+- `backend/tests/unit/tooling/local_autopilot/test_milestone_pipeline.py`
+- `backend/tests/unit/tooling/local_autopilot/test_models.py`
+- `backend/tests/unit/tooling/local_autopilot/test_process_runner.py`
+- `backend/tests/unit/tooling/local_autopilot/test_repository.py`
+- `backend/tests/unit/tooling/local_autopilot/test_state_store.py`
+- `backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py`
+- `backend/tests/unit/tooling/local_autopilot/test_ui.py`
+- `backend/tests/unit/tooling/local_autopilot/test_workstreams.py`
+- `backend/tests/unit/tooling/test_agent_task_finalize.py`
+- `backend/tests/unit/tooling/test_agent_task_preflight.py`
+- `backend/tests/unit/tooling/test_epic_close_evidence.py`
+- `backend/tests/unit/tooling/test_epic_close_evidence_cli.py`
+- `backend/tests/unit/tooling/test_epic_review_receipt.py`
+- `backend/tests/unit/tooling/test_epic_review_receipt_cli.py`
+- `backend/tests/unit/tooling/test_git_hook_runner.py`
+- `backend/tests/unit/tooling/test_git_hooks_setup.py`
+- `backend/tests/unit/tooling/test_process_runner.py`
+- `backend/tests/unit/tooling/test_repository_checks.py`
+- `backend/tests/unit/tooling/test_workstream_validation.py`
+- `docs/agent-graph-engine/V1_ARCHITECTURE.md`
+- `docs/local-autopilot.md`
+- `docs/migration/long-form-repo-migration-plan.md`
+- `docs/migration/shorts-repo-migration-plan.md`
+- `docs/source-repo-insights/long-form/repo-modular-pipeline-insights.md`
+- `docs/source-repo-insights/long-form/repo-product-insights.md`
+- `docs/source-repo-insights/shorts/repo-modular-pipeline-insights.md`
+- `docs/source-repo-insights/shorts/repo-product-insights.md`
+- `docs/spec-kit/00-product-context.md`
+- `docs/spec-kit/01-source-repo-synthesis.md`
+- `docs/spec-kit/02-domain-model-draft.md`
+- `docs/spec-kit/03-module-contracts-draft.md`
+- `docs/spec-kit/04-workflow-presets-draft.md`
+- `docs/spec-kit/05-mvp-boundary.md`
+- `docs/spec-kit/06-analysis-remediation.md`
+- `scripts/LOCAL_AUTOPILOT_CODEX_PROMPTS_PL.md`
+- `scripts/create_local_autopilot_branch.cmd`
+- `scripts/create_local_autopilot_branch.ps1`
+- `scripts/install-git-hooks.ps1`
+- `scripts/install-git-hooks.sh`
+- `scripts/run-linux-ci.ps1`
+- `scripts/run-linux-ci.sh`
+- `scripts/run-local-autopilot.cmd`
+- `scripts/run-local-autopilot.ps1`
+- `specs/001-ai-content-studio/checklists/artifact-persistence.md`
+- `specs/001-ai-content-studio/checklists/modular-architecture.md`
+- `specs/001-ai-content-studio/checklists/mvp-scope.md`
+- `specs/001-ai-content-studio/checklists/provider-abstraction.md`
+- `specs/001-ai-content-studio/checklists/requirements-quality.md`
+- `specs/001-ai-content-studio/checklists/requirements.md`
+- `specs/001-ai-content-studio/checklists/testing.md`
+- `specs/001-ai-content-studio/checklists/workflow-presets.md`
+- `specs/001-ai-content-studio/contracts/module-contracts.md`
+- `specs/001-ai-content-studio/contracts/provider-contracts.md`
+- `specs/001-ai-content-studio/data-model.md`
+- `specs/001-ai-content-studio/plan.md`
+- `specs/001-ai-content-studio/quickstart.md`
+- `specs/001-ai-content-studio/research.md`
+- `specs/001-ai-content-studio/spec.md`
+- `specs/001-ai-content-studio/tasks.md`
+
+## Added (untracked)
+
+- `.github/workflows/tests.yml`
+- `docs/ROADMAP.md`
+- `docs/architecture/api-and-storage.md`
+- `docs/architecture/domain-model.md`
+- `docs/architecture/module-contracts.md`
+- `docs/architecture/overview.md`
+- `docs/architecture/provider-contracts.md`
+- `docs/architecture/workflow-engine.md`
+- `docs/archive/cleanup-file-inventory.md`
+- `docs/archive/legacy-cleanup.md`
+- `docs/archive/legacy-task-audit.md`
+- `docs/archive/migration/long-form-repo-migration-plan.md`
+- `docs/archive/migration/shorts-repo-migration-plan.md`
+- `docs/archive/source-repo-insights/long-form/repo-modular-pipeline-insights.md`
+- `docs/archive/source-repo-insights/long-form/repo-product-insights.md`
+- `docs/archive/source-repo-insights/shorts/repo-modular-pipeline-insights.md`
+- `docs/archive/source-repo-insights/shorts/repo-product-insights.md`
+
+## git status --short --untracked-files=all
+
+```text
+ D .agents/skills/speckit-analyze/SKILL.md
+ D .agents/skills/speckit-checklist/SKILL.md
+ D .agents/skills/speckit-clarify/SKILL.md
+ D .agents/skills/speckit-constitution/SKILL.md
+ D .agents/skills/speckit-converge/SKILL.md
+ D .agents/skills/speckit-epic-close/SKILL.md
+ D .agents/skills/speckit-epic-close/agents/openai.yaml
+ D .agents/skills/speckit-epic-pr/SKILL.md
+ D .agents/skills/speckit-epic-pr/agents/openai.yaml
+ D .agents/skills/speckit-epic-review/SKILL.md
+ D .agents/skills/speckit-epic-review/agents/openai.yaml
+ D .agents/skills/speckit-epic-start/SKILL.md
+ D .agents/skills/speckit-implement/SKILL.md
+ D .agents/skills/speckit-loop/SKILL.md
+ D .agents/skills/speckit-plan/SKILL.md
+ D .agents/skills/speckit-specify/SKILL.md
+ D .agents/skills/speckit-tasks/SKILL.md
+ D .agents/skills/speckit-taskstoissues/SKILL.md
+ D .codex/agents/spec-closer.toml
+ D .codex/agents/spec-debugger.toml
+ D .codex/agents/spec-epic-reviewer.toml
+ D .codex/agents/spec-explorer.toml
+ D .codex/agents/spec-manager.toml
+ D .codex/agents/spec-programmer-fast.toml
+ D .codex/agents/spec-programmer-high.toml
+ D .codex/agents/spec-programmer.toml
+ D .codex/agents/spec-reviewer.toml
+ D .codex/config.toml
+ D .githooks/post-commit
+ D .githooks/pre-commit
+ D .githooks/pre-push
+ D .github/workflows/agent-system-validation.yml
+ M .gitignore
+ D .specify/autopilot.yml
+ D .specify/feature.json
+ D .specify/init-options.json
+ D .specify/integration.json
+ D .specify/integrations/codex.manifest.json
+ D .specify/integrations/speckit.manifest.json
+ D .specify/memory/constitution.md
+ D .specify/scripts/powershell/check-prerequisites.ps1
+ D .specify/scripts/powershell/common.ps1
+ D .specify/scripts/powershell/create-new-feature.ps1
+ D .specify/scripts/powershell/setup-plan.ps1
+ D .specify/scripts/powershell/setup-tasks.ps1
+ D .specify/templates/checklist-template.md
+ D .specify/templates/constitution-template.md
+ D .specify/templates/plan-template.md
+ D .specify/templates/spec-template.md
+ D .specify/templates/tasks-template.md
+ D .specify/workflows/speckit/workflow.yml
+ D .specify/workflows/workflow-registry.json
+ D .specify/workstreams/E001-execution-domain.yml
+ D .specify/workstreams/E002-workflow-engine.yml
+ D .specify/workstreams/E003-artifact-storage.yml
+ D .specify/workstreams/E004-mvp-modules.yml
+ D .specify/workstreams/E005-api-approvals.yml
+ D .specify/workstreams/E006-tests-quality.yml
+ D .specify/workstreams/E007-tts-contract-fixtures.yml
+ D .specify/workstreams/E008-chatterbox-v3-provider.yml
+ D .specify/workstreams/E009-long-narration-reliability.yml
+ D .specify/workstreams/E010-long-narration-cache-integrity.yml
+ D .specify/workstreams/E011-tts-runtime-baseline-capabilities.yml
+ D .specify/workstreams/E012-piper-polish-tts-provider.yml
+ D .specify/workstreams/E013-xtts-evaluation-provider-selection.yml
+ D .specify/workstreams/E014-english-first-localization-boundary.yml
+ D .specify/workstreams/E015-english-narration-production-baseline.yml
+ D .specify/workstreams/E016-youtube-ready-export.yml
+ D .specify/workstreams/E017-youtube-publishing-localization-handoff.yml
+ D .specify/workstreams/E018-tts-catalog-discovery.yml
+ D .specify/workstreams/E019-voice-preview.yml
+ D .specify/workstreams/E020-workflow-selection-integration.yml
+ D .specify/workstreams/M001-backend-foundation.yml
+ D .specify/workstreams/M002-mvp-workflows.yml
+ D .specify/workstreams/M003-integration-quality.yml
+ D .specify/workstreams/M004-real-tts-voiceover.yml
+ D .specify/workstreams/M005-tts-runtime-hardening.yml
+ D .specify/workstreams/M006-multi-provider-polish-tts.yml
+ D .specify/workstreams/M007-english-first-youtube-production.yml
+ D .specify/workstreams/M008-tts-selection-voice-preview.yml
+ D .specify/workstreams/schema.md
+ M AGENTS.md
+ M README.md
+ M backend/app/api/dependencies.py
+ M backend/app/tooling/__init__.py
+ D backend/app/tooling/agent_task_finalize.py
+ D backend/app/tooling/agent_task_preflight.py
+ D backend/app/tooling/epic_close_evidence.py
+ D backend/app/tooling/epic_review_receipt.py
+ D backend/app/tooling/git_hook_runner.py
+ D backend/app/tooling/local_autopilot/__init__.py
+ D backend/app/tooling/local_autopilot/__main__.py
+ D backend/app/tooling/local_autopilot/codex_adapter.py
+ D backend/app/tooling/local_autopilot/config.py
+ D backend/app/tooling/local_autopilot/controller.py
+ D backend/app/tooling/local_autopilot/epic_pipeline.py
+ D backend/app/tooling/local_autopilot/github_adapter.py
+ D backend/app/tooling/local_autopilot/main.py
+ D backend/app/tooling/local_autopilot/milestone_pipeline.py
+ D backend/app/tooling/local_autopilot/models.py
+ D backend/app/tooling/local_autopilot/process_runner.py
+ D backend/app/tooling/local_autopilot/recovery.py
+ D backend/app/tooling/local_autopilot/repository.py
+ D backend/app/tooling/local_autopilot/scope_proposal.py
+ D backend/app/tooling/local_autopilot/state_store.py
+ D backend/app/tooling/local_autopilot/task_pipeline.py
+ D backend/app/tooling/local_autopilot/task_state_machine.py
+ D backend/app/tooling/local_autopilot/ui.py
+ D backend/app/tooling/local_autopilot/validation_receipt.py
+ D backend/app/tooling/local_autopilot/workstreams.py
+ D backend/app/tooling/process_runner.py
+ D backend/app/tooling/repository_checks.py
+ D backend/app/tooling/task_consistency.py
+ D backend/app/tooling/workstream_validation.py
+ M backend/requirements.txt
+ D backend/tests/integration/test_process_runner_integration.py
+ M backend/tests/integration/test_t087.py
+ D backend/tests/static/test_agent_risk_routing.py
+ D backend/tests/static/test_agent_system_flow.py
+ D backend/tests/static/test_epic_pr_shell_safety.py
+ M backend/tests/static/test_secret_hygiene.py
+ M backend/tests/static/test_t066.py
+ M backend/tests/static/test_t069.py
+ M backend/tests/static/test_t075.py
+ M backend/tests/static/test_t089.py
+ M backend/tests/unit/test_t074.py
+ D backend/tests/unit/tooling/__init__.py
+ D backend/tests/unit/tooling/local_autopilot/conftest.py
+ D backend/tests/unit/tooling/local_autopilot/test_autopilot_hardening.py
+ D backend/tests/unit/tooling/local_autopilot/test_codex_adapter.py
+ D backend/tests/unit/tooling/local_autopilot/test_controller.py
+ D backend/tests/unit/tooling/local_autopilot/test_epic_pipeline.py
+ D backend/tests/unit/tooling/local_autopilot/test_github_adapter.py
+ D backend/tests/unit/tooling/local_autopilot/test_linux_ci_runner.py
+ D backend/tests/unit/tooling/local_autopilot/test_milestone_pipeline.py
+ D backend/tests/unit/tooling/local_autopilot/test_models.py
+ D backend/tests/unit/tooling/local_autopilot/test_process_runner.py
+ D backend/tests/unit/tooling/local_autopilot/test_repository.py
+ D backend/tests/unit/tooling/local_autopilot/test_state_store.py
+ D backend/tests/unit/tooling/local_autopilot/test_task_pipeline.py
+ D backend/tests/unit/tooling/local_autopilot/test_ui.py
+ D backend/tests/unit/tooling/local_autopilot/test_workstreams.py
+ D backend/tests/unit/tooling/test_agent_task_finalize.py
+ D backend/tests/unit/tooling/test_agent_task_preflight.py
+ D backend/tests/unit/tooling/test_epic_close_evidence.py
+ D backend/tests/unit/tooling/test_epic_close_evidence_cli.py
+ D backend/tests/unit/tooling/test_epic_review_receipt.py
+ D backend/tests/unit/tooling/test_epic_review_receipt_cli.py
+ D backend/tests/unit/tooling/test_git_hook_runner.py
+ D backend/tests/unit/tooling/test_git_hooks_setup.py
+ D backend/tests/unit/tooling/test_process_runner.py
+ D backend/tests/unit/tooling/test_repository_checks.py
+ D backend/tests/unit/tooling/test_workstream_validation.py
+ M docs/INDEX.md
+ D docs/agent-graph-engine/V1_ARCHITECTURE.md
+ D docs/local-autopilot.md
+ D docs/migration/long-form-repo-migration-plan.md
+ D docs/migration/shorts-repo-migration-plan.md
+ D docs/source-repo-insights/long-form/repo-modular-pipeline-insights.md
+ D docs/source-repo-insights/long-form/repo-product-insights.md
+ D docs/source-repo-insights/shorts/repo-modular-pipeline-insights.md
+ D docs/source-repo-insights/shorts/repo-product-insights.md
+ D docs/spec-kit/00-product-context.md
+ D docs/spec-kit/01-source-repo-synthesis.md
+ D docs/spec-kit/02-domain-model-draft.md
+ D docs/spec-kit/03-module-contracts-draft.md
+ D docs/spec-kit/04-workflow-presets-draft.md
+ D docs/spec-kit/05-mvp-boundary.md
+ D docs/spec-kit/06-analysis-remediation.md
+ M docs/tts/M006_PROVIDER_DECISION.md
+ M docs/tts/MANUAL_SPIKE.md
+ M docs/tts/PIPER_SETUP.md
+ M docs/tts/RUNTIME_PROFILES.md
+ M pyproject.toml
+ D scripts/LOCAL_AUTOPILOT_CODEX_PROMPTS_PL.md
+ D scripts/create_local_autopilot_branch.cmd
+ D scripts/create_local_autopilot_branch.ps1
+ D scripts/install-git-hooks.ps1
+ D scripts/install-git-hooks.sh
+ D scripts/run-linux-ci.ps1
+ D scripts/run-linux-ci.sh
+ D scripts/run-local-autopilot.cmd
+ D scripts/run-local-autopilot.ps1
+ M scripts/setup-dev.ps1
+ M scripts/setup-dev.sh
+ D specs/001-ai-content-studio/checklists/artifact-persistence.md
+ D specs/001-ai-content-studio/checklists/modular-architecture.md
+ D specs/001-ai-content-studio/checklists/mvp-scope.md
+ D specs/001-ai-content-studio/checklists/provider-abstraction.md
+ D specs/001-ai-content-studio/checklists/requirements-quality.md
+ D specs/001-ai-content-studio/checklists/requirements.md
+ D specs/001-ai-content-studio/checklists/testing.md
+ D specs/001-ai-content-studio/checklists/workflow-presets.md
+ D specs/001-ai-content-studio/contracts/module-contracts.md
+ D specs/001-ai-content-studio/contracts/provider-contracts.md
+ D specs/001-ai-content-studio/data-model.md
+ D specs/001-ai-content-studio/plan.md
+ D specs/001-ai-content-studio/quickstart.md
+ D specs/001-ai-content-studio/research.md
+ D specs/001-ai-content-studio/spec.md
+ D specs/001-ai-content-studio/tasks.md
+?? .github/workflows/tests.yml
+?? docs/ROADMAP.md
+?? docs/architecture/api-and-storage.md
+?? docs/architecture/domain-model.md
+?? docs/architecture/module-contracts.md
+?? docs/architecture/overview.md
+?? docs/architecture/provider-contracts.md
+?? docs/architecture/workflow-engine.md
+?? docs/archive/cleanup-file-inventory.md
+?? docs/archive/legacy-cleanup.md
+?? docs/archive/legacy-task-audit.md
+?? docs/archive/migration/long-form-repo-migration-plan.md
+?? docs/archive/migration/shorts-repo-migration-plan.md
+?? docs/archive/source-repo-insights/long-form/repo-modular-pipeline-insights.md
+?? docs/archive/source-repo-insights/long-form/repo-product-insights.md
+?? docs/archive/source-repo-insights/shorts/repo-modular-pipeline-insights.md
+?? docs/archive/source-repo-insights/shorts/repo-product-insights.md
+```

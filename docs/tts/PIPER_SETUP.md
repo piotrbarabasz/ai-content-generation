@@ -1,7 +1,7 @@
 # Piper Polish setup
 
 Piper is a local, human-operated runtime. Do not activate virtual environments
-implicitly, do not modify `git config`, and do not change `agent.python` for
+implicitly or modify `git config`. Use the isolated runtime interpreter for
 this workflow.
 
 ## Runtime boundary

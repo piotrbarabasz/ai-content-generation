@@ -29,10 +29,7 @@ def _compared_literals(relative: str, symbol: str) -> set[str]:
     return matches
 
 
-def test_m006_is_completed_and_english_first_adr_is_indexed() -> None:
-    assert "status: completed" in _text(
-        ".specify/workstreams/M006-multi-provider-polish-tts.yml"
-    )
+def test_english_first_adr_and_provider_decision_are_indexed() -> None:
     adr = _text("docs/decisions/0002-english-first-localization-boundary.md").lower()
     assert "english is the primary source language" in adr
     assert "export and publishing boundary" in adr
@@ -43,18 +40,6 @@ def test_m006_is_completed_and_english_first_adr_is_indexed() -> None:
     assert "chatterbox multilingual v3 remains the current general production-capable" in provider_decision
     assert "piper remains useful for fast, deterministic local narration" in provider_decision
     assert "xtts-v2 remains evaluation-only" in provider_decision
-
-
-def test_m007_milestone_epics_and_tasks_are_completed_consistently() -> None:
-    assert "status: completed" in _text(
-        ".specify/workstreams/M007-english-first-youtube-production.yml"
-    )
-    for epic in ("E014", "E015", "E016", "E017"):
-        manifest = next((ROOT / ".specify/workstreams").glob(f"{epic}-*.yml"))
-        assert "status: completed" in manifest.read_text(encoding="utf-8")
-    tasks = _text("specs/001-ai-content-studio/tasks.md")
-    for task_number in range(75, 83):
-        assert f"- [X] T{task_number:03d} " in tasks
 
 
 def test_moss_is_not_registered_in_production_tts_composition() -> None:

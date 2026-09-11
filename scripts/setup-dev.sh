@@ -11,5 +11,4 @@ if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 11 ]; }; then
 fi
 
 python -m pip install -e .
-"$(dirname "$0")/install-git-hooks.sh"
-python -m pytest backend/tests/unit/tooling
+python -m pytest backend/tests
