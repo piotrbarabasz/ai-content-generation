@@ -2,6 +2,7 @@
 
 ## Current product
 
+- [Desktop implementation plan and authoritative D### backlog](desktop/IMPLEMENTATION_PLAN.md)
 - [Product roadmap](ROADMAP.md)
 - [Architecture overview](architecture/overview.md)
 - [Domain model](architecture/domain-model.md)
@@ -12,8 +13,13 @@
 
 ## Architecture decisions
 
+- [Desktop-first architecture — Accepted](decisions/0003-desktop-first-architecture.md)
 - [Modular workflow engine](decisions/0001-modular-workflow-engine.md)
 - [English-first localization boundary](decisions/0002-english-first-localization-boundary.md)
+
+The desktop plan describes accepted target behavior and work still to implement.
+The architecture pages describe current code; their target notes link back to the
+plan. Milestones and task IDs are documentation, not a development orchestrator.
 
 ## TTS
 

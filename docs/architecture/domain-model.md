@@ -1,5 +1,10 @@
 # Domain model
 
+This page describes implemented models. The accepted project-owned section,
+immutable revision and timeline model is specified in the
+[desktop plan](../desktop/IMPLEMENTATION_PLAN.md#project-and-pipeline-model).
+Those target models must not be treated as existing imports or persistence.
+
 Entities are Python dataclasses with explicit validation in `backend/app/domain`;
 HTTP schemas are separate Pydantic models in `backend/app/api/schemas.py`.
 `DomainEntity` supplies IDs and timestamps; `DomainValidationError` reports domain
