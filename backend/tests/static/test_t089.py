@@ -116,4 +116,4 @@ def test_tts_selection_api_documentation_is_complete_and_indexed() -> None:
         "Future UI sequence",
     ):
         assert token in doc
-    assert "docs/tts/TTS_SELECTION_API.md" in index
+    assert "(tts/TTS_SELECTION_API.md)" in index

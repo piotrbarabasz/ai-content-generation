@@ -12,17 +12,18 @@ REAL_LOOKING_SECRET_PATTERNS = [
 
 
 class SecretHygieneTests(unittest.TestCase):
-    def test_gitignore_excludes_private_env_and_agent_runtime_paths(self) -> None:
+    def test_gitignore_excludes_private_env_and_product_runtime_paths(self) -> None:
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
         for pattern in [
             ".env",
             ".env.*",
-            ".agents/runs/",
-            ".agents/logs/",
-            ".agents/tmp/",
-            ".agents/cache/",
-            ".agents/secrets/",
+            ".runtime/",
+            ".local/",
+            "artifacts/",
+            "outputs/",
+            "voice-references/",
+            "credentials/",
         ]:
             self.assertIn(pattern, gitignore)
 

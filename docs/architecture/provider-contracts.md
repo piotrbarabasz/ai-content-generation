@@ -1,0 +1,54 @@
+# Provider contracts
+
+The protocols in `backend/app/providers/interfaces.py` are the executable contract.
+Every provider has `provider_type` and `provider_name`. `ProviderRegistry` registers
+and resolves implementations by type/name. `validate_provider_availability` checks
+requirements for enabled modules before direct engine execution.
+
+| Protocol | Operations | Current implementations |
+| --- | --- | --- |
+| `LLMProvider` | `generate_text(prompt, context) -> str`; `generate_structured(prompt, schema) -> dict` | Deterministic mock |
+| `TTSProvider` | `capabilities()`; `effective_synthesis_identity(voice_config)`; `synthesize(text, voice_config) -> TTSSynthesisResult` | Mock, Chatterbox V3, Piper, evaluation-only XTTS-v2 |
+| `TranscriptionProvider` | `transcribe(audio_ref) -> dict` | Mock |
+| `CaptionProvider` | `generate_captions(audio_ref, transcript_ref) -> dict` | Mock |
+| `AssetProvider` | `find_assets(query)`; `prepare_asset(asset_ref)` | Mock |
+| `VideoRendererProvider` | `render(scene_plan, audio_ref, captions_ref) -> dict` | Mock reference output |
+| `StorageProvider` | `save_artifact(name, content, metadata)`; `read_artifact(key)`; `list_artifacts(prefix)` | Mock storage adapter; real local persistence is also available through `ArtifactStore` |
+| `PublishingProvider` | `publish(export_bundle, target)` with `PublishingRequest` / `PublicationResult` | Mock and optional YouTube adapter |
+
+`build_tts_provider` and `build_publishing_provider` compose adapters from
+`ProviderConfig`. Modules receive implementations through constructors; provider
+registration alone is not application wiring. Add adapters at this boundary,
+keeping provider-specific settings/errors out of the core execution engine.
+
+## TTS
+
+`TTSSynthesisResult` carries actual audio bytes, sample rate, duration, format,
+provider name and metadata. Shared PCM validation accepts the narration format
+used by assembly (mono, signed 16-bit, uncompressed WAV); adapters retain truthful
+sample rates. A path or URI is not a WAV payload.
+
+Capabilities are static, lazy metadata. Effective synthesis identity is
+request-specific and includes resolved settings and reference/asset checksums.
+Cache reuse depends on this identity and text, not just a provider label.
+Chatterbox `chatterbox_v3` exposes model `v3`, builtin/reference voices; Piper uses
+the curated model keys in `piper_catalog.py`; `xtts_v2_eval` requires approved
+reference audio and remains evaluation-only. Production configuration rejects it.
+
+The catalog adapts explicit registrations without constructing real runtimes.
+`tts/selection.py` maps a catalog selection into `providerConfig.tts` and
+`voiceConfig`. Tempo lives under `voiceConfig.postProcessing.tempo`; it is not a
+native speaking-rate capability. Preview and production caches are separate.
+Optional packages/model loading happen lazily; setup and real synthesis remain
+explicit actions. Preserve provenance and license evidence already recorded in
+[TTS documentation](../INDEX.md#tts).
+
+## Publishing
+
+`PublishingModule.publish` is a separate application operation gated on an approved
+handoff. YouTube transport configuration and credentials stay behind the adapter;
+construction performs no network call. Offline tests inject a fake transport.
+Publication identity supports idempotent behavior within the implemented boundary;
+durable retry coordination across application restarts remains roadmap work.
+Localization records manual platform facts and fallback metadata. The code does
+not expose an automatic-dubbing endpoint. See [publishing](../publishing/YOUTUBE_HANDOFF.md).

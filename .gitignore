@@ -68,7 +68,7 @@ reference-audio/
 .DS_Store
 Thumbs.db
 
-# Agent private runtime data
+# Retired tooling's local private data remains ignored; no runtime consumes it.
 .specify/runtime/
 .agents/runs/
 .agents/logs/

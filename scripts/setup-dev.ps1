@@ -20,5 +20,6 @@ if (($major -lt 3) -or ($major -eq 3 -and $minor -lt 11)) {
 }
 
 & python -m pip install -e .
-& "$PSScriptRoot/install-git-hooks.ps1"
-& python -m pytest backend/tests/unit/tooling
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& python -m pytest backend/tests
+exit $LASTEXITCODE

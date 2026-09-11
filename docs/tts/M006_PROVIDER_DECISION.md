@@ -43,13 +43,13 @@ The implementation must distinguish technical support from permitted product use
 Heavy runtimes remain isolated:
 
 ```text
-.venv-ci311             # default tests, hooks and agent tooling
+.venv-ci311             # base application and offline tests
 .venv-tts311            # Chatterbox Multilingual V3
 .venv-piper311          # Piper and ONNX runtime
 .venv-xtts311           # XTTS-v2 evaluation
 ```
 
-Setup and health-check scripts must invoke explicit interpreter paths and must never repoint `agent.python` away from the CI environment.
+Setup and health-check scripts must invoke explicit interpreter paths and keep optional TTS dependencies separate from the base application and test environment.
 
 ## Provider capability contract
 

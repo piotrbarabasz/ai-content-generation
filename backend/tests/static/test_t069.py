@@ -114,7 +114,7 @@ class T069PiperCatalogStaticTests(unittest.TestCase):
 
     def test_repository_does_not_commit_piper_model_binaries(self) -> None:
         model_files: list[Path] = []
-        for base in [ROOT / "backend", ROOT / "docs", ROOT / "scripts", ROOT / "specs"]:
+        for base in [ROOT / "backend", ROOT / "docs", ROOT / "scripts"]:
             if not base.exists():
                 continue
             for path in base.rglob("*"):
