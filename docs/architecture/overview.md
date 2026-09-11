@@ -1,9 +1,14 @@
 # Architecture overview
 
-AI Content Studio is a Python backend for configurable content workflows. It has
-a reusable execution engine, deterministic modules and mocks, local artifact
-storage, optional real TTS adapters, and a YouTube publishing boundary. It is
-currently a backend foundation, not a complete video production application.
+AI Content Studio's accepted direction is a desktop-first Windows application
+using PySide6 and UI-independent Python services. See
+[ADR 0003](../decisions/0003-desktop-first-architecture.md) and the authoritative
+[desktop implementation plan](../desktop/IMPLEMENTATION_PLAN.md).
+
+This page describes the current Python foundation: a reusable execution engine,
+deterministic modules and mocks, local artifact storage, optional real TTS adapters
+and a YouTube publishing boundary. The desktop editor, SQLite project store and
+real MP4 renderer are planned, not implemented capabilities.
 
 ## Code boundaries
 
@@ -21,7 +26,8 @@ currently a backend foundation, not a complete video production application.
 
 The runtime imports no development orchestration package and requires no epic,
 task metadata or agent receipt. Use [AGENTS.md](../../AGENTS.md) for short working
-instructions and [ROADMAP](../ROADMAP.md) for remaining product work.
+instructions and [ROADMAP](../ROADMAP.md) for milestone navigation. D### task
+definitions exist only in the desktop plan.
 
 ## Current capabilities and limits
 

@@ -2,15 +2,20 @@
 
 [![tests](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml)
 
-AI Content Studio is a Python backend for configurable content production:
-short video and long-form script with optional voiceover. It contains domain
-models, a content workflow engine, artifact storage, modular processing,
-FastAPI endpoints, deterministic mocks and optional real TTS/publishing adapters.
+AI Content Studio is being developed as a desktop-first Windows video production
+application: editable narrative sections, local TTS, scene visuals, Timeline Lite
+and MP4 export. The accepted architecture uses PySide6, UI-independent Python
+application services, SQLite plus files, isolated workers and FFmpeg.
 
-The engine and modules work through direct application composition. The run API
-currently stores status records without invoking the engine, and mock rendering
-produces references rather than playable video. Completing that application path
-is the first priority in [the product roadmap](docs/ROADMAP.md).
+The current code is a Python foundation with domain models, a content workflow
+engine, artifact storage, FastAPI endpoints, deterministic mocks and optional real
+TTS/publishing adapters. The desktop editor and real video renderer are not yet
+implemented. The run API stores status records without invoking the engine;
+mock rendering produces references rather than playable video.
+
+Start with the [desktop implementation plan](docs/desktop/IMPLEMENTATION_PLAN.md)
+and [accepted decision](docs/decisions/0003-desktop-first-architecture.md).
+The [product roadmap](docs/ROADMAP.md) summarizes milestones without a second backlog.
 
 ## Setup and tests
 
@@ -32,9 +37,12 @@ project and runs the test suite using the active Python. Setup does not install
 Git hooks. CI performs checkout, Python setup, editable installation and pytest.
 Default tests use mocks/fakes and require no provider credentials, GPU or models.
 
-## API
+## Optional API adapter
 
-The application entrypoint is `app.api.main:app`. To serve it locally, install
+The existing HTTP entrypoint is `app.api.main:app`. FastAPI remains available for
+integration and future automation; the planned desktop does not require it.
+It is still a base package dependency today; optional packaging is planned work.
+To serve the current API locally, install
 an ASGI server in the application environment, for example:
 
 ```sh
@@ -81,9 +89,10 @@ rather than installing heavy model packages into the base test environment:
 
 ## Development
 
-Read [AGENTS.md](AGENTS.md), inspect existing code, implement one coherent change
-and run its tests plus full pytest. No development orchestration system or task
-metadata is required. Keep source language separate from downstream localization,
+Read [AGENTS.md](AGENTS.md), select one D### task from the
+[implementation plan](docs/desktop/IMPLEMENTATION_PLAN.md), inspect existing code
+and run its tests plus full pytest. No development orchestration system or runtime
+task metadata is required. Keep source language separate from downstream localization,
 preserve artifacts and review history, and isolate providers behind contracts.
 
 Use `.env.example` only as a placeholder reference; settings must be wired through

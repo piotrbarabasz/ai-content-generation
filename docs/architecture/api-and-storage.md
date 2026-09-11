@@ -1,5 +1,10 @@
 # API and storage
 
+FastAPI is the optional HTTP adapter in the accepted desktop architecture, not
+the primary product interface. The following documents current behavior. The
+[desktop plan](../desktop/IMPLEMENTATION_PLAN.md) defines the future shared
+application services, SQLite project state and file publication protocol.
+
 `app.api.main:app` is the FastAPI application. Routes use `/api/v1` by default;
 `create_app()` builds an instance and `ApiSettings`/`ApiDependencies` provide
 configuration and service injection. OpenAPI is the current HTTP schema reference.
@@ -23,9 +28,16 @@ route functions directly; newer TTS tests also exercise the ASGI request boundar
 
 `ArtifactStore` is the abstract save/read/list interface. `LocalArtifactStore(root)`
 creates stored bytes and manifest sidecars under an explicitly supplied root.
-Storage keys are relative, normalized and checked against traversal. Metadata
+Storage keys are relative, normalized and checked against lexical traversal.
+Resolved-path containment, including Windows junctions, is future hardening in
+the desktop plan; current checks are not a sandbox for untrusted projects. Metadata
 includes the owning workflow run, producing module, artifact type, version,
 checksum and storage reference through `ArtifactManifest`.
+
+Each generated key includes a unique artifact ID, so repeated friendly names do
+not overwrite earlier artifacts. Current save/read methods operate on whole
+payloads and sidecar writes are not a transaction with media publication. SQLite
+indexing, streaming, revision selection and crash recovery remain planned work.
 
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional

@@ -1,5 +1,9 @@
 # Provider contracts
 
+These are current contracts. The [desktop plan](../desktop/IMPLEMENTATION_PLAN.md)
+adds managed worker composition, an image-generation boundary and real media
+results without putting provider selection in the UI or workflow engine.
+
 The protocols in `backend/app/providers/interfaces.py` are the executable contract.
 Every provider has `provider_type` and `provider_name`. `ProviderRegistry` registers
 and resolves implementations by type/name. `validate_provider_availability` checks
@@ -24,9 +28,10 @@ keeping provider-specific settings/errors out of the core execution engine.
 ## TTS
 
 `TTSSynthesisResult` carries actual audio bytes, sample rate, duration, format,
-provider name and metadata. Shared PCM validation accepts the narration format
-used by assembly (mono, signed 16-bit, uncompressed WAV); adapters retain truthful
-sample rates. A path or URI is not a WAV payload.
+provider name and metadata. Shared assembly validation checks readable uncompressed
+PCM, complete frames and compatible channel count, sample width and sample rate
+across chunks. Adapter/preview contracts can impose narrower audio requirements;
+adapters retain truthful sample rates. A path or URI is not a WAV payload.
 
 Capabilities are static, lazy metadata. Effective synthesis identity is
 request-specific and includes resolved settings and reference/asset checksums.

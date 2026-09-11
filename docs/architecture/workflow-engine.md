@@ -24,7 +24,9 @@ config/provider validation provided by `run`. Usage reporting is optional throug
 captions → videoRendering → export. Its default dependency composition currently
 fails because scenePlanning requires scriptGeneration, absent from that sequence.
 Do not solve this by ignoring dependency errors or silently substituting fake
-module definitions; the first roadmap task fixes the production composition.
+module definitions. Compatibility repair is deferred to D052 in the
+[desktop plan](../desktop/IMPLEMENTATION_PLAN.md#d052--canonical-preset-compatibility).
+It is not the first desktop implementation task.
 
 `long_form_script_voiceover` declares brief → optional research → optional dossier
 → outline → scriptGeneration → postProcessing → qa → optional voiceover → export.
@@ -43,8 +45,10 @@ than acting as a general restart scheduler.
 The engine is synchronous and returns results; it does not own a durable run/job
 repository or background queue. HTTP start/resume routes currently update an
 in-memory record without invoking it. API tests and direct engine tests must not
-be mistaken for proof that those layers are connected. The roadmap adds that
-connection, durable state and eventually background execution.
+be mistaken for proof that those layers are connected. The desktop plan adds
+durable jobs and editing services before optional HTTP integration. The existing
+engine remains a reusable batch executor; the application dependency planner owns
+selective regeneration against project revisions.
 
 ## Useful offline evidence
 

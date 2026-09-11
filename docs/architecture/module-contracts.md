@@ -1,5 +1,9 @@
 # Module contracts
 
+This page describes current modules, not completed desktop pipeline stages.
+The [desktop implementation plan](../desktop/IMPLEMENTATION_PLAN.md) defines
+section-scoped application operations and the order of the remaining work.
+
 `ModuleDefinition` declares input/output/config schemas, dependencies, default
 enabled state, disabled behavior (`skip` or `fail`), retry limit, artifact names
 and error behavior. `WorkflowModule.execute(ModuleExecutionContext)` returns a
