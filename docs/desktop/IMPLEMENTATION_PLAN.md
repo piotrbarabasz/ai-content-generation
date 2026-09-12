@@ -490,7 +490,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D003 — Durable editable project
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-12).
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Reopen a project without losing identities and active revisions.
@@ -500,6 +500,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/storage/ project repository, app/application/projects.py; backend/tests/unit/ and integration/.
 - **Acceptance criteria:** Create/edit/close/reopen preserves all revisions, ordering and selected B2; failed transaction preserves B1 selection; competing writer and unsupported schema are rejected.
 - **Test strategy:** Temporary SQLite tests for round trips, rollback, writer contention and unknown schema; no Qt or network.
+- **Evidence:** `app/storage/project_repository.py` persists schema v1, project metadata, stable section/script identities, immutable histories, ordered selections and relative workspace references. `app/application/projects.py` uses injected repository ports. A/B/C edit to B2, reopen and workspace relocation preserve history and selection; injected transaction failure and abrupt pre-commit process exit retain B1; a post-commit exit retains B2. Competing sessions/processes and unsupported formats are rejected; unknown-format bytes remain unchanged. See [implemented storage behavior](../architecture/api-and-storage.md#editable-project-persistence-d003).
+- **Validation:** `python -m pytest backend/tests/unit/test_project_repository.py backend/tests/integration/test_durable_project.py backend/tests/unit/test_editorial_revisions.py backend/tests/unit/test_t046_project_config_models.py` — 83 passed (24 D003 cases plus 59 regressions); `python -m pytest backend/tests` — 587 passed; `git diff --check` and new-file whitespace checks — PASS. Validated on Windows with Python 3.11; local single-session storage only.
 
 ### D004 — Streaming immutable artifact publication
 
