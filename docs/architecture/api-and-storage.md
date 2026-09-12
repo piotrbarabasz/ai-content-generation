@@ -102,10 +102,18 @@ catalogs reuse `ArtifactManifest`; only registered keys are readable as artifact
 The catalog commits after complete file publication; SQLite and the filesystem
 are not one transaction. Recovery removes incomplete staging, finishes cleanup
 of committed publications, and reports unindexed complete files without adopting
-or deleting them. No dependency graph or revision-aware selection is implemented.
+or deleting them. Revision-aware job selection remains D040.
 The old save/read convenience methods still use whole payloads; large-media clients
 must choose the new streaming interface. Existing providers/modules remain unchanged.
 See [D004 protocol, failure handling and evidence](../desktop/D004_ARTIFACT_PUBLICATION.md).
+
+D005 stores optional versioned `desktop_dependencies` declarations in the existing
+immutable `ArtifactManifest.metadata`, published with the D004 catalog record.
+`ArtifactDependencyIndex` maps those records into pure dependency values and checks
+consumed artifact identities/checksums and known logical bindings. Legacy records
+without declarations remain untracked. This adds no tables or schema migration;
+current desired requests and selections are explicit caller inputs, not a new
+persistent selection store. See [D005 semantics and evidence](../desktop/D005_DEPENDENCIES.md).
 
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional

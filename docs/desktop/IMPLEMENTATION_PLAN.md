@@ -520,7 +520,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D005 — Artifact dependencies and freshness
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Describe precisely which selected outputs no longer match their inputs.
@@ -530,6 +530,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/domain/ dependency values, app/application/invalidation.py and index mappings; unit tests.
 - **Acceptance criteria:** Changing B affects only actual dependents; prompt edit preserves audio; tempo preserves raw TTS; recorded global-context edges invalidate when their context changes.
 - **Test strategy:** Table-driven behavior tests for the invalidation matrix, manual variants, relevant settings and unchanged content; no provider calls.
+- **Evidence:** [D005 dependency semantics and self-review](D005_DEPENDENCIES.md): immutable canonical requests and explicit consumed-input edges in existing D004 manifest metadata, read-only project index mapping, pure fresh/stale/missing derivation, manual review flags and independent failed-attempt evidence. A/B/C invalidation matrix, effective generation identity, unchanged narration across revisions, project reopen and invalid metadata checks pass. No database migration or automatic selection changes.
+- **Validation:** Focused dependency/revision/storage tests — 135 passed, including 34 D005 cases; `python -m pytest backend/tests` — 646 passed; `git diff --check` and new-file whitespace checks — PASS (2026-09-12, Windows/Python 3.11). No D006 or later implementation.
 
 ### D006 — Durable local job queue
 
