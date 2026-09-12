@@ -85,19 +85,27 @@ filesystem paths; those remain separate desktop tasks.
 
 ## Artifact persistence
 
-`ArtifactStore` is the abstract save/read/list interface. `LocalArtifactStore(root)`
-creates stored bytes and manifest sidecars under an explicitly supplied root.
-Storage keys are relative, normalized and checked against lexical traversal.
-Resolved-path containment, including Windows junctions, is future hardening in
-the desktop plan; current checks are not a sandbox for untrusted projects. Metadata
-includes the owning workflow run, producing module, artifact type, version,
-checksum and storage reference through `ArtifactManifest`.
+`ArtifactStore` retains its small-payload save/read/list interface. The optional
+`StreamingArtifactStore` adds file/stream imports and a caller-owned read handle.
+`LocalArtifactStore` now stages writes, hashes transferred bytes incrementally in
+1 MiB chunks, flushes the complete file and publishes to a unique destination
+without replacement. Friendly names remain separate from artifact IDs. Generated
+keys and resolved destinations stay under the configured root; full hostile-path
+and junction-race hardening remains D044.
 
-Each generated key includes a unique artifact ID, so repeated friendly names do
-not overwrite earlier artifacts. Current save/read methods operate on whole
-payloads and sidecar writes are not a transaction with media publication. Artifact
-indexing in SQLite, streaming, artifact selection and publication recovery remain
-planned work; D003 persists editorial project state only.
+Standalone roots retain atomic JSON manifest sidecars. For editable projects,
+`LocalArtifactStore.for_project(repository)` uses an independently versioned index
+at `artifacts/.artifacts/index.sqlite`, tied to the open D003 session/project ID.
+This leaves D003's `project.sqlite` v1 unchanged and performs no migration. Both
+catalogs reuse `ArtifactManifest`; only registered keys are readable as artifacts.
+
+The catalog commits after complete file publication; SQLite and the filesystem
+are not one transaction. Recovery removes incomplete staging, finishes cleanup
+of committed publications, and reports unindexed complete files without adopting
+or deleting them. No dependency graph or revision-aware selection is implemented.
+The old save/read convenience methods still use whole payloads; large-media clients
+must choose the new streaming interface. Existing providers/modules remain unchanged.
+See [D004 protocol, failure handling and evidence](../desktop/D004_ARTIFACT_PUBLICATION.md).
 
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional
