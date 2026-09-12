@@ -3,8 +3,9 @@
 This page describes implemented models. The accepted project-owned section,
 immutable revision and timeline model is specified in the
 [desktop plan](../desktop/IMPLEMENTATION_PLAN.md#project-and-pipeline-model).
-SectionRevision and ScriptRevision now provide the in-memory D001 foundation
-described below. Other target models and database persistence remain planned.
+SectionRevision and ScriptRevision provide the D001 foundation described below;
+[D003 storage](api-and-storage.md#editable-project-persistence-d003) retains them.
+D005 adds the dependency values below. Remaining target models are still planned.
 
 Entities are Python dataclasses with explicit validation in `backend/app/domain`;
 HTTP schemas are separate Pydantic models in `backend/app/api/schemas.py`.
@@ -57,6 +58,21 @@ text is authoritative at this explicit boundary: flat script text is not parsed
 into guessed sections. Mutable legacy objects are never retained in snapshots.
 Run metadata, approval state and duration estimates remain on the legacy objects;
 importing a snapshot does not constitute approval or measured audio timing.
+
+## Consumed inputs and freshness (D005)
+
+`domain/dependencies.py` supplies immutable `InputEdge`, `RequestFingerprint` and
+`DependencyDeclaration` values. A declaration records the actual consumed source
+fingerprints, selected artifact identities/checksums, relevant settings, effective
+generation identity and algorithm version. `ArtifactDependency` references an
+existing published artifact; it is not a replacement artifact model.
+
+`application/invalidation.evaluate_freshness` compares these records with explicit
+current request/source/selection snapshots. It returns `fresh`, `stale` or
+`missing`, with independent `FailedAttempt` information. It performs no storage,
+provider calls, scheduling or selection changes. Manual provenance flags changed
+context for review while preserving the selected variant as a reusable input.
+See [D005 semantics and evidence](../desktop/D005_DEPENDENCIES.md).
 
 ## Existing workflow and service boundaries
 
