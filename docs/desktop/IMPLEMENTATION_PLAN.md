@@ -461,7 +461,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D001 — Stable narrative sections and immutable revisions
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-12)
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Make editorial identity independent of a generation run.
@@ -471,6 +471,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/domain/narrative_segment.py, app/domain/script.py, narrowly scoped revision models; backend/tests/unit/.
 - **Acceptance criteria:** For A-B-C, editing B1 to B2 preserves A, B and C section IDs; B1 remains accessible; B2 is selected in the new snapshot; the old snapshot is unchanged; reorder preserves identity.
 - **Test strategy:** Pure domain tests for edit/reorder, immutable previous snapshots, invalid references and legacy construction. No infrastructure imports or connections.
+- **Evidence:** `SectionRevision` and `ScriptRevision` in `backend/app/domain/narrative_segment.py` and `backend/app/domain/script.py`; behavioral coverage in `backend/tests/unit/test_editorial_revisions.py`. A/B/C identities, retained B1, selected B2, pure reorder, frozen snapshots, invalid/foreign references and explicit legacy import pass. Existing `NarrativeSegment`/`Script` classes remain unchanged; isolated domain-import test blocks infrastructure dependencies.
+- **Validation:** `python -m pytest backend/tests/unit/test_editorial_revisions.py backend/tests/unit/test_t006.py backend/tests/integration/test_long_form_workflow.py` — 64 passed; `python -m pytest backend/tests` — 549 passed; `git diff --check` — PASS. Snapshots are in memory only; durable history remains D003. No D002 implementation.
 
 ### D002 — Desktop packaging spike
 

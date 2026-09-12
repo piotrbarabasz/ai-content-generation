@@ -3,7 +3,8 @@
 This page describes implemented models. The accepted project-owned section,
 immutable revision and timeline model is specified in the
 [desktop plan](../desktop/IMPLEMENTATION_PLAN.md#project-and-pipeline-model).
-Those target models must not be treated as existing imports or persistence.
+SectionRevision and ScriptRevision now provide the in-memory D001 foundation
+described below. Other target models and database persistence remain planned.
 
 Entities are Python dataclasses with explicit validation in `backend/app/domain`;
 HTTP schemas are separate Pydantic models in `backend/app/api/schemas.py`.
@@ -21,6 +22,8 @@ validation failures. Internal snake_case fields map to camelCase API payloads.
 | `Artifact` | Run, producing module, type, relative storage key, metadata and creation time |
 | `Script` | Versioned text, language, word count and optional approval timestamp |
 | `NarrativeSegment` | Ordered narrative text, title, role and duration estimate |
+| `SectionRevision` | Frozen editorial text/title/role with stable section/project IDs and a parent revision ID |
+| `ScriptRevision` | Frozen ordered selection of exact section revisions, stable script/project IDs and parent snapshot ID |
 | `RenderScene` | Ordered render unit, scene-plan reference, timing hint and visual intensity |
 | `Voiceover` | Text reference, provider, audio storage key, duration and optional approval time |
 | `CaptionTrack` / `CaptionSegment` | Caption metadata and validated ordered subtitle segments; `serialize_srt` emits UTF-8-compatible text |
@@ -30,6 +33,32 @@ validation failures. Internal snake_case fields map to camelCase API payloads.
 | `ExportConfig` | Localization targets/strategy and downstream export settings, separate from source language |
 | `PlatformHandoff` / `ArtifactReference` / `YouTubeMetadata` | Approved export identity, checksummed references and validated platform metadata |
 | `LocalizationHandoff` / `LocalizationTarget` / `LocalizationDecision` | Per-language manual platform status, acceptance history and custom-audio fallback metadata |
+
+## Editorial revision values (D001)
+
+`SectionRevision` lives in `domain/narrative_segment.py`; `ScriptRevision` lives
+in `domain/script.py`. They are frozen values, not subclasses of the mutable
+`DomainEntity`. Existing `NarrativeSegment.create` and `Script.create` remain
+unchanged for legacy modules. There is no second editorial section identity:
+`SectionRevision.section_id` identifies the narrative segment across edits.
+
+`ScriptRevision.sections` is an immutable tuple selecting one exact revision per
+section. `edit_section` produces a new section revision and a new script snapshot;
+`select_section_revision` can select a retained earlier revision; `reorder` accepts
+only a complete permutation of existing section IDs. Old snapshots remain intact.
+An empty selection is a draft. A project repository must retain snapshots for
+history across restarts; these values perform no persistence, scheduling or lookup
+of parent IDs in a global history store.
+
+`SectionRevision.from_segment` copies legacy content with its existing segment ID.
+`ScriptRevision.from_legacy` requires explicit segments from the script's run,
+orders them by unique positive ordinals and preserves script ID/language. Segment
+text is authoritative at this explicit boundary: flat script text is not parsed
+into guessed sections. Mutable legacy objects are never retained in snapshots.
+Run metadata, approval state and duration estimates remain on the legacy objects;
+importing a snapshot does not constitute approval or measured audio timing.
+
+## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type
 enums include short video, long-form video, audio-only and script-only; enum
