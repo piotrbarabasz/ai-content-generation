@@ -1046,7 +1046,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D045 — Runtime profile manifest contract
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M2
 - **Priority:** P0
 - **Goal:** Define a small reproducible installation and health-check boundary.
@@ -1056,6 +1056,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/runtime/ profile values/schema and approved Piper manifest; unit tests.
 - **Acceptance criteria:** Invalid or incompatible profiles are rejected before installation; catalog/discovery does not import Torch or load a model; all required package identities are explicit.
 - **Test strategy:** Offline schema/compatibility/provenance fixtures and lazy-import checks against default environment.
+- **Evidence:** [D045 profile contract and self-review](D045_RUNTIME_PROFILES.md): strict immutable v1 descriptor, fixed health-check outcome, host/wheel compatibility, dependency closure and curated content allowlist. Approved Piper CPU manifest pins embedded CPython 3.11.9, Piper 1.6.0 and six transitive wheels, plus the MSVC 14.44.35211.0 native runtime identified by static PE inspection; every artifact has exact source/version/hash/size/license references. Public wheel hashes and active metadata constraints were verified without installation. Discovery is offline and imports no optional runtime; model requirements reference the existing catalog. Manifest loads directly from the application wheel.
+- **Validation:** Focused profile/queue/protocol/lifecycle tests — 125 passed, including 48 D045 cases; `python -m pytest backend/tests` — 771 passed; offline wheel resource smoke, `git diff --check` and new-file whitespace checks — PASS (2026-09-12, Windows/Python 3.11). D008 provisioning/clean-Windows acceptance remains separate; no runtime packages installed.
 
 ### D046 — Scene and whole-film preview
 

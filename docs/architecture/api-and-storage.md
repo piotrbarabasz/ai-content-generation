@@ -128,6 +128,22 @@ models, HTTP or active selections. Source and standalone protocol smoke tests ar
 implemented; Qt event-loop integration and real runtime provisioning are later
 tasks. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
 
+## Approved runtime profile metadata (D045)
+
+`runtime.profiles` defines the strict v1 manifest and typed health outcomes.
+`profile_catalog` exposes one shipped Windows x64 CPU profile with a pinned
+embedded CPython, seven wheels and an explicit MSVC native-runtime artifact.
+Descriptors are immutable; unknown fields/commands, incompatible wheel tags,
+incomplete dependency closure and absent provenance are rejected.
+
+Discovery reads packaged JSON through `importlib.resources` and checks the
+curated content fingerprint and supplied host capabilities. It neither imports
+Piper/Torch/ONNX nor probes, installs or starts a process. A syntactically valid
+external manifest is not in the approved allowlist. `ProfileHealth` records
+version-bound observations from the later fixed D008 probe; its construction
+does not execute that probe. Voice files remain external requirements referencing
+the existing curated Piper catalog. See [D045 profile contract and evidence](../desktop/D045_RUNTIME_PROFILES.md).
+
 ## Artifact persistence
 
 `ArtifactStore` retains its small-payload save/read/list interface. The optional

@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "profile_id": "piper-cpu-windows-x64",
+  "profile_version": "1.0.0",
+  "target": {
+    "os": "windows",
+    "architecture": "x86_64",
+    "device": "cpu"
+  },
+  "interpreter": {
+    "implementation": "cpython",
+    "version": "3.11.9",
+    "abi": "cp311",
+    "artifact": {
+      "filename": "python-3.11.9-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip",
+      "sha256": "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b",
+      "size_bytes": 11249023,
+      "source_url": "https://www.python.org/downloads/release/python-3119/",
+      "license_expression": "PSF-2.0",
+      "license_url": "https://docs.python.org/3.11/license.html"
+    }
+  },
+  "packages": [
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "artifact": {
+        "filename": "flatbuffers-25.12.19-py2.py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl",
+        "sha256": "7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4",
+        "size_bytes": 26661,
+        "source_url": "https://pypi.org/pypi/flatbuffers/25.12.19/json",
+        "license_expression": "Apache-2.0",
+        "license_url": "https://pypi.org/project/flatbuffers/25.12.19/"
+      },
+      "dependencies": {}
+    },
+    {
+      "name": "numpy",
+      "version": "2.4.6",
+      "artifact": {
+        "filename": "numpy-2.4.6-cp311-cp311-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/c5/31/7fc6239c12bce7e931463251cca4426c465e1876ba3cc785402ef4dd8f4e/numpy-2.4.6-cp311-cp311-win_amd64.whl",
+        "sha256": "1e254a00cdf42b1e4d5b3d68d33af63268d41340d8885df2ab6470f2e1500147",
+        "size_bytes": 12608406,
+        "source_url": "https://pypi.org/pypi/numpy/2.4.6/json",
+        "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+        "license_url": "https://pypi.org/project/numpy/2.4.6/"
+      },
+      "dependencies": {}
+    },
+    {
+      "name": "onnxruntime",
+      "version": "1.28.0",
+      "artifact": {
+        "filename": "onnxruntime-1.28.0-cp311-cp311-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/9f/10/3d946d5d5f2cdcc3c8da36cae63190c516d16349edaffd944bda60ca4c3e/onnxruntime-1.28.0-cp311-cp311-win_amd64.whl",
+        "sha256": "0d650aeee29368414367b65529e90afe4bf1bab76254789063b8b2f7ea3013c8",
+        "size_bytes": 13752539,
+        "source_url": "https://pypi.org/pypi/onnxruntime/1.28.0/json",
+        "license_expression": "MIT",
+        "license_url": "https://pypi.org/project/onnxruntime/1.28.0/"
+      },
+      "dependencies": {
+        "flatbuffers": "25.12.19",
+        "numpy": "2.4.6",
+        "packaging": "26.3",
+        "protobuf": "7.35.1"
+      }
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "artifact": {
+        "filename": "packaging-26.3-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+        "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+        "size_bytes": 129956,
+        "source_url": "https://pypi.org/pypi/packaging/26.3/json",
+        "license_expression": "Apache-2.0 OR BSD-2-Clause",
+        "license_url": "https://pypi.org/project/packaging/26.3/"
+      },
+      "dependencies": {}
+    },
+    {
+      "name": "pathvalidate",
+      "version": "3.3.1",
+      "artifact": {
+        "filename": "pathvalidate-3.3.1-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/9a/70/875f4a23bfc4731703a5835487d0d2fb999031bd415e7d17c0ae615c18b7/pathvalidate-3.3.1-py3-none-any.whl",
+        "sha256": "5263baab691f8e1af96092fa5137ee17df5bdfbd6cff1fcac4d6ef4bc2e1735f",
+        "size_bytes": 24305,
+        "source_url": "https://pypi.org/pypi/pathvalidate/3.3.1/json",
+        "license_expression": "MIT",
+        "license_url": "https://pypi.org/project/pathvalidate/3.3.1/"
+      },
+      "dependencies": {}
+    },
+    {
+      "name": "piper-tts",
+      "version": "1.6.0",
+      "artifact": {
+        "filename": "piper_tts-1.6.0-cp39-abi3-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/63/0a/ce74581bbbff5ceae2aa51f322ae01cd8239590efe5784df3e1ffd018e18/piper_tts-1.6.0-cp39-abi3-win_amd64.whl",
+        "sha256": "5f10915ff8193053303ae406d0f121e2e775b4a91309c0c89b0d8652a232c438",
+        "size_bytes": 34098254,
+        "source_url": "https://pypi.org/pypi/piper-tts/1.6.0/json",
+        "license_expression": "GPL-3.0-or-later",
+        "license_url": "https://pypi.org/project/piper-tts/1.6.0/"
+      },
+      "dependencies": {
+        "onnxruntime": "1.28.0",
+        "pathvalidate": "3.3.1"
+      }
+    },
+    {
+      "name": "protobuf",
+      "version": "7.35.1",
+      "artifact": {
+        "filename": "protobuf-7.35.1-cp310-abi3-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/0a/19/8d0cb6f20a1ef7b18f1c8986ad5783f22f84cce39c6ce9a6e645ea55192e/protobuf-7.35.1-cp310-abi3-win_amd64.whl",
+        "sha256": "230a75ddfc2de4806e56696ce9640c1cdfdb6543b7cfce98d42a4c0a0e7bdb87",
+        "size_bytes": 439996,
+        "source_url": "https://pypi.org/pypi/protobuf/7.35.1/json",
+        "license_expression": "BSD-3-Clause",
+        "license_url": "https://pypi.org/project/protobuf/7.35.1/"
+      },
+      "dependencies": {}
+    }
+  ],
+  "native_runtime": {
+    "id": "msvc-v14-x64",
+    "version": "14.44.35211.0",
+    "artifact": {
+      "filename": "VC_redist.x64.exe",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/bd1c8d9d-ba95-4eee-bc6e-df1fcc876373/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe",
+      "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
+      "size_bytes": 25635768,
+      "source_url": "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist",
+      "license_expression": "LicenseRef-Microsoft-Visual-Cpp-2022-Runtime",
+      "license_url": "https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/"
+    },
+    "required_libraries": [
+      "msvcp140.dll",
+      "msvcp140_1.dll",
+      "vcruntime140.dll",
+      "vcruntime140_1.dll"
+    ]
+  },
+  "model_requirement": {
+    "catalog": "curated-piper-voices",
+    "required_for": "synthesis",
+    "artifact_roles": [
+      "onnx",
+      "config"
+    ],
+    "bundled": false
+  },
+  "health_check": {
+    "id": "piper-cpu-imports-v1",
+    "worker_protocol": 1
+  }
+}
