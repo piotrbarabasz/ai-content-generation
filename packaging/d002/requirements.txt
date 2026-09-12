@@ -1,0 +1,3 @@
+# Isolated spike/build environment; not a default backend dependency.
+PySide6==6.11.2
+Nuitka==4.1.1

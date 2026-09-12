@@ -476,7 +476,8 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D002 — Desktop packaging spike
 
-- **Status:** Planned
+- **Status:** Partial — clean Windows and manual playback acceptance pending (2026-09-12).
+- **Evidence:** [D002 packaging spike](D002_PACKAGING_SPIKE.md): source and relocated standalone WAV/MP4/child smoke PASS; focused 14 tests and full backend 563 tests PASS; diff check PASS. Clean-machine launch and human picture/sound observation remain unverified; dependent UI work remains gated.
 - **Milestone:** M9
 - **Priority:** P0
 - **Goal:** Validate PySide6 playback and process packaging before editor investment.
