@@ -12,6 +12,7 @@ from pathlib import Path
 import sqlite3
 
 from app.domain.enums import ContentGenre, ContentType, TargetPlatform
+from app.domain.base import new_id
 from app.domain.narrative_segment import SectionRevision
 from app.domain.project import Project
 from app.domain.script import ScriptRevision
@@ -88,6 +89,8 @@ Separate readers are also excluded in this minimal local single-session format.
     def __init__(self, workspace: Path, connection: sqlite3.Connection):
         self.workspace = workspace
         self._connection = connection
+        # Ephemeral identity for project-owned services; never a persisted path.
+        self.session_id = new_id("project_session")
 
     @staticmethod
     def _connect(workspace: Path) -> sqlite3.Connection:

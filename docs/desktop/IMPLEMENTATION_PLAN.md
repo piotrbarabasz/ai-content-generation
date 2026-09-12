@@ -535,7 +535,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D006 — Durable local job queue
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M2
 - **Priority:** P0
 - **Goal:** Retain queued work and truthful attempts across application restart.
@@ -545,6 +545,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/domain/generation_job.py, new app/jobs/ coordinator/repository; integration tests.
 - **Acceptance criteria:** Restart recovers pending work and marks abandoned active attempts interrupted; two claims cannot execute the same attempt; failed attempts retain prior artifacts.
 - **Test strategy:** SQLite claim contention, state-transition, pause/cancel and simulated restart tests with a fake clock/executor.
+- **Evidence:** [D006 queue semantics and self-review](D006_DURABLE_JOBS.md): project-owned versioned SQLite queue, frozen D005 request/input snapshots, separately retained attempts, transactional claims with tokens, reported phase/count progress, persistent pause, cooperative cancellation and explicit retries. New D003 sessions atomically interrupt abandoned running attempts; same-session adapter reconstruction preserves active claims. Failed attempts retain D004 artifacts and map to independent D005 failure evidence. D003 schema and legacy GenerationJob behavior remain unchanged.
+- **Validation:** Focused queue/domain/project/dependency/storage tests — 103 passed, including 26 D006 cases; four actual subprocess crash boundaries and SQLite write contention pass; `python -m pytest backend/tests` — 672 passed; `git diff --check` and new-file whitespace checks — PASS (2026-09-12, Windows/Python 3.11). No D007 or later implementation.
 
 ### D007 — Versioned worker protocol and lifecycle
 
