@@ -66,11 +66,12 @@ def _build_storage_key(
 ) -> str:
     filename = PurePosixPath(name).name
     stem = _safe_segment(PurePosixPath(filename).stem, fallback="artifact")
-    suffix = PurePosixPath(filename).suffix
+    # A suffix can contain Windows separators/ADS syntax even on a POSIX host.
+    suffix = re.sub(r"[^A-Za-z0-9.]", "_", PurePosixPath(filename).suffix)
     key_parts = [
         _safe_segment(workflow_run_id, fallback="workflow"),
         _safe_segment(module_name, fallback="module"),
-        f"{artifact_id}-{stem}{suffix}",
+        f"{_safe_segment(artifact_id, fallback='artifact')}-{stem}{suffix}",
     ]
     return "/".join(part for part in key_parts if part)
 

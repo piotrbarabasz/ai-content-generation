@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from pathlib import Path
+from typing import BinaryIO, Protocol, runtime_checkable
 
 from app.domain.types import JsonDict
 
@@ -26,3 +27,17 @@ class ArtifactStore(Protocol):
 
     def list_artifacts(self, prefix: str = "") -> tuple[ArtifactManifest, ...]:
         """List stored artifact manifests matching a prefix."""
+
+
+@runtime_checkable
+class StreamingArtifactStore(ArtifactStore, Protocol):
+    """Optional large-file capability; existing small-payload stores remain valid."""
+
+    def import_file(self, name: str, source: Path | str,
+                    metadata: JsonDict | None = None) -> ArtifactManifest: ...
+
+    def import_stream(self, name: str, source: BinaryIO,
+                      metadata: JsonDict | None = None) -> ArtifactManifest: ...
+
+    def open_artifact(self, key: str) -> BinaryIO:
+        """Open a published artifact for bounded reads; the caller closes it."""

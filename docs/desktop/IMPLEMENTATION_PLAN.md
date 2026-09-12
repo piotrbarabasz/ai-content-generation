@@ -505,7 +505,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D004 — Streaming immutable artifact publication
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Store real large outputs without whole-file memory copies or partial active records.
@@ -515,6 +515,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/storage/artifact_store.py, local_store.py, manifest.py and artifact index; storage tests.
 - **Acceptance criteria:** Repeated friendly names retain distinct artifacts; recorded checksum matches bytes; injected failure cannot advertise partial media; large-file path uses bounded reads.
 - **Test strategy:** Temporary files with guarded stream reads and failure injection before/after file move and metadata commit; retain existing store tests.
+- **Evidence:** [D004 publication protocol and self-review](D004_ARTIFACT_PUBLICATION.md): optional file/stream contract, 1 MiB bounded reads, incremental SHA-256, staged no-replacement publication and project-bound SQLite artifact index. D003 schema/data stay unchanged. Repeated names, collisions, transfer/commit failure, actual process crashes, deterministic journal recovery and legacy compatibility pass. Orphan finals remain unadvertised and are reported without automatic adoption/deletion.
+- **Validation:** Focused storage/project/workflow tests — 66 passed, including 25 new D004 cases; `python -m pytest backend/tests` — 612 passed; `git diff --check` and new-file whitespace checks — PASS (2026-09-12, Windows/Python 3.11). No D005 or later implementation.
 
 ### D005 — Artifact dependencies and freshness
 
