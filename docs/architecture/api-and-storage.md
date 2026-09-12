@@ -83,6 +83,29 @@ rollback, actual competing processes and abrupt process exit before/after commit
 This task does not publish media, implement jobs, add undo UI or harden untrusted
 filesystem paths; those remain separate desktop tasks.
 
+## Durable local job queue (D006)
+
+`app.jobs.repository.JobRepository` binds `jobs.sqlite` to the live D003 session.
+The queue has its own schema version 1 and application ID `0x4149434A` (AICJ);
+`project.sqlite` and the artifact index keep their existing schemas. The only
+D003 code addition is an ephemeral session ID shared by services using that
+repository instance. It distinguishes adapter reconstruction from project restart.
+
+Queue transactions persist immutable job input JSON, separately numbered attempts,
+claim tokens, phase/count progress and outcomes. `BEGIN IMMEDIATE` serializes
+claim/pause/cancel/finish commands; only a queued attempt can be claimed, and
+updates require its current running claim token. Queue access remains on the
+project's coordinator thread. Workers will send events through the later D007
+adapter, rather than opening the project or queue themselves.
+
+The first queue open in a new exclusively owned project session atomically marks
+old running attempts `interrupted`. Pending work, pause state, progress and
+terminal history survive. Retries are explicit new attempts over the same input
+snapshot. Completion stores reported output references only; media validation,
+conditional publication and active selection remain D004/D040 responsibilities.
+No queue command edits or removes retained artifact records or files.
+See [D006 transitions, recovery and evidence](../desktop/D006_DURABLE_JOBS.md).
+
 ## Artifact persistence
 
 `ArtifactStore` retains its small-payload save/read/list interface. The optional

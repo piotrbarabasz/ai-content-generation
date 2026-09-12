@@ -20,6 +20,7 @@ validation failures. Internal snake_case fields map to camelCase API payloads.
 | `ProviderConfig` | Provider type/name, enabled state and settings; resolution is through `ProviderRegistry` |
 | `WorkflowRun` | Config reference, stage/status, timestamps, errors, artifact IDs and checkpoint IDs |
 | `GenerationJob` | Module attempt, retry count, status, timestamps, output IDs and optional usage metadata |
+| `JobRequest` / `JobAttempt` / `JobProgress` | Immutable desktop operation inputs, separately retained durable attempts, claim ownership and reported phase/count progress (D006) |
 | `Artifact` | Run, producing module, type, relative storage key, metadata and creation time |
 | `Script` | Versioned text, language, word count and optional approval timestamp |
 | `NarrativeSegment` | Ordered narrative text, title, role and duration estimate |
@@ -73,6 +74,22 @@ current request/source/selection snapshots. It returns `fresh`, `stale` or
 provider calls, scheduling or selection changes. Manual provenance flags changed
 context for review while preserving the selected variant as a reusable input.
 See [D005 semantics and evidence](../desktop/D005_DEPENDENCIES.md).
+
+## Durable desktop jobs (D006)
+
+`domain/generation_job.py` retains the existing mutable `GenerationJob` workflow
+DTO unchanged. The desktop queue uses frozen `JobRequest`, `JobAttempt` and
+`JobProgress` values from the same module: the requested operation and its input
+snapshot remain immutable while each explicit retry creates a separate attempt.
+It does not persist or reinterpret legacy workflow-run records.
+
+Attempts use `queued`, `running`, `completed`, `failed`, `canceled` and
+`interrupted`. Progress is a reported phase with optional integer counts, not an
+invented inference percentage. `JobAttempt.failure(job)` maps a recorded failure
+to D005 `FailedAttempt` evidence without changing selected artifact freshness.
+`jobs.coordinator.JobCoordinator` depends on an injected repository port and clock,
+with no SQLite, UI, provider or worker imports. See [D006 queue semantics and
+evidence](../desktop/D006_DURABLE_JOBS.md).
 
 ## Existing workflow and service boundaries
 
