@@ -95,8 +95,8 @@ Queue transactions persist immutable job input JSON, separately numbered attempt
 claim tokens, phase/count progress and outcomes. `BEGIN IMMEDIATE` serializes
 claim/pause/cancel/finish commands; only a queued attempt can be claimed, and
 updates require its current running claim token. Queue access remains on the
-project's coordinator thread. Workers will send events through the later D007
-adapter, rather than opening the project or queue themselves.
+project's coordinator thread. The D007 supervisor receives private-pipe events
+and applies queue commands on that thread; workers never open the project/queue.
 
 The first queue open in a new exclusively owned project session atomically marks
 old running attempts `interrupted`. Pending work, pause state, progress and
@@ -105,6 +105,28 @@ snapshot. Completion stores reported output references only; media validation,
 conditional publication and active selection remain D004/D040 responsibilities.
 No queue command edits or removes retained artifact records or files.
 See [D006 transitions, recovery and evidence](../desktop/D006_DURABLE_JOBS.md).
+
+## Isolated worker lifecycle (D007)
+
+`runtime.supervisor.WorkerSupervisor.run_next()` is an async operation for one
+D006 claim. Its trusted `WorkerLaunch` selects a native executable or a fixed
+Python script; job data cannot select commands. The version-1 binary pipe protocol
+uses a four-byte length followed by at most 256 KiB of strict UTF-8 JSON, including
+job/attempt IDs. Only a matching handshake permits the frozen job snapshot to be
+sent. stdout carries frames; stderr is continuously drained into a bounded tail.
+
+Progress and terminal events are applied on the owning coordinator event-loop
+thread. Completion requires a valid outcome, EOF and exit zero. Cancellation
+first requests cooperation, then enforces termination after a grace period;
+timeouts and protocol failures cannot report success. Windows launch is hidden
+and a kill-on-close Job Object contains the child before the handshake. Process
+exit and pipe drainage precede a terminal queue update. Application composition
+must await `close()`/`run_next()` before closing its D003 session.
+
+The included worker handles only `diagnostic.echo`, with no generated media,
+models, HTTP or active selections. Source and standalone protocol smoke tests are
+implemented; Qt event-loop integration and real runtime provisioning are later
+tasks. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
 
 ## Artifact persistence
 

@@ -550,7 +550,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D007 — Versioned worker protocol and lifecycle
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M2
 - **Priority:** P0
 - **Goal:** Run isolated work without blocking the application or trusting unframed output.
@@ -560,6 +560,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/runtime/protocol.py and worker supervision; process integration fixtures.
 - **Acceptance criteria:** Fake worker success/failure/hang/cancel yields truthful queue state; malformed/version-mismatched replies fail safely; child cleanup releases the process.
 - **Test strategy:** Real lightweight subprocess tests for handshake, malformed output, timeout and cancellation; repeat packaged handshake from D002.
+- **Evidence:** [D007 protocol, lifecycle and self-review](D007_WORKER_LIFECYCLE.md): private length-prefixed JSON with strict version/job/attempt binding and 256 KiB limit, async D006 supervision, bounded stderr, cooperative/forced cancellation, exit verification and joined pipe cleanup. Hidden Windows launch and kill-on-close process containment pass descendant/parent-crash tests. Relocated standalone diagnostic worker completes through D006; repeated D002 packaged ping exits zero. D002 clean-machine/manual playback evidence remains outstanding and its status is unchanged.
+- **Validation:** Focused protocol/lifecycle/queue/spike tests — 91 passed, including 51 D007 cases, with resource/unraisable warnings treated as errors; `python -m pytest backend/tests` — 723 passed; standalone build and relocated packaged handshakes — PASS; `git diff --check` and new-file whitespace checks — PASS (2026-09-12, Windows/Python 3.11). No D008 or later implementation.
 
 ### D008 — Managed Piper CPU runtime provisioning
 

@@ -1,0 +1,267 @@
+"""Async one-attempt supervision; queue writes stay on its owning event-loop thread."""
+
+import asyncio
+from contextlib import suppress
+from dataclasses import dataclass, field
+import math
+import os
+from pathlib import Path
+import subprocess
+
+from app.domain.generation_job import AttemptStatus, JobAttempt, JobProgress
+from app.jobs.coordinator import JobCoordinator
+from .protocol import (
+    MAX_FRAME_BYTES, ProtocolError, check_identity, encode_frame, message, read_message_async,
+)
+
+
+@dataclass(frozen=True)
+class WorkerLaunch:
+    """Trusted composition paths, never an executable/argument from a job snapshot.
+
+    Supply the actual Python interpreter, not a Windows venv redirector, so the
+    owned PID is the worker. A packaged entry point accepts no command arguments.
+    """
+
+    executable: Path
+    entrypoint: Path | None = None
+    environment: dict[str, str] = field(default_factory=dict)
+    cwd: Path | None = None
+
+    def command(self):
+        executable = self.executable.expanduser().resolve(strict=True)
+        if not executable.is_file() or os.name == "nt" and executable.suffix.lower() != ".exe":
+            raise ValueError("Worker executable must be a native executable file.")
+        if self.entrypoint is None:
+            return [str(executable)]
+        entry = self.entrypoint.expanduser().resolve(strict=True)
+        if not entry.is_file() or entry.suffix != ".py":
+            raise ValueError("Python worker requires a trusted script entry point.")
+        return [str(executable), "-I", "-u", str(entry)]
+
+
+@dataclass(frozen=True)
+class WorkerLimits:
+    handshake: float = 5.0
+    execution: float = 120.0
+    cancel_grace: float = 2.0
+    exit_grace: float = 2.0
+    reap: float = 5.0
+    stderr_bytes: int = 64 * 1024
+
+    def __post_init__(self):
+        for name in ("handshake", "execution", "cancel_grace", "exit_grace", "reap"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError("Worker deadlines must be finite positive seconds.")
+        if type(self.stderr_bytes) is not int or not 0 < self.stderr_bytes <= 1024 * 1024:
+            raise ValueError("Worker stderr tail must be bounded to at most 1 MiB.")
+
+
+@dataclass(frozen=True)
+class WorkerRunResult:
+    attempt: JobAttempt
+    pid: int | None
+    returncode: int | None
+    stderr_tail: str
+
+
+class WorkerSupervisor:
+    """One child per invocation; caller schedules this coroutine outside UI work.
+
+    No queue polling loop, automatic retry, GPU scheduler or active selection.
+    Always await run_next/close before closing the D003 session.
+    """
+
+    def __init__(self, coordinator: JobCoordinator, launch: WorkerLaunch, *, limits=WorkerLimits()):
+        self.coordinator = coordinator
+        self.launch = launch
+        self.limits = limits
+        self._task = None
+        self._claim = None
+        self.process = None
+        self._started = None
+        self._process_job = None
+
+    def request_cancel(self):
+        if self._claim is not None:
+            return self.coordinator.cancel(self._claim.id)
+        return None
+
+    async def close(self):
+        if self._task is not None:
+            self.request_cancel()
+            await asyncio.shield(self._task)
+
+    async def _send(self, value):
+        self.process.stdin.write(encode_frame(value))
+        await asyncio.wait_for(self.process.stdin.drain(), self.limits.handshake)
+
+    async def _logs(self, tail):
+        while chunk := await self.process.stderr.read(4096):
+            tail.extend(chunk)
+            if len(tail) > self.limits.stderr_bytes:
+                del tail[:-self.limits.stderr_bytes]
+
+    async def _discard_stdout(self):
+        # After stopping protocol parsing, drain bounded chunks so a paused
+        # StreamReader can observe EOF and close Windows pipe transports.
+        while await self.process.stdout.read(4096):
+            pass
+
+    async def _cancellation(self, claim):
+        while True:
+            current = self.coordinator.repository.get_attempt(claim.id)
+            if current.cancel_requested:
+                return
+            await asyncio.sleep(0.02)
+
+    async def _conversation(self, job, claim):
+        await self._send(message("hello", job.id, claim.id))
+        ready = check_identity(await asyncio.wait_for(read_message_async(self.process.stdout), self.limits.handshake), job.id, claim.id)
+        if ready["type"] != "ready" or ready["payload"]["pid"] != self.process.pid:
+            raise ProtocolError("Expected handshake from the directly owned worker PID.")
+        await self._send(message("run", job.id, claim.id, {"job": job.to_payload()}))
+        self._started.set()
+        while True:
+            event = check_identity(await read_message_async(self.process.stdout), job.id, claim.id)
+            if event["type"] == "progress":
+                self.coordinator.progress(claim, JobProgress(**event["payload"]))
+                await asyncio.sleep(0)  # A stdout flood must not starve cancel/deadline tasks.
+            elif event["type"] in ("completed", "failed", "canceled"):
+                break
+            else:
+                raise ProtocolError("Unexpected worker event ordering.")
+        # A success frame alone is insufficient: require EOF and a clean exit.
+        extra = await asyncio.wait_for(read_message_async(self.process.stdout), self.limits.exit_grace)
+        if extra is not None:
+            raise ProtocolError("Worker sent an event after its terminal outcome.")
+        code = await asyncio.wait_for(self.process.wait(), self.limits.exit_grace)
+        if code != 0:
+            raise ProtocolError("Worker exited nonzero after reporting an outcome.")
+        return event
+
+    async def _stop(self):
+        if self.process is None:
+            return
+        if self._process_job is not None:
+            self._process_job.close()
+            self._process_job = None
+        if self.process.returncode is None:
+            with suppress(ProcessLookupError):
+                self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), self.limits.exit_grace)
+            except asyncio.TimeoutError:
+                with suppress(ProcessLookupError):
+                    self.process.kill()
+                await asyncio.wait_for(self.process.wait(), self.limits.reap)
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+            with suppress(BrokenPipeError, ConnectionResetError, asyncio.TimeoutError):
+                await asyncio.wait_for(self.process.stdin.wait_closed(), self.limits.reap)
+
+    async def _cleanup(self, tasks, logs):
+        control_tasks = [task for task in tasks if task is not logs]
+        for task in control_tasks:
+            if not task.done():
+                task.cancel()
+        if control_tasks:
+            await asyncio.gather(*control_tasks, return_exceptions=True)
+        drain = asyncio.create_task(self._discard_stdout()) if self.process is not None else None
+        if drain is not None:
+            tasks.append(drain)
+        try:
+            await self._stop()
+            if drain is not None:
+                await asyncio.wait_for(asyncio.shield(drain), self.limits.reap)
+            if logs is not None:
+                await asyncio.wait_for(asyncio.shield(logs), self.limits.reap)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def run_next(self, owner="local-worker") -> WorkerRunResult | None:
+        if self._task is not None:
+            raise RuntimeError("This supervisor already owns an attempt.")
+        self.process = None
+        claim = self.coordinator.claim_next(owner)
+        if claim is None:
+            return None
+        self._task, self._claim = asyncio.current_task(), claim
+        self._started = asyncio.Event()
+        tasks, tail = [], bytearray()
+        event, error, canceled, external_cancel = None, None, False, False
+        logs = None
+        try:
+            job = self.coordinator.repository.get_job(claim.job_id)
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.upper().startswith("PYTHON") and key.upper() != "VIRTUAL_ENV"}
+            environment.update(self.launch.environment)
+            self.process = await asyncio.create_subprocess_exec(
+                *self.launch.command(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=environment, cwd=self.launch.cwd,
+                limit=MAX_FRAME_BYTES + 4,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if os.name == "nt":
+                from .windows_job import WindowsJob
+                self._process_job = WindowsJob(self.process.pid)
+            logs = asyncio.create_task(self._logs(tail))
+            conversation = asyncio.create_task(self._conversation(job, claim))
+            cancellation = asyncio.create_task(self._cancellation(claim))
+            tasks.extend((logs, conversation, cancellation))
+            done, _ = await asyncio.wait((conversation, cancellation), timeout=self.limits.execution,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if cancellation in done:
+                cancellation.result()
+                canceled = True
+                if self._started.is_set() and not conversation.done():
+                    await self._send(message("cancel", job.id, claim.id))
+                    with suppress(asyncio.TimeoutError, ProtocolError, BrokenPipeError, ConnectionResetError):
+                        event = await asyncio.wait_for(asyncio.shield(conversation), self.limits.cancel_grace)
+                # Before run, or after grace expires, cleanup confirms termination.
+            elif conversation in done:
+                event = conversation.result()
+            else:
+                error = "worker_timeout: execution deadline exceeded"
+        except asyncio.CancelledError:
+            external_cancel = True
+            self.request_cancel()
+            canceled = True
+        except (OSError, ValueError, asyncio.TimeoutError) as exc:
+            error = f"worker_error: {type(exc).__name__}: {str(exc)[:1024]}"
+        finally:
+            # No terminal queue outcome until the owned child has actually exited.
+            cleanup = asyncio.create_task(self._cleanup(tasks, logs))
+            try:
+                while True:
+                    try:
+                        await asyncio.shield(cleanup)
+                        break
+                    except asyncio.CancelledError:
+                        # Repeated shutdown requests cannot abandon pipe/process cleanup.
+                        external_cancel, canceled = True, True
+                        self.request_cancel()
+            finally:
+                self._task, self._claim = None, None
+        current = self.coordinator.repository.get_attempt(claim.id)
+        canceled = canceled or current.cancel_requested
+        if canceled:
+            outcome = self.coordinator.acknowledge_cancel(claim)
+        elif error is not None:
+            outcome = self.coordinator.fail(claim, error)
+        elif event is not None and event["type"] == "completed":
+            outcome = self.coordinator.complete(claim, event["payload"]["artifact_ids"])
+        elif event is not None and event["type"] == "failed":
+            outcome = self.coordinator.fail(claim, f'{event["payload"]["code"]}: {event["payload"]["message"]}')
+        else:
+            outcome = self.coordinator.fail(claim, "worker_protocol: unsolicited cancellation or missing outcome")
+        if external_cancel:
+            raise asyncio.CancelledError
+        return WorkerRunResult(outcome, self.process.pid if self.process else None,
+                               self.process.returncode if self.process else None,
+                               bytes(tail).decode("utf-8", errors="replace"))
