@@ -25,11 +25,12 @@ def main():
     root = Path(__file__).resolve().parents[2]
     runtime = root / "backend/app/runtime"
     for name in ("__init__.py", "protocol.py", "profiles.py", "profile_catalog.py", "provisioning.py",
-                 "piper_health.py", "native_piper.py", "windows_job.py", "piper_cpu_windows_x64.json"):
+                 "piper_health.py", "native_piper.py", "windows_job.py", "worker_bundle.py", "piper_cpu_windows_x64.json"):
         shutil.copy2(runtime / name, package / name)
     # Preserve source bytes, including newlines, identically to a source install.
-    payload = {name: (runtime / name).read_bytes().decode("utf-8")
-               for name in ("protocol.py", "worker.py", "piper_worker.py")}
+    sys.path.insert(0, str(root / "backend"))
+    from app.runtime.worker_bundle import source_files
+    payload = {name: data.decode("utf-8") for name, data in source_files().items()}
     (package / "worker_sources.json").write_text(json.dumps(payload), encoding="utf-8")
     shutil.copy2(Path(__file__).with_name("smoke.py"), stage / "smoke.py")
     env = dict(os.environ, PYTHONPATH=str(stage))

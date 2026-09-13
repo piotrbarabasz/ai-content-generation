@@ -1,4 +1,4 @@
-"""Private Piper runtime composition. D008 supports health and diagnostic work only."""
+"""Private Piper runtime composition: health, diagnostics and D010 section audio."""
 
 import sys
 
@@ -59,6 +59,9 @@ def health(job, report, canceled):
 def handle(job, report, canceled):
     if job.get("request", {}).get("operation") == "runtime.health":
         return health(job, report, canceled)
+    if job.get("request", {}).get("operation") == "section_audio.synthesize":
+        from app.runtime.section_worker import section_audio
+        return section_audio(job, report, canceled)
     return diagnostic(job, report, canceled)
 
 

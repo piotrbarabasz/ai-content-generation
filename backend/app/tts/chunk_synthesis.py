@@ -53,6 +53,8 @@ class ResumableChunkSynthesizer:
         voice_config: Mapping[str, Any] | None = None,
         manifest_name: str = "synthesis-manifest.json",
         final_name: str = "voiceover.wav",
+        canceled=None,
+        progress=None,
     ) -> ChunkSynthesisResult:
         """Synthesize all chunks, then assemble only a fully valid chunk set."""
         root = Path(runtime_dir)
@@ -90,6 +92,10 @@ class ResumableChunkSynthesizer:
         outputs: list[bytes] = []
         baseline: AudioParameters | None = None
         for chunk in ordered_chunks:
+            if canceled is not None and canceled():
+                self._mark_final_failed(manifest)
+                manifest.save(manifest_path)
+                return ChunkSynthesisResult(manifest, False, None)
             record = self._record_for(chunk, config_hash, manifest)
             payload = self._reuse_if_valid(record, root)
             if payload is None:
@@ -119,6 +125,8 @@ class ResumableChunkSynthesizer:
             outputs.append(payload)
             manifest.chunks[chunk.id] = record
             manifest.save(manifest_path)
+            if progress is not None:
+                progress(len(outputs), len(chunks))
         manifest.failed_chunk_ids = failed
         if failed or len(outputs) != len(chunks):
             self._mark_final_failed(manifest)

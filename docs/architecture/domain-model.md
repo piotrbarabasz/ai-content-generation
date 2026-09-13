@@ -99,6 +99,12 @@ permanent freshness flag. The injected `ResultPublicationService` orchestrates
 publication without importing storage or worker/provider infrastructure. See
 [D040 selection and replay semantics](../desktop/D040_RESULT_PUBLICATION.md).
 
+`domain/section_audio.py` exposes the retained D010 raw `SectionAudio` value from
+existing artifact metadata: section/revision identity, artifact checksum, sample
+rate and PCM frame count. Duration is measured as frames divided by sample rate.
+The value does not turn technical TTS chunks into narrative sections or scenes.
+See [D010 section-audio behavior](../desktop/D010_SECTION_AUDIO.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type
