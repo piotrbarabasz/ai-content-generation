@@ -7,9 +7,9 @@ from collections.abc import Callable, Mapping
 from app.domain.enums import ProviderType
 from app.domain.provider_config import ProviderConfig
 
-from .chatterbox_v3 import ChatterboxV3Provider
-from .piper_tts import PiperTTSProvider
-from .xtts_v2 import XTTSV2EvalProvider
+from .chatterbox_v3 import ChatterboxV3Error, ChatterboxV3Provider
+from .piper_tts import PiperError, PiperTTSProvider
+from .xtts_v2 import XTTSError, XTTSV2EvalProvider
 from .interfaces import TTSProvider
 from .mock_tts import MockTTSProvider
 from .registry import ProviderRegistry, ProviderRegistryError

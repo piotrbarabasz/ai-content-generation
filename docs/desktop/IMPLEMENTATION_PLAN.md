@@ -595,7 +595,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D010 — Generate audio for one section
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M3
 - **Priority:** P0
 - **Goal:** Produce a real WAV for exactly one immutable section revision.
@@ -605,6 +605,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/application/section_audio.py, app/runtime/ TTS dispatch; app/tts/ integration and tests.
 - **Acceptance criteria:** A section gets validated audio with truthful duration; interrupted work reuses valid chunks; old revision media survives retry; a stale result cannot become active.
 - **Test strategy:** Fake-provider resume/checksum/identity tests plus an explicit managed Piper smoke; no real models in default suite.
+- **Implementation boundary:** Reuse D007 completion hooks and D040 publication, adding optional non-reserved artifact metadata for validated SectionAudio measurements. Store resumable generation files in configured per-job workspaces, separate from immutable published artifacts. Extend the D008 private worker source bundle with the existing TTS factory/selection/chunk synthesis dependency closure and a pinned Piper backend bridge; no new provider or runtime dependencies. Runtime/model identities are verified before work and publication. Application services use injected voice/output ports; workers never open project or queue databases.
+- **Evidence:** [D010 section audio and managed smoke](D010_SECTION_AUDIO.md): one immutable section produces measured mono PCM WAV; validated chunks survive cancellation/process death and are reused on retry, while old revision audio and unrelated sections remain intact. Coordinator revalidation and D040 prevent corrupt or stale media from becoming selected. Final managed Gosia smoke produced 328704 frames at 22050 Hz (14.907210884 s), reused 2 chunks and generated 6 after cancellation; worker exit zero and project reopen — PASS.
+- **Validation:** Focused tests — 145 passed, including 27 new D010 cases; `python -m pytest backend/tests` — 941 passed; final real managed Piper smoke, `git diff --check`, new-file whitespace, documentation links and task-scope checks — PASS (2026-09-13, Windows/isolated Python 3.11.9). Real media/runtime/model files remain ignored. D002/D008 remain Partial; standalone installer/clean-Windows acceptance was not reclassified. D011 was not started; branch remains unmerged for review.
 
 ### D011 — Tempo as an audio derivative
 

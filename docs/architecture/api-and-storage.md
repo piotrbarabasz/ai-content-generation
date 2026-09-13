@@ -123,10 +123,10 @@ and a kill-on-close Job Object contains the child before the handshake. Process
 exit and pipe drainage precede a terminal queue update. Application composition
 must await `close()`/`run_next()` before closing its D003 session.
 
-The included worker handles only `diagnostic.echo`, with no generated media,
-models, HTTP or active selections. Source and standalone protocol smoke tests are
-implemented; Qt event-loop integration remains later work. D008 adds private
-Piper provisioning below. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
+The base worker handles `diagnostic.echo`. D008's private Piper entrypoint also
+handles health and D010 single-section synthesis; selection remains owned by the
+coordinator. Source and standalone protocol smoke tests are implemented; Qt
+event-loop integration remains later work. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
 
 ## Approved runtime profile metadata (D045)
 
@@ -173,6 +173,23 @@ catalog provenance and file hashes before returning relative, resolved model and
 config paths. Failed downloads preserve previous installed voices and keep their
 own version inactive. It does not change a project's active voice or language.
 See [D009 behavior, smoke and limitations](../desktop/D009_PIPER_VOICE_DOWNLOAD.md).
+
+## Single-section raw audio (D010)
+
+`application.section_audio.SectionAudioService` enqueues one immutable section
+through D040, using injected voice and output ports. `ManagedSectionAudio` verifies
+the approved runtime and installed D009 voice, reuses catalog selection/effective
+identity and composes the D007 worker. Per-job workspaces retain checksum-validated
+chunks across retries without touching immutable published media. The private
+worker uses the existing TTS factory/provider and resumable chunk synthesizer;
+it never opens the project or queue database.
+
+After worker cleanup, the coordinator revalidates the request, final PCM WAV,
+chunks and measured duration, then publishes raw audio and `section_audio`
+metadata through the common gate. Stale results remain historical. Runtime source
+delivery uses one explicit source map shared by provisioning and the build recipe;
+optional native imports stay in the private worker. See [D010 contracts, managed
+smoke and limitations](../desktop/D010_SECTION_AUDIO.md).
 
 ## Artifact persistence
 

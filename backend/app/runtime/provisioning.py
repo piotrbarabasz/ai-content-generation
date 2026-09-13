@@ -8,7 +8,6 @@ abandoned candidates are never inferred to be installed or reused after a crash.
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-from importlib.resources import files
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -103,20 +102,8 @@ def _extract_zip(archive, destination, *, wheel=False):
 
 
 def _worker_files():
-    resource = files("app.runtime")
-    names = ("protocol.py", "worker.py", "piper_worker.py")
-    packed = resource.joinpath("worker_sources.json")
-    if packed.is_file():
-        # Standalone packagers compile .py modules; the build recipe retains the
-        # same three worker sources as explicit package data for private Python.
-        payload = json.loads(packed.read_text(encoding="utf-8"))
-        if set(payload) != set(names) or any(not isinstance(v, str) for v in payload.values()):
-            raise ProvisioningError("Invalid bundled worker sources.")
-        sources = {name: value.encode("utf-8") for name, value in payload.items()}
-    else:
-        sources = {name: resource.joinpath(name).read_bytes() for name in names}
-    return {"worker/app/__init__.py": b"", "worker/app/runtime/__init__.py": b"",
-            **{f"worker/app/runtime/{name}": sources[name] for name in names}}
+    from .worker_bundle import source_files
+    return {"worker/" + name: data for name, data in source_files().items()}
 
 
 def _inventory(root):
