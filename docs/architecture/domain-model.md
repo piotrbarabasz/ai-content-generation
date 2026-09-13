@@ -91,6 +91,14 @@ to D005 `FailedAttempt` evidence without changing selected artifact freshness.
 with no SQLite, UI, provider or worker imports. See [D006 queue semantics and
 evidence](../desktop/D006_DURABLE_JOBS.md).
 
+`domain/publication.py` adds D040 `PublicationSnapshot` and `PublicationResult`.
+The snapshot binds project-owned immutable section values, optional whole-script
+revision and an enqueue generation token to the existing D005 request. The result
+records the original publication decision; it is not a mutable artifact or a
+permanent freshness flag. The injected `ResultPublicationService` orchestrates
+publication without importing storage or worker/provider infrastructure. See
+[D040 selection and replay semantics](../desktop/D040_RESULT_PUBLICATION.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type

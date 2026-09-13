@@ -580,7 +580,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D009 — On-demand Piper voice download
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M3
 - **Priority:** P0
 - **Goal:** Install a supported voice with integrity and recoverable download behavior.
@@ -590,6 +590,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/piper_catalog.py, new app/runtime/ downloader and model index; tests.
 - **Acceptance criteria:** Interrupted download resumes; invalid hash, insufficient space or missing companion config prevents activation; selected language matches the installed voice.
 - **Test strategy:** Fake HTTP/range transport and disk-space tests; explicit real download smoke outside Git and default CI.
+- **Evidence:** [D009 voice download and real smoke](D009_PIPER_VOICE_DOWNLOAD.md), merged in PR #67 (`7c1a685`): curated model/config/card downloads resume from persisted bytes, validate catalog hashes, free space and voice language, and atomically activate a verified immutable version. Real Gosia download resumed after 1 MiB using HTTP 206; all three files passed integrity checks and restart recognized the same version. The existing provider language `pl` resolves to catalog locale `pl_PL`. D002/D008 clean-Windows gates remain unchanged.
+- **Validation:** Focused tests — 122 passed, including 62 D009 cases; `python -m pytest backend/tests` — 875 passed; real HTTP resume/download smoke — PASS; `git diff --check`, new-file whitespace and documentation checks — PASS (2026-09-13, Windows/Python 3.11). Status/evidence synchronized after verifying merged code; no D009 functionality reimplemented.
 
 ### D010 — Generate audio for one section
 
@@ -983,7 +985,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D040 — Revision-aware publication gate
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M8
 - **Priority:** P0
 - **Goal:** Prevent a completed old job from replacing a newer edit.
@@ -993,6 +995,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/application/ result publication, job/artifact repository transactions; integration tests.
 - **Acceptance criteria:** B1 result completing after B2 is saved remains attached to B1, never active for B2; two completions cannot overwrite each other; failed publication preserves prior selection.
 - **Test strategy:** Concurrent-edit, duplicate-completion and crash-between-file/index/selection tests using temporary SQLite/files.
+- **Implementation boundary:** Extend the existing artifact index with a separately versioned D040 table extension and reuse D004 streaming/journal recovery. On the coordinator thread, use an attached D006 queue in the artifact-index SQLite transaction so artifact registration, conditional selection and job completion commit together; project revisions are read under the existing D003 exclusive session guard. Enqueue records exact section/script inputs and a generation token, atomically reserving that token with the queued job. A small trusted completion hook in D007 runs after worker cleanup and before terminal queue success; D040 jobs cannot bypass publication through ordinary D006 completion. Existing project, queue and base artifact schemas and legacy job behavior remain unchanged; no general migration framework or second byte store is introduced.
+- **Evidence:** [D040 publication contracts and recovery](D040_RESULT_PUBLICATION.md): exact enqueue snapshots and D005 dependencies survive history/reopen; B1 completion after B2 is retained without selection; the latest reserved generation wins in both completion orders; duplicate completion returns the original decision without importing or reselecting. Publication failures retain prior selection. Six actual process-crash cases verify file/index/selection/queue boundaries, with D004 orphan/committed-stage recovery and D006 interruption recovery. D007's trusted completion hook runs after worker cleanup; worker references cannot bypass the gate.
+- **Validation:** Focused tests — 139 passed, including 39 D040 cases; `python -m pytest backend/tests` — 914 passed; `git diff --check`, new-file whitespace, documentation links and task-status scope checks — PASS (2026-09-13, Windows/isolated Python 3.11.9). All tests offline; no real TTS required. D010 and later tasks were not started; branch remains unmerged for review.
 
 ### D041 — Windows MVP installer
 

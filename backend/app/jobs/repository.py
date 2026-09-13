@@ -4,12 +4,14 @@ from contextlib import closing, contextmanager
 from dataclasses import asdict
 from datetime import datetime
 import json
+from pathlib import Path
 import sqlite3
 
 from app.domain.base import DomainValidationError, new_id, utc_now
 from app.domain.generation_job import (
     AttemptStatus, JobAttempt, JobProgress, JobRequest, artifact_ids, require_text, require_time,
 )
+from app.domain.publication import PUBLICATION_KEY
 from app.storage.project_repository import ProjectRepository, UnsupportedSchemaError
 
 
@@ -46,7 +48,9 @@ CREATE UNIQUE INDEX one_active_attempt ON attempts(job_id) WHERE status IN ('que
 
 
 class JobRepository:
-    """Use on the D003 session's coordinator thread; every command commits alone.
+    """Use on the D003 session's coordinator thread; ordinary commands commit alone.
+
+    D040 attached helpers join the caller's artifact-index transaction.
 
     A new D003 session proves the old project writer released its exclusive lock.
     Its first queue open recovers running attempts exactly once. Opening another
@@ -121,8 +125,10 @@ class JobRepository:
             yield connection
 
     @staticmethod
-    def _attempt(connection, attempt_id: str) -> JobAttempt:
-        row = connection.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+    def _attempt(connection, attempt_id: str, schema="main") -> JobAttempt:
+        if schema not in ("main", "job_queue"):
+            raise ValueError("Unsupported queue schema alias.")
+        row = connection.execute(f"SELECT * FROM {schema}.attempts WHERE id = ?", (attempt_id,)).fetchone()
         if row is None:
             raise KeyError(attempt_id)
         values = dict(row)
@@ -157,11 +163,13 @@ class JobRepository:
                 "SELECT id FROM attempts WHERE job_id = ? ORDER BY number", (job_id,)).fetchall())
 
     @staticmethod
-    def _enqueue_attempt(connection, job_id, number, now):
+    def _enqueue_attempt(connection, job_id, number, now, schema="main"):
+        if schema not in ("main", "job_queue"):
+            raise ValueError("Unsupported queue schema alias.")
         attempt_id = new_id("attempt")
-        connection.execute("""INSERT INTO attempts (id, job_id, number, status, created_at, updated_at)
+        connection.execute(f"""INSERT INTO {schema}.attempts (id, job_id, number, status, created_at, updated_at)
                             VALUES (?, ?, ?, 'queued', ?, ?)""", (attempt_id, job_id, number, now.isoformat(), now.isoformat()))
-        return JobRepository._attempt(connection, attempt_id)
+        return JobRepository._attempt(connection, attempt_id, schema)
 
     def enqueue(self, job: JobRequest) -> JobAttempt:
         with self._transaction() as connection:
@@ -211,11 +219,54 @@ class JobRepository:
             return self._attempt(connection, attempt.id)
 
     @staticmethod
-    def _owned(connection, attempt_id, token):
-        attempt = JobRepository._attempt(connection, attempt_id)
+    def _owned(connection, attempt_id, token, schema="main"):
+        attempt = JobRepository._attempt(connection, attempt_id, schema)
         if attempt.status != AttemptStatus.RUNNING or not token or attempt.claim_token != token:
             raise JobConflictError("Event requires the current running attempt's claim token.")
         return attempt
+
+    def attach_for_publication(self, connection):
+        """D040 uses one rollback-journal transaction for index and queue writes.
+
+        The caller owns the artifact-index connection and begins its transaction
+        after attachment. No filesystem operation is part of that transaction.
+        """
+        with self._connection():
+            pass  # Validate live project session, owner and queue format first.
+        connection.execute("ATTACH DATABASE ? AS job_queue", (self.path.as_uri() + "?mode=rw",))
+        connection.execute("PRAGMA job_queue.synchronous = FULL")
+        self._check_attached(connection)
+
+    def _check_attached(self, connection):
+        self.project.project()  # Reject foreign threads and closed sessions.
+        databases = {row[1]: Path(row[2]).resolve() for row in connection.execute("PRAGMA database_list")}
+        if databases.get("job_queue") != self.path.resolve():
+            raise JobConflictError("Publication attached a different queue.")
+        owner = connection.execute("SELECT project_id, session_id FROM job_queue.owner").fetchone()
+        if tuple(owner) != (self.project_id, self.session_id):
+            raise JobConflictError("Publication queue ownership changed.")
+
+    def enqueue_attached(self, connection, job):
+        if not connection.in_transaction:
+            raise JobConflictError("Publication requires an active transaction.")
+        self._check_attached(connection)
+        connection.execute("INSERT INTO job_queue.jobs VALUES (?, ?)", (job.id, json.dumps(job.to_payload())))
+        return self._enqueue_attempt(connection, job.id, 1, job.created_at, "job_queue")
+
+    def complete_attached(self, connection, attempt_id, token, artifact_id, now):
+        if not connection.in_transaction:
+            raise JobConflictError("Publication requires an active transaction.")
+        self._check_attached(connection)
+        require_time(now)
+        outputs = artifact_ids((artifact_id,))
+        attempt = self._owned(connection, attempt_id, token, "job_queue")
+        if attempt.cancel_requested:
+            raise JobConflictError("A canceled claim cannot publish completion.")
+        stamp = max(now, attempt.updated_at).isoformat()
+        connection.execute("""UPDATE job_queue.attempts SET status = 'completed', updated_at = ?,
+            finished_at = ?, output_artifact_ids = ?, error = '' WHERE id = ?""",
+                           (stamp, stamp, json.dumps(outputs), attempt_id))
+        return self._attempt(connection, attempt_id, "job_queue")
 
     def report_progress(self, attempt_id: str, token: str, progress: JobProgress, now: datetime) -> JobAttempt:
         require_time(now)
@@ -262,6 +313,11 @@ class JobRepository:
                 raise JobConflictError("Cancellation must be requested before acknowledgement.")
             if status == AttemptStatus.COMPLETED and attempt.cancel_requested:
                 raise JobConflictError("A canceled claim cannot publish completion.")
+            if status == AttemptStatus.COMPLETED:
+                payload = connection.execute("SELECT request_json FROM jobs WHERE id = ?", (attempt.job_id,)).fetchone()[0]
+                job = JobRequest.from_payload(json.loads(payload))
+                if PUBLICATION_KEY in json.loads(job.input_snapshot_json):
+                    raise JobConflictError("Revision-aware jobs must complete through the publication gate.")
             stamp = max(now, attempt.updated_at).isoformat()
             connection.execute("""UPDATE attempts SET status = ?, updated_at = ?, finished_at = ?,
                 output_artifact_ids = ?, error = ? WHERE id = ?""",
