@@ -125,8 +125,8 @@ must await `close()`/`run_next()` before closing its D003 session.
 
 The included worker handles only `diagnostic.echo`, with no generated media,
 models, HTTP or active selections. Source and standalone protocol smoke tests are
-implemented; Qt event-loop integration and real runtime provisioning are later
-tasks. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
+implemented; Qt event-loop integration remains later work. D008 adds private
+Piper provisioning below. See [D007 protocol, lifecycle and evidence](../desktop/D007_WORKER_LIFECYCLE.md).
 
 ## Approved runtime profile metadata (D045)
 
@@ -140,9 +140,26 @@ Discovery reads packaged JSON through `importlib.resources` and checks the
 curated content fingerprint and supplied host capabilities. It neither imports
 Piper/Torch/ONNX nor probes, installs or starts a process. A syntactically valid
 external manifest is not in the approved allowlist. `ProfileHealth` records
-version-bound observations from the later fixed D008 probe; its construction
+version-bound observations from the fixed D008 probe; its construction
 does not execute that probe. Voice files remain external requirements referencing
 the existing curated Piper catalog. See [D045 profile contract and evidence](../desktop/D045_RUNTIME_PROFILES.md).
+
+## Private Piper runtime provisioning (D008)
+
+`runtime.provisioning.PiperProvisioner` installs the approved profile from an
+explicit offline artifact source into configured runtime storage. Every artifact
+is size/hash checked before extraction. Embedded Python, pinned wheels, app-owned
+worker sources and app-local MSVC DLLs form one private environment. No pip,
+system installer or voice download is invoked. Fixed paths and `._pth` isolate
+the worker from system Python, user packages and registry paths.
+
+Installation is a blocking service to schedule off the UI thread. An OS lock
+serializes installations; only a complete environment passing the real private
+worker probe receives an atomic active pointer. Failed/interrupted candidates
+remain inactive. Restart checks relative receipts, immutable file hashes and
+worker revision; valid installations are reused, while corruption fails closed.
+`InstalledRuntime.worker_launch()` composes with D007 and the D006 queue.
+The clean-Windows gate is still pending; see [D008 behavior and evidence](../desktop/D008_MANAGED_PIPER_RUNTIME.md).
 
 ## Artifact persistence
 
