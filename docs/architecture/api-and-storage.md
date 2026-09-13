@@ -161,6 +161,19 @@ worker revision; valid installations are reused, while corruption fails closed.
 `InstalledRuntime.worker_launch()` composes with D007 and the D006 queue.
 The clean-Windows gate is still pending; see [D008 behavior and evidence](../desktop/D008_MANAGED_PIPER_RUNTIME.md).
 
+## Curated voice installation (D009)
+
+`runtime.voice_download.PiperVoiceDownloader` uses the existing Piper catalog
+and a verified D008 runtime to download one explicitly selected voice/language.
+The blocking service supports progress/cancel callbacks, HTTP range resumption,
+space checks and verification of the ONNX, companion config and model card.
+`runtime.model_index.ModelIndex` stores immutable versions and atomically
+publishes per-voice active pointers in configured model storage. Restart verifies
+catalog provenance and file hashes before returning relative, resolved model and
+config paths. Failed downloads preserve previous installed voices and keep their
+own version inactive. It does not change a project's active voice or language.
+See [D009 behavior, smoke and limitations](../desktop/D009_PIPER_VOICE_DOWNLOAD.md).
+
 ## Artifact persistence
 
 `ArtifactStore` retains its small-payload save/read/list interface. The optional
