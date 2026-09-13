@@ -193,7 +193,7 @@ catalogs reuse `ArtifactManifest`; only registered keys are readable as artifact
 The catalog commits after complete file publication; SQLite and the filesystem
 are not one transaction. Recovery removes incomplete staging, finishes cleanup
 of committed publications, and reports unindexed complete files without adopting
-or deleting them. Revision-aware job selection remains D040.
+or deleting them. Revision-aware job selection is provided by D040 below.
 The old save/read convenience methods still use whole payloads; large-media clients
 must choose the new streaming interface. Existing providers/modules remain unchanged.
 See [D004 protocol, failure handling and evidence](../desktop/D004_ARTIFACT_PUBLICATION.md).
@@ -205,6 +205,28 @@ consumed artifact identities/checksums and known logical bindings. Legacy record
 without declarations remain untracked. This adds no tables or schema migration;
 current desired requests and selections are explicit caller inputs, not a new
 persistent selection store. See [D005 semantics and evidence](../desktop/D005_DEPENDENCIES.md).
+
+### Revision-aware result publication (D040)
+
+`ResultPublicationService` captures exact editorial revisions and a generation
+token in D006's immutable enqueue snapshot. `ResultArtifactIndex` extends the
+existing D004 index: queue insertion and generation reservation commit together;
+registration, conditional selection, decision history and job success share one
+SQLite transaction with the attached queue. Both databases require DELETE journals
+and FULL synchronization. The D003 exclusive coordinator session protects revision
+comparison. File publication still precedes the database transaction and uses D004
+recovery; unindexed complete files remain retained orphans.
+
+Only results matching current consumed revisions/artifacts and the latest reserved
+generation become selected. Obsolete results keep their exact input/dependency
+metadata and historical bytes. Completion replay returns its original decision
+without rereading or reselecting. Retained selection pointers can become stale on
+later edits; D005 continues to derive freshness independently.
+
+D007 accepts a trusted coordinator completion hook after verified worker exit and
+cleanup. Ordinary D006 success cannot bypass the gate for D040 jobs. Legacy job
+completion and artifact imports retain existing behavior. See [D040 contracts,
+transaction boundaries and evidence](../desktop/D040_RESULT_PUBLICATION.md).
 
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional

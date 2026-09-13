@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import subprocess
+from typing import Callable
 
 from app.domain.generation_job import AttemptStatus, JobAttempt, JobProgress
 from app.jobs.coordinator import JobCoordinator
@@ -73,10 +74,14 @@ class WorkerSupervisor:
     Always await run_next/close before closing the D003 session.
     """
 
-    def __init__(self, coordinator: JobCoordinator, launch: WorkerLaunch, *, limits=WorkerLimits()):
+    def __init__(self, coordinator: JobCoordinator, launch: WorkerLaunch, *, limits=WorkerLimits(),
+                 completion_handler: Callable[[JobAttempt, tuple[str, ...]], object] | None = None):
         self.coordinator = coordinator
         self.launch = launch
         self.limits = limits
+        # Trusted coordinator-side composition validates output bytes and publishes
+        # via D040. Worker references alone cannot authorize editorial selection.
+        self.completion_handler = completion_handler
         self._task = None
         self._claim = None
         self.process = None
@@ -255,7 +260,22 @@ class WorkerSupervisor:
         elif error is not None:
             outcome = self.coordinator.fail(claim, error)
         elif event is not None and event["type"] == "completed":
-            outcome = self.coordinator.complete(claim, event["payload"]["artifact_ids"])
+            try:
+                if self.completion_handler is None:
+                    outcome = self.coordinator.complete(claim, event["payload"]["artifact_ids"])
+                else:
+                    self.completion_handler(claim, tuple(event["payload"]["artifact_ids"]))
+                    outcome = self.coordinator.repository.get_attempt(claim.id)
+                    if outcome.status != AttemptStatus.COMPLETED:
+                        raise ValueError("Completion handler did not durably publish the result.")
+            except Exception as exc:
+                # D004 cleanup can fail AFTER the D040 database commit. Preserve
+                # that durable success; recovery will clean its journal on reopen.
+                outcome = self.coordinator.repository.get_attempt(claim.id)
+                if outcome.status == AttemptStatus.RUNNING:
+                    outcome = self.coordinator.fail(claim, f"publication_error: {type(exc).__name__}: {str(exc)[:1024]}")
+                elif outcome.status != AttemptStatus.COMPLETED:
+                    raise
         elif event is not None and event["type"] == "failed":
             outcome = self.coordinator.fail(claim, f'{event["payload"]["code"]}: {event["payload"]["message"]}')
         else:
