@@ -611,7 +611,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D011 — Tempo as an audio derivative
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M3
 - **Priority:** P0
 - **Goal:** Change playback tempo without repeating native synthesis.
@@ -621,6 +621,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/tts/post_processing.py, section audio service and derivative metadata; unit/integration tests.
 - **Acceptance criteria:** Changing tempo creates a validated derivative and leaves raw bytes and other sections intact; no TTS call occurs; bad FFmpeg output stays unpublished.
 - **Test strategy:** Provider call-count assertions, existing fake-process validation cases and a small real FFmpeg PCM fixture smoke.
+- **Implementation boundary:** Add a provider-free tempo application service and an artifact adapter over D010 SectionAudio, D005 consumed-artifact edges and D040 jobs/publication. Keep separate persisted raw/processed output selections and expose an explicit original/processed read choice; no playback-preference schema or cache scheduler. Record a deterministic derivative key from raw checksum, normalized tempo and processor contract version in the request and immutable metadata. Reuse the existing FFmpeg processor in configured temporary storage with bounded, hidden child execution; do not change the raw synthesis pipeline or add another worker runtime.
+- **Evidence:** [D011 derivative behavior and real FFmpeg smoke](D011_TEMPO_DERIVATIVE.md): changing tempo publishes measured immutable derivatives while raw audio, previous variants and unrelated sections remain intact; original/processed choices survive reopen. Actual D010 provider call-count tests show no repeated TTS. Invalid FFmpeg output, failure, timeout and cancellation stay unpublished; D040 preserves prior selections or retains stale results historically. Real FFmpeg 8.1.2 transformed a 4-second PCM fixture into 4.990929705 s at 0.8x and 3.204081633 s at 1.25x, with unchanged A/B/C raw checksums and successful reopen.
+- **Validation:** Focused tests — 110 passed, including 30 new D011 cases; `python -m pytest backend/tests` — 971 passed; real FFmpeg PCM smoke, `git diff --check`, new-file whitespace, documentation links and task-scope checks — PASS (2026-09-13, Windows/isolated Python 3.11.9). Only D011 status changed; D002/D008 remain Partial. D012 was not started; branch remains unmerged for review.
 
 ### D012 — Measured speech boundary map
 

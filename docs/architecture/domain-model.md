@@ -105,6 +105,13 @@ rate and PCM frame count. Duration is measured as frames divided by sample rate.
 The value does not turn technical TTS chunks into narrative sections or scenes.
 See [D010 section-audio behavior](../desktop/D010_SECTION_AUDIO.md).
 
+D011 reuses that measured `SectionAudio` representation for processed WAVs.
+Immutable `audio_derivative` metadata adds the consumed raw artifact/checksum,
+tempo, processor contract version, deterministic derivative key and measured
+input/output durations. D005 dependencies and separate D040 raw/processed
+selections describe currentness; no parallel audio entity or selection schema is
+introduced. See [D011 derivative semantics](../desktop/D011_TEMPO_DERIVATIVE.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type
