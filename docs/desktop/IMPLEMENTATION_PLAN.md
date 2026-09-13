@@ -565,7 +565,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D008 — Managed Piper CPU runtime provisioning
 
-- **Status:** Planned
+- **Status:** Partial — implementation and automated provisioning PASS; clean-Windows acceptance pending (2026-09-13).
 - **Milestone:** M2
 - **Priority:** P0
 - **Goal:** Make the first local TTS runtime independent of system Python.
@@ -575,6 +575,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/runtime/ provisioning and Piper profile composition; packaging fixtures.
 - **Acceptance criteria:** Provisioned profile can run its worker without system Python/Piper; failed install remains inactive; restart recognizes the same installed profile.
 - **Test strategy:** Offline fixture package source and interrupted-install tests; explicit clean-Windows provisioning smoke with approved artifacts.
+- **Evidence:** [D008 private runtime, activation and smoke](D008_MANAGED_PIPER_RUNTIME.md): approved offline artifacts are hash/size verified, embedded Python and pinned wheels are isolated with `._pth`, and pinned native DLLs are extracted app-locally without a system installer. A bounded private worker probe gates atomic activation; restart verifies profile, worker revision and immutable file inventory. Failed/interrupted installs remain inactive, including real process death. Relocated standalone provisioning/restart/worker smoke and D006/D007 queue composition PASS on the developer host. Windows Sandbox is unavailable and Hyper-V access is denied; the explicit clean-Windows gate remains unverified.
+- **Validation:** Focused tests — 167 passed, including 42 D008 cases; `python -m pytest backend/tests` — 813 passed; final standalone build and relocated provisioning smoke — PASS; `git diff --check` and new-file whitespace checks — PASS (2026-09-13, Windows/Python 3.11). No D009 or later implementation.
 
 ### D009 — On-demand Piper voice download
 
