@@ -193,6 +193,22 @@ smoke and limitations](../desktop/D010_SECTION_AUDIO.md).
 
 ## Artifact persistence
 
+### Section tempo derivatives (D011)
+
+`SectionTempoService` consumes selected D010 raw audio through an injected artifact
+port. `SectionTempoArtifacts` reuses the existing FFmpeg post-processor in configured
+temporary storage and publishes measured output via D040. The immutable derivative
+key binds raw checksum, normalized tempo and processor contract version; D005 also
+records the exact raw artifact dependency. No TTS provider is called.
+
+Raw and processed output selections remain separate. Callers explicitly request
+`original` or `processed`; missing/stale processed media does not silently fall back.
+Both variants and their measured `SectionAudio` parameters survive reopen. Failure
+preserves previous selections, while stale completions remain historical. See
+[D011 behavior, real FFmpeg evidence and limits](../desktop/D011_TEMPO_DERIVATIVE.md).
+
+### Artifact stores
+
 `ArtifactStore` retains its small-payload save/read/list interface. The optional
 `StreamingArtifactStore` adds file/stream imports and a caller-owned read handle.
 `LocalArtifactStore` now stages writes, hashes transferred bytes incrementally in

@@ -18,6 +18,7 @@ from .manifest import AudioParameters
 
 _MIN_TEMPO = 0.5
 _MAX_TEMPO = 2.0
+TEMPO_PROCESSOR_VERSION = "ffmpeg-atempo-pcm16-v1"
 
 
 class AudioPostProcessingError(ValueError):
@@ -77,6 +78,7 @@ def process_pcm_wav_tempo(
     *,
     process_runner: Callable[..., Any] | None = None,
     ffmpeg_locator: Callable[[str], str | None] | None = None,
+    work_root: Path | None = None,
 ) -> AudioPostProcessingResult:
     """Adjust one completed PCM WAV with FFmpeg atempo, or return it unchanged."""
     normalized_tempo = validate_tempo(tempo)
@@ -106,7 +108,7 @@ def process_pcm_wav_tempo(
             "FFmpeg is required for narration tempo post-processing when tempo != 1.0."
         )
     runner = process_runner or subprocess.run
-    with tempfile.TemporaryDirectory(prefix="narration-tempo-") as directory:
+    with tempfile.TemporaryDirectory(prefix="narration-tempo-", dir=work_root) as directory:
         root = Path(directory)
         input_path = root / "source.wav"
         output_path = root / "processed.wav"
