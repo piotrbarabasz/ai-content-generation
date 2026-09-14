@@ -675,16 +675,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D015 — Independent visual prompt revisions
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M4
 - **Priority:** P0
 - **Goal:** Make scene prompts editable and regenerable independently from images.
 - **Scope:** Prompt artifact/service using scene text, section context, pinned film brief and style; manual edit, generated revision and explicit active selection.
 - **Out of scope:** Image generation, automatic manual-edit overwrite and feeding unversioned global context.
 - **Dependencies:** D005, D013, D014.
+- **Implementation boundary:** Persist project-owned brief/style revision families and per-scene prompt revisions in the existing artifact store. Each prompt pins the accepted scene, section context and exact brief/style revisions and records D005 source fingerprints plus manual/generated provenance. Reuse the structured LLM contract with a strict prompt schema and deterministic mock. Creation never selects; explicit selection uses immutable per-scene selection events with an expected previous selection ID under the existing exclusive project coordinator. Manual edits retain lineage and prior selections/audio. No image calls, live global context, new database schema or changes to other task statuses.
 - **Main code areas:** New visual prompt values and application service; existing LLM boundary, artifact store; tests.
 - **Acceptance criteria:** Each scene has a separate versioned prompt; manual edit retains old prompt/audio; context changes affect exactly recorded dependencies.
 - **Test strategy:** Mock structured-output tests and invalidation/manual-ownership scenarios; no model/network connection.
+- **Evidence:** [D015 prompt revisions and explicit selection](D015_VISUAL_PROMPTS.md): separate immutable scene prompts pin accepted scene/section inputs and brief/style revisions, with D005 source fingerprints and generated/manual provenance. Creation never selects; explicit selection checks the previous event identity and survives reopen. Manual edits retain prompt/audio history; late generation, stale selection tokens and section edits cannot overwrite manual choices. Context-family and A/B/C tests confirm selective freshness and manual review without changing retained bytes. Deterministic structured mock only; no image/model/network calls.
+- **Validation:** Focused tests — 84 passed, including 30 new D015 cases; `python -m pytest backend/tests` — 1107 passed in 133.11 s; `git diff --check`, new-file whitespace/EOF/UTF-8, documentation links and task-scope checks — PASS (2026-09-14, Windows/isolated Python 3.11.9). All three acceptance criteria PASS. Only D015 status changed; D002/D008/D012 remain Partial. No later task started; branch `feat/d015-visual-prompt-revisions` remains unmerged.
 
 ### D016 — Controlled image import
 

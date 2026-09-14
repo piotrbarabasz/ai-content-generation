@@ -136,6 +136,14 @@ repeated roles and optional CTA. Manual append/edit uses the same revision model
 no new script entity or role-based identity inference is introduced. See
 [D014 structured contract and evidence](../desktop/D014_STRUCTURED_SCRIPT.md).
 
+D015 adds project-owned `PromptContextRevision` families for pinned film briefs
+and visual styles, immutable `VisualPromptRevision` values with consumed
+`PromptInputs` and D005 provenance, and explicit `PromptSelection` events.
+Generation/manual edits retain variants; selection is separate and protected by
+the expected previous event identity. Context changes derive freshness/manual
+review without rewriting prompts, scenes or audio. See [D015 contracts and
+evidence](../desktop/D015_VISUAL_PROMPTS.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type
