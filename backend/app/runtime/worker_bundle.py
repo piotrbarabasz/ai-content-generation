@@ -18,7 +18,7 @@ runtime/model_index runtime/native_piper runtime/piper_health runtime/piper_work
 runtime/profile_catalog runtime/profiles runtime/protocol runtime/provisioning
 runtime/section_synthesis runtime/section_voice runtime/section_worker runtime/supervisor
 runtime/voice_http runtime/windows_job runtime/worker runtime/worker_bundle
-storage/__init__ storage/manifest tts/__init__ tts/assembly tts/catalog
+storage/__init__ storage/manifest storage/paths tts/__init__ tts/assembly tts/catalog
 tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/selection
 """.split()
 

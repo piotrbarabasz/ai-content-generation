@@ -8,6 +8,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from app.storage.paths import contained_path, import_path
+
 from app.providers.interfaces import TTSProvider
 from app.providers.tts_result import TTSSynthesisResult
 
@@ -57,7 +59,7 @@ class ResumableChunkSynthesizer:
         progress=None,
     ) -> ChunkSynthesisResult:
         """Synthesize all chunks, then assemble only a fully valid chunk set."""
-        root = Path(runtime_dir)
+        root = import_path(runtime_dir)
         config = dict(voice_config or {})
         root.mkdir(parents=True, exist_ok=True)
         effective_identity = self._effective_identity(config)
@@ -133,6 +135,7 @@ class ResumableChunkSynthesizer:
             manifest.save(manifest_path)
             return ChunkSynthesisResult(manifest, False, None)
         try:
+            relative_reference(final_path, root)
             final = assemble_pcm_wav(outputs, final_path)
             persisted = final_path.read_bytes()
             persisted_parameters, _ = inspect_pcm_wav(persisted)
@@ -186,8 +189,7 @@ class ResumableChunkSynthesizer:
                 continue
             path = root / reference
             try:
-                resolved = path.resolve()
-                resolved.relative_to(resolved_root)
+                resolved = contained_path(resolved_root, reference)
             except (OSError, ValueError) as exc:
                 raise OSError("TTS final artifact path is outside the runtime root.") from exc
             if resolved in seen:
@@ -233,8 +235,7 @@ class ResumableChunkSynthesizer:
         chunk_directory = root / "chunks"
         try:
             resolved_root = root.resolve()
-            resolved_chunk_directory = chunk_directory.resolve()
-            resolved_chunk_directory.relative_to(resolved_root)
+            resolved_chunk_directory = contained_path(resolved_root, "chunks")
         except (OSError, ValueError):
             return
         if not chunk_directory.is_dir():
@@ -252,10 +253,10 @@ class ResumableChunkSynthesizer:
                 # Refuse a symlinked directory or file that resolves beyond
                 # the runtime chunk directory.  Only direct WAV children may
                 # be unlinked as stale runtime artifacts.
-                if candidate.resolve().parent != resolved_chunk_directory:
+                if contained_path(resolved_root, candidate.relative_to(root).as_posix()).parent != resolved_chunk_directory:
                     continue
                 candidate.unlink()
-            except OSError:
+            except (OSError, ValueError):
                 continue
 
     def _record_for(self, chunk: NarrationChunk, config_hash: str, manifest: SynthesisManifest) -> ChunkManifest:

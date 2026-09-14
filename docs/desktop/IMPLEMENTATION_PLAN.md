@@ -1058,7 +1058,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D044 — Workspace path containment
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-14)
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Prevent project/media access from escaping configured storage roots.
@@ -1068,6 +1068,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/storage/ resolver and artifact access, process path construction; unit/platform tests.
 - **Acceptance criteria:** Traversal or redirected destination cannot access outside workspace; legitimate Unicode/space paths work; unknown artifact IDs do not probe arbitrary files.
 - **Test strategy:** Temporary-root traversal/ownership tests and Windows junction/ADS cases where platform-supported; record unavailable OS capabilities explicitly.
+- **Evidence:** [D044 workspace containment](D044_WORKSPACE_CONTAINMENT.md): portable root-bound resolver rejects traversal, Windows drive/device/ADS syntax and links/reparse points; publication revalidates after transfer, recovery preserves redirected stages, SQLite paths and audio worker outputs are guarded. Opaque IDs and legacy keys require owning-catalog lookup before artifact path resolution. Explicit external file selection remains supported; `source_root` confines imports. Unicode/space paths and separate absolute FFmpeg arguments are tested. No schema/provider-contract changes.
+- **Validation:** Focused tests — 141 passed, 11 skipped; full `python -m pytest backend/tests` — 1151 passed, 11 skipped in 115.47 s (Windows, isolated Python 3.11.9, 2026-09-14). Native junction and NTFS ADS checks PASS; 11 symlink cases skipped with Windows privilege error 1314, explicitly recorded in evidence. All three acceptance criteria PASS within the stated operation-boundary scope; concurrent hostile-process races remain out of scope. `git diff --check`, UTF-8/whitespace and task-status scope checks PASS. Only D044 status changed; no later task, commit, push or merge. Branch `feat/d044-workspace-path-containment`.
 
 ### D045 — Runtime profile manifest contract
 

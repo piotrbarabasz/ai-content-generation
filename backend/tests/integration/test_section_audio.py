@@ -263,3 +263,44 @@ generate(job, Provider(), Path(sys.argv[2]), report=lambda *args: os._exit(17))
     generate(job, provider, output.root)
     assert provider.calls == ["Two.", "Three."]
     assert service.complete(retry).selected_at_publication
+
+
+@pytest.mark.parametrize("reference", ["../private.wav", "chunks/voice.wav:private", r"C:\private.wav"])
+def test_untrusted_chunk_reference_cannot_publish_media(setup, reference):
+    _, _, index, store, output, service = setup
+    job, owned = enqueue(setup)
+    generate(job, Provider(), output.root)
+    path = workspace(output.root, job) / "synthesis-manifest.json"
+    payload = json.loads(path.read_text())
+    payload["chunks"][0]["artifact_ref"] = reference
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError):
+        service.complete(owned)
+    assert index.selected() == {} and store.list_artifacts() == ()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction capability test")
+@pytest.mark.parametrize("operation", ["generate", "publish"])
+def test_redirected_audio_chunks_cannot_escape_worker_workspace(setup, tmp_path, operation):
+    import _winapi
+    _, _, index, store, output, service = setup
+    job, owned = enqueue(setup)
+    generate(job, Provider(), output.root)
+    directory = workspace(output.root, job)
+    chunks = directory / "chunks"
+    retained = directory / "retained"
+    chunks.rename(retained)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.wav").write_bytes(b"private")
+    _winapi.CreateJunction(str(outside), str(chunks))
+    try:
+        with pytest.raises(ValueError):
+            if operation == "generate":
+                generate(job, Provider(), output.root)
+            else:
+                service.complete(owned)
+        assert index.selected() == {} and store.list_artifacts() == ()
+        assert [(p.name, p.read_bytes()) for p in outside.iterdir()] == [("keep.wav", b"private")]
+    finally:
+        chunks.rmdir()  # Unlink only the junction, preserving its target.

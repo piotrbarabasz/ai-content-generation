@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 
+from .paths import contained_path
+
 from app.domain.dependencies import content_fingerprint
 from app.domain.publication import PublicationSnapshot
 from app.domain.section_audio import SectionAudio
@@ -78,7 +80,7 @@ class SectionTempoArtifacts:
             raise ValueError("Derivative source or processor identity differs from enqueue.")
         if raw.speech_boundary_map is not None:
             raw.speech_boundary_map.validate_source(section.text, raw.checksum, raw.sample_rate, raw.frame_count)
-        self.work_root.resolve().relative_to(self.index.repository.workspace)
+        contained_path(self.index.repository.workspace, self.work_root.relative_to(self.index.repository.workspace).as_posix())
         self.work_root.mkdir(parents=True, exist_ok=True)
         result = process_pcm_wav_tempo(payload, settings["tempo"], process_runner=self.process_runner,
                                        ffmpeg_locator=self.ffmpeg_locator, work_root=self.work_root)

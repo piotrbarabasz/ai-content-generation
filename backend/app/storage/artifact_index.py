@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 
+from .paths import contained_path, database_path
 from .manifest import ArtifactManifest
 from .project_repository import ProjectRepository, UnsupportedSchemaError
 
@@ -18,9 +19,9 @@ class ProjectArtifactIndex:
     def __init__(self, repository: ProjectRepository):
         self.repository = repository
         self.project_id = repository.project().id
-        self.root = (repository.workspace / "artifacts").resolve()
+        self.root = contained_path(repository.workspace, "artifacts")
         self.root.relative_to(repository.workspace)
-        self.path = self.root / ".artifacts" / "index.sqlite"
+        self.path = database_path(repository.workspace, "artifacts/.artifacts/index.sqlite")
         self.path.resolve().relative_to(self.root)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
@@ -46,6 +47,7 @@ class ProjectArtifactIndex:
         # Also rejects closed sessions / access from a different thread.
         if self.repository.project().id != self.project_id:
             raise ValueError("Artifact index project owner changed.")
+        database_path(self.repository.workspace, self.path.relative_to(self.repository.workspace).as_posix())
         connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=0)
         try:
             version = connection.execute("PRAGMA user_version").fetchone()[0]

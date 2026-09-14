@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 import sqlite3
 
+from .paths import database_path, storage_root
+
 from app.domain.enums import ContentGenre, ContentType, TargetPlatform
 from app.domain.base import new_id
 from app.domain.narrative_segment import SectionRevision
@@ -95,7 +97,7 @@ Separate readers are also excluded in this minimal local single-session format.
     @staticmethod
     def _connect(workspace: Path) -> sqlite3.Connection:
         # mode=rw prevents a typo in open() from silently creating a database.
-        database = workspace / "project.sqlite"
+        database = database_path(workspace, "project.sqlite")
         if not database.is_file():
             raise FileNotFoundError(database)
         connection = sqlite3.connect(database.as_uri() + "?mode=rw", uri=True,
@@ -119,10 +121,10 @@ Separate readers are also excluded in this minimal local single-session format.
         payload = asdict(project)
         payload["created_at"] = project.created_at.isoformat()
         metadata = json.dumps(payload, ensure_ascii=False)
-        root = Path(workspace).expanduser().resolve()
+        root = storage_root(workspace)
         root.mkdir(parents=True, exist_ok=True)
         # Never reuse or overwrite an existing database, even an empty one.
-        with (root / "project.sqlite").open("xb"):
+        with database_path(root, "project.sqlite").open("xb"):
             pass
         repository = cls(root, cls._connect(root))
         try:
@@ -143,7 +145,7 @@ Separate readers are also excluded in this minimal local single-session format.
 
     @classmethod
     def open(cls, workspace: Path | str) -> "ProjectRepository":
-        root = Path(workspace).expanduser().resolve()
+        root = storage_root(workspace)
         repository = cls(root, cls._connect(root))
         try:
             # Check before requesting write access to an unsupported database.
@@ -175,6 +177,7 @@ Separate readers are also excluded in this minimal local single-session format.
     @contextmanager
     def _transaction(self):
         try:
+            database_path(self.workspace, "project.sqlite")
             self._connection.execute("BEGIN EXCLUSIVE")
             yield
             self._connection.commit()

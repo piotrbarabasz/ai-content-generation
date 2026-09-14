@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from typing import Any
 
+from app.storage.paths import contained_path, import_path
+
 from .assembly import WavAssemblyError, inspect_pcm_wav
 from .manifest import AudioParameters
 
@@ -108,10 +110,12 @@ def process_pcm_wav_tempo(
             "FFmpeg is required for narration tempo post-processing when tempo != 1.0."
         )
     runner = process_runner or subprocess.run
+    if work_root is not None:
+        work_root = import_path(work_root)
     with tempfile.TemporaryDirectory(prefix="narration-tempo-", dir=work_root) as directory:
-        root = Path(directory)
-        input_path = root / "source.wav"
-        output_path = root / "processed.wav"
+        root = Path(directory).absolute()
+        input_path = contained_path(root, "source.wav")
+        output_path = contained_path(root, "processed.wav")
         input_path.write_bytes(audio_bytes)
         command = [
             ffmpeg,
@@ -138,9 +142,9 @@ def process_pcm_wav_tempo(
             suffix = f": {detail}" if detail else "."
             raise AudioPostProcessingError(f"FFmpeg narration tempo post-processing failed{suffix}")
         try:
-            processed = output_path.read_bytes()
+            processed = contained_path(root, "processed.wav").read_bytes()
             output_parameters, _ = inspect_pcm_wav(processed)
-        except (OSError, WavAssemblyError) as exc:
+        except (OSError, ValueError) as exc:
             raise AudioPostProcessingError("FFmpeg produced an invalid PCM WAV output.") from exc
 
     if output_parameters.channels != input_parameters.channels:

@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from app.storage.paths import contained_path, import_path
 from app.domain.speech_boundary import SourceSpan
 
 
@@ -23,7 +24,10 @@ def stable_hash(value: object) -> str:
 def relative_reference(path: Path, root: Path) -> str:
     """Return a portable reference and reject paths outside the configured root."""
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        root = root.absolute()
+        reference = path.absolute().relative_to(root).as_posix()
+        contained_path(root, reference)
+        return reference
     except ValueError as exc:
         raise ValueError("TTS artifact path must be inside its configured runtime root.") from exc
 
@@ -186,6 +190,7 @@ class SynthesisManifest:
 
     @classmethod
     def load(cls, path: Path, *, config_hash: str) -> "SynthesisManifest":
+        path = import_path(path)
         if not path.exists():
             return cls(config_hash=config_hash)
         try:
@@ -198,6 +203,7 @@ class SynthesisManifest:
         return manifest if manifest.config_hash == config_hash else cls(config_hash=config_hash)
 
     def save(self, path: Path) -> None:
+        path = import_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(self.to_payload(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         # Parse the exact data before replacing an existing manifest.  A
@@ -214,7 +220,7 @@ class SynthesisManifest:
                 temporary.write(payload)
                 temporary.flush()
                 os.fsync(temporary.fileno())
-            Path(temporary_name).replace(path)
+            import_path(temporary_name).replace(import_path(path))
         finally:
             if temporary_name is not None:
                 try:

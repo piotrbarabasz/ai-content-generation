@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 
+from app.storage.paths import contained_path
+
 from app.domain.dependencies import canonical_json
 from app.domain.publication import PublicationSnapshot
 from app.domain.speech_boundary import SpeechBoundaryMap, SpeechChunkBoundary
@@ -33,10 +35,7 @@ def _chunks(job, section, prepared):
 
 def workspace(root, job):
     # Opaque job IDs are hashed, never interpreted as user-controlled path parts.
-    root = Path(root).resolve()
-    directory = root / sha256(job.id.encode()).hexdigest()
-    directory.resolve().relative_to(root)
-    return directory
+    return contained_path(Path(root).absolute(), sha256(job.id.encode()).hexdigest())
 
 
 def generate(job, provider, root, report=lambda *args: None, canceled=lambda: False):
@@ -50,12 +49,12 @@ def generate(job, provider, root, report=lambda *args: None, canceled=lambda: Fa
         raise ValueError("Section text has no synthesis chunks.")
     directory = workspace(root, job)
     directory.mkdir(parents=True, exist_ok=True)
-    marker = directory / "request.json"
+    marker = contained_path(directory, "request.json")
     expected = canonical_json(job.to_payload())
     if marker.exists() and marker.read_text(encoding="utf-8") != expected:
         raise ValueError("Generation workspace belongs to another request.")
     if not marker.exists():
-        pending = directory / "request.pending"
+        pending = contained_path(directory, "request.pending")
         with pending.open("w", encoding="utf-8", newline="\n") as stream:
             stream.write(expected)
             stream.flush()
@@ -73,14 +72,13 @@ def generate(job, provider, root, report=lambda *args: None, canceled=lambda: Fa
 def validated_output(root, job):
     section, prepared = inputs(job)
     directory = workspace(root, job)
-    if (directory / "request.json").read_text(encoding="utf-8") != canonical_json(job.to_payload()):
+    if contained_path(directory, "request.json").read_text(encoding="utf-8") != canonical_json(job.to_payload()):
         raise ValueError("Output workspace request mismatch.")
-    path = directory / "voiceover.wav"
-    path.resolve().relative_to(directory.resolve())
+    path = contained_path(directory, "voiceover.wav")
     payload = path.read_bytes()
     parameters, final_frames = inspect_pcm_wav(payload)
     checksum = sha256(payload).hexdigest()
-    manifest = SynthesisManifest.from_payload(json.loads((directory / "synthesis-manifest.json").read_text(encoding="utf-8")))
+    manifest = SynthesisManifest.from_payload(json.loads(contained_path(directory, "synthesis-manifest.json").read_text(encoding="utf-8")))
     expected_identity = prepared["effective_identity"]["synthesis"]
     expected_rate = expected_identity.get("voice", {}).get("catalog", {}).get("expected_sample_rate_hz")
     chunks = _chunks(job, section, prepared)
@@ -105,8 +103,7 @@ def validated_output(root, job):
     chunk_frames_hash = sha256()
     for chunk in chunks:
         record = manifest.chunks[chunk.id]
-        chunk_path = directory / (record.artifact_ref or "")
-        chunk_path.resolve().relative_to(directory.resolve())
+        chunk_path = contained_path(directory, record.artifact_ref or "")
         chunk_bytes = chunk_path.read_bytes()
         actual, frames = inspect_pcm_wav(chunk_bytes)
         if (record.status != "completed" or record.config_hash != config_hash

@@ -12,6 +12,7 @@ from app.domain.generation_job import (
     AttemptStatus, JobAttempt, JobProgress, JobRequest, artifact_ids, require_text, require_time,
 )
 from app.domain.publication import PUBLICATION_KEY
+from app.storage.paths import database_path
 from app.storage.project_repository import ProjectRepository, UnsupportedSchemaError
 
 
@@ -61,7 +62,7 @@ class JobRepository:
         self.project = project
         self.project_id = project.project().id
         self.session_id = project.session_id
-        self.path = project.workspace / "jobs.sqlite"
+        self.path = database_path(project.workspace, "jobs.sqlite")
         self.path.resolve().relative_to(project.workspace)
         now = clock()
         require_time(now)
@@ -95,6 +96,7 @@ class JobRepository:
         # Reject closed sessions, foreign threads and changed project identities.
         if self.project.project().id != self.project_id or self.project.session_id != self.session_id:
             raise JobConflictError("Queue project session changed.")
+        database_path(self.project.workspace, "jobs.sqlite")
         connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=0, isolation_level=None)
         connection.row_factory = sqlite3.Row
         try:
@@ -233,6 +235,7 @@ class JobRepository:
         """
         with self._connection():
             pass  # Validate live project session, owner and queue format first.
+        database_path(self.project.workspace, "jobs.sqlite")
         connection.execute("ATTACH DATABASE ? AS job_queue", (self.path.as_uri() + "?mode=rw",))
         connection.execute("PRAGMA job_queue.synchronous = FULL")
         self._check_attached(connection)
