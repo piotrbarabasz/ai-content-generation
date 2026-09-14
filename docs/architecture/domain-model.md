@@ -129,6 +129,13 @@ identity. `ScenePlan` retains ordered immutable scene semantics; an explicit
 the acceptance ID. Voice/tempo retiming never replaces accepted scenes or their
 visual descriptions. See [D013 semantic grouping, persistence and evidence](../desktop/D013_SCENE_PLANNING.md).
 
+D014's `ScriptSectionInput` validates and freezes ordered title/role/text values
+from the versioned desktop structured script response. The application maps them
+directly into existing `SectionRevision` / `ScriptRevision` values, preserving
+repeated roles and optional CTA. Manual append/edit uses the same revision model;
+no new script entity or role-based identity inference is introduced. See
+[D014 structured contract and evidence](../desktop/D014_STRUCTURED_SCRIPT.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type

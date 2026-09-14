@@ -659,16 +659,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D014 — Structured script generation
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M4
 - **Priority:** P0
 - **Goal:** Use provider output as the actual editable script.
 - **Scope:** Consume LLMProvider.generate_structured through strict schema validation, map ordered roles/text into revisions, support user-text section input and deterministic mock output.
 - **Out of scope:** Real provider API, fact retrieval and rewriting unrelated script/research modules.
 - **Dependencies:** D001, D003.
+- **Implementation boundary:** Add a provider-neutral desktop script service over the existing D001/D003 revision/session port. Strictly validate a versioned schema of ordered title/role/text sections before any persistence; preserve repeated roles and optional CTA without inferred templates. Whole-script generation explicitly creates new section identities while retaining prior snapshots; manual append/edit preserves unrelated sections. Compare the expected active revision before generation and at atomic save so late results cannot replace an intervening edit. Extend only the mock's recognized desktop schema response; keep the legacy ScriptGenerationModule and other mock schemas unchanged. No UI, real provider API, new queue or database schema.
 - **Main code areas:** app/modules/script_generation.py, app/providers/mock_llm.py, script application service; tests.
 - **Acceptance criteria:** Generated sections match the structured response rather than fixed templates; repeated roles and optional CTA work; invalid structure cannot replace an active script.
 - **Test strategy:** Offline provider fixtures for valid/invalid output, manual text and unchanged previous script; preserve legacy module compatibility tests.
+- **Evidence:** [D014 structured response and revision safety](D014_STRUCTURED_SCRIPT.md): the desktop service consumes `generate_structured` and maps exact ordered titles/roles/text into editable D001/D003 revisions without fixed templates, deduplication or required CTA. Manual append/edit preserves unrelated sections. Invalid complete responses, provider errors, schema mutation, stale requests and transaction failures cannot replace the active script; a concurrent edit is retained. Prior snapshots and generated text survive reopen. The recognized mock schema is deterministic; legacy workflow/module and other mock contracts are unchanged.
+- **Validation:** Focused tests — 113 passed, including 36 new D014 cases; `python -m pytest backend/tests` — 1077 passed in 116.70 s; `git diff --check`, new-file whitespace/EOF/UTF-8, documentation links and task-scope checks — PASS (2026-09-14, Windows/isolated Python 3.11.9). All three acceptance criteria PASS. Only D014 status changed; D002/D008/D012 remain Partial. D015 not started; branch `feat/d014-structured-script-generation` remains unmerged.
 
 ### D015 — Independent visual prompt revisions
 

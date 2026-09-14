@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
+from app.domain.script_sections import script_sections_schema
 
 from .interfaces import LLMProvider, _coerce_json_dict, _stable_signature, _slugify
 
@@ -27,6 +31,23 @@ class MockLLMProvider(LLMProvider):
 
     def generate_structured(self, prompt: str, schema: JsonDict) -> JsonDict:
         normalized_schema = _coerce_json_dict(schema)
+        if normalized_schema == script_sections_schema():
+            # Deliberately simple offline fixture, not a real language model.
+            # The desktop envelope carries language as context without changing it.
+            try:
+                envelope = json.loads(prompt)
+            except (ValueError, TypeError):
+                envelope = None
+            desktop = isinstance(envelope, dict) and envelope.get("task") == "generate_script_sections"
+            request = envelope["request"] if desktop else prompt
+            paragraphs = [part for part in re.split(r"(?:\r?\n\s*){2,}", request) if part.strip()]
+            if not paragraphs:
+                raise ValueError("Mock script generation requires nonempty input.")
+            sections = [{"title": f"Section {index + 1}", "role": "hook" if index == 0 else "body", "text": paragraph}
+                        for index, paragraph in enumerate(paragraphs)]
+            if desktop and envelope.get("include_cta") is True:
+                sections.append({"title": "Next step", "role": "cta", "text": "Choose your next step."})
+            return {"sections": sections}
         signature = _stable_signature(
             {
                 "provider": self.provider_name,

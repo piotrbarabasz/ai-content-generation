@@ -277,6 +277,14 @@ Checksum/current-revision checks prevent corrupt or stale data from being used
 for new scene results. The legacy workflow scene module is unchanged. See
 [D013 contracts and validation](../desktop/D013_SCENE_PLANNING.md).
 
+D014's desktop script service validates the complete structured provider response
+before passing new editorial revisions to D003's existing atomic save/selection.
+An expected-active-revision comparison protects edits made during generation.
+Manual append/edit preserves unrelated sections; invalid output and transaction
+failure leave the previous script intact. No schema or artifact-store changes
+are needed. The legacy workflow script module retains its original behavior; see
+[D014 desktop service and compatibility](../desktop/D014_STRUCTURED_SCRIPT.md).
+
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional
 ones. Platform handoff builders collect validated metadata and checksummed
