@@ -8,6 +8,7 @@ import re
 from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 from app.domain.script_sections import script_sections_schema
+from app.domain.visual_prompt import visual_prompt_schema
 
 from .interfaces import LLMProvider, _coerce_json_dict, _stable_signature, _slugify
 
@@ -31,6 +32,11 @@ class MockLLMProvider(LLMProvider):
 
     def generate_structured(self, prompt: str, schema: JsonDict) -> JsonDict:
         normalized_schema = _coerce_json_dict(schema)
+        if normalized_schema == visual_prompt_schema():
+            inputs = json.loads(prompt)["inputs"]
+            return {"prompt": (f"Scene: {inputs['scene']['text']}\n"
+                               f"Section: {inputs['section_context']['title']}\n{inputs['section_context']['text']}\n"
+                               f"Film brief: {inputs['film_brief']['text']}\nStyle: {inputs['visual_style']['text']}")}
         if normalized_schema == script_sections_schema():
             # Deliberately simple offline fixture, not a real language model.
             # The desktop envelope carries language as context without changing it.

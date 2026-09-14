@@ -285,6 +285,15 @@ failure leave the previous script intact. No schema or artifact-store changes
 are needed. The legacy workflow script module retains its original behavior; see
 [D014 desktop service and compatibility](../desktop/D014_STRUCTURED_SCRIPT.md).
 
+D015 stores brief/style revisions, visual prompts and per-scene selection events
+as immutable project artifacts. Prompt metadata records D005 consumed-source
+fingerprints; context bytes are reconstructed from pinned revisions before save.
+The active prompt is the head of a validated selection-event chain, with an
+expected-previous-ID check under the exclusive coordinator session. No database
+schema or mutable selection file is added. D004 recovery applies, including
+truthful handling of cleanup failure after index commit. See [D015 persistence,
+manual ownership and selective freshness](../desktop/D015_VISUAL_PROMPTS.md).
+
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional
 ones. Platform handoff builders collect validated metadata and checksummed
