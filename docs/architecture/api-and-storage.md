@@ -269,6 +269,14 @@ jobs retain legacy behavior. D011 derivatives carry an explicitly approximate
 tempo map to the selected processed audio. See [D012 source/sample coverage and
 compatibility](../desktop/D012_SPEECH_BOUNDARIES.md).
 
+D013's `ProjectScenePlans` stores immutable JSON proposals, explicit acceptances
+and audio-bound timing sets in the same project artifact store/index. Histories
+are discoverable by section ID after reopen. No latest-plan fallback or automatic
+acceptance is added; retiming consumes an explicit retained acceptance ID.
+Checksum/current-revision checks prevent corrupt or stale data from being used
+for new scene results. The legacy workflow scene module is unchanged. See
+[D013 contracts and validation](../desktop/D013_SCENE_PLANNING.md).
+
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional
 ones. Platform handoff builders collect validated metadata and checksummed

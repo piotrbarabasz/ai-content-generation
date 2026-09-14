@@ -121,6 +121,14 @@ explicitly approximate internal positions; neither map is word alignment.
 Legacy audio remains readable without invented boundaries. See [D012 contracts
 and validation](../desktop/D012_SPEECH_BOUNDARIES.md).
 
+D013 adds `ProjectRenderScene` beside the unchanged legacy `RenderScene`, with
+project/section ownership, whole-sentence source ranges and stable visual scene
+identity. `ScenePlan` retains ordered immutable scene semantics; an explicit
+`AcceptedScenePlan` retains the reviewed plan and reviewer attribution.
+`SceneTimingSet` binds separate `SceneTiming` sample intervals to exact audio and
+the acceptance ID. Voice/tempo retiming never replaces accepted scenes or their
+visual descriptions. See [D013 semantic grouping, persistence and evidence](../desktop/D013_SCENE_PLANNING.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type

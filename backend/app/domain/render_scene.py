@@ -42,3 +42,29 @@ class RenderScene(DomainEntity):
             timing_hint=timing_hint,
             visual_intensity=visual_intensity,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectRenderScene:
+    """Desktop scene semantics; the legacy run-based RenderScene stays unchanged."""
+
+    id: str
+    project_id: str
+    section_id: str
+    revision_id: str
+    source_start: int
+    source_end: int
+    sentence_ids: tuple[str, ...]
+    visual_description: str
+
+    def __post_init__(self):
+        for name in ("id", "project_id", "section_id", "revision_id", "visual_description"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise DomainValidationError(f"ProjectRenderScene {name} is required.")
+        if (type(self.source_start) is not int or type(self.source_end) is not int
+                or not 0 <= self.source_start < self.source_end
+                or not isinstance(self.sentence_ids, tuple) or not self.sentence_ids
+                or any(not isinstance(s, str) or not s.strip() for s in self.sentence_ids)
+                or len(set(self.sentence_ids)) != len(self.sentence_ids)):
+            raise DomainValidationError("Scene requires a valid whole-sentence source range.")

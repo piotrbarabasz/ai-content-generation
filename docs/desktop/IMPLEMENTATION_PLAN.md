@@ -643,16 +643,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D013 — Semantic scene planning
 
-- **Status:** Planned
+- **Status:** Completed — PASS
 - **Milestone:** M4
 - **Priority:** P0
 - **Goal:** Suggest visual scenes using meaning and measured speech boundaries.
 - **Scope:** Project-owned RenderScene values, source ranges, separate SceneTiming and grouping of whole sentence blocks toward 8-12 seconds; retain explicit accepted plan identity.
 - **Out of scope:** Image generation, forced 10-second cuts and silent replanning after voice changes.
 - **Dependencies:** D001, D012.
+- **Implementation boundary:** D001 ownership and D012 measured maps are implemented and tested; D012's pending manual prosody check remains a separate gate and is not promoted by this task. Add immutable project scene/plan values beside the legacy run-based RenderScene contract, separate artifact-bound SceneTiming, and a provider-free planning service. Whole-sentence semantic groups (paragraphs and explicit editorial topic breaks) take priority over the 8–12 second preference. Persist proposals and explicit acceptance records through the existing project artifact store; retiming consumes a retained accepted plan without re-planning or changing scene IDs/visual descriptions. No image generation, UI, automatic acceptance, new queue or database schema.
 - **Main code areas:** app/domain/render_scene.py, new segmentation application service; app/modules/scene_planning.py compatibility; tests.
 - **Acceptance criteria:** All narration is covered once; long/short complete sentences remain valid; voice/tempo retimes an accepted plan without replacing its visuals.
 - **Test strategy:** Variable-duration boundary fixtures, very long sentences, semantic grouping and accepted-plan retiming tests.
+- **Evidence:** [D013 contracts and validation](D013_SCENE_PLANNING.md): project-owned immutable scenes retain whole-sentence source ranges and explicit accepted plan identity. Paragraph/editorial topic groups outrank the soft 8–12 s preference; short groups, 13 s groups and a 35 s sentence spanning six technical chunks remain valid. Separate timing sets cover the full measured WAV and preserve scene IDs/descriptions across voice/tempo changes. Proposals, acceptance history and old timing survive reopen. The unchanged legacy RenderScene/module contract remains tested; no image generation or automatic re-planning.
+- **Validation:** Focused tests — 131 passed, including 34 new D013 cases; `python -m pytest backend/tests` — 1041 passed in 73.04 s (2026-09-14, Windows/isolated Python 3.11.9). All three acceptance criteria PASS. Final diff/documentation checks recorded in the evidence document. Only D013 status changed; D002/D008/D012 remain Partial. D014 not started; branch `feat/d013-semantic-scene-planning` remains unmerged.
 
 ### D014 — Structured script generation
 
