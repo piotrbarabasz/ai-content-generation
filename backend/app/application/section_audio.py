@@ -7,7 +7,7 @@ from app.domain.narrative_segment import SectionRevision
 
 
 OPERATION = "section_audio.synthesize"
-VERSION = "1"
+VERSION = "2"  # Sentence-isolated synthesis with measured source boundaries.
 
 
 class SectionVoicePort(Protocol):
@@ -40,7 +40,7 @@ class SectionAudioService:
         if existing is not None:
             return existing
         job = self.publication.repository.prepare(claim)
-        if job.request.operation != OPERATION or job.request.algorithm_version != VERSION:
+        if job.request.operation != OPERATION or job.request.algorithm_version not in ("1", VERSION):
             raise ValueError("This completion handler only accepts section audio jobs.")
         with self.outputs.validated(job) as (stream, audio):
             return self.publication.publish(claim, "section-audio.wav", stream,

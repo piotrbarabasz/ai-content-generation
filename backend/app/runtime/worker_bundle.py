@@ -9,7 +9,7 @@ import json
 MODULES = """
 domain/__init__ domain/base domain/content_brief domain/dependencies domain/enums
 domain/export_config domain/generation_job domain/narrative_segment domain/project
-domain/provider_config domain/publication domain/types domain/workflow_config
+domain/provider_config domain/publication domain/types domain/workflow_config domain/speech_boundary
 jobs/__init__ jobs/coordinator providers/__init__ providers/chatterbox_v3
 providers/interfaces providers/mock_tts providers/piper_catalog providers/piper_tts
 providers/registry providers/tts_capabilities providers/tts_catalog providers/tts_factory

@@ -261,9 +261,10 @@ class ResumableChunkSynthesizer:
     def _record_for(self, chunk: NarrationChunk, config_hash: str, manifest: SynthesisManifest) -> ChunkManifest:
         input_hash = sha256(chunk.text.encode("utf-8")).hexdigest()
         existing = manifest.chunks.get(chunk.id)
-        if existing and (existing.input_hash, existing.config_hash, existing.text_hash, existing.index) == (input_hash, config_hash, chunk.text_hash, chunk.index):
+        if existing and (existing.input_hash, existing.config_hash, existing.text_hash, existing.index, existing.source_span) == (input_hash, config_hash, chunk.text_hash, chunk.index, chunk.source_span):
             return existing
-        return ChunkManifest(chunk.id, chunk.index, "pending", input_hash, config_hash, chunk.text_hash)
+        return ChunkManifest(chunk.id, chunk.index, "pending", input_hash, config_hash, chunk.text_hash,
+                             source_span=chunk.source_span)
 
     def _reuse_if_valid(self, record: ChunkManifest, root: Path) -> bytes | None:
         if record.status != "completed" or not record.artifact_ref or not record.wav_checksum or not record.audio_parameters:

@@ -261,6 +261,14 @@ cleanup. Ordinary D006 success cannot bypass the gate for D040 jobs. Legacy job
 completion and artifact imports retain existing behavior. See [D040 contracts,
 transaction boundaries and evidence](../desktop/D040_RESULT_PUBLICATION.md).
 
+D012 publishes `speech_boundary_map` within existing `section_audio` metadata
+after independently checking source spans and all chunk/final PCM bytes. The map
+and WAV share the D040 immutable publication and history; no new table or mutable
+timing sidecar is added. Desktop synthesis v2 isolates sentence blocks, while v1
+jobs retain legacy behavior. D011 derivatives carry an explicitly approximate
+tempo map to the selected processed audio. See [D012 source/sample coverage and
+compatibility](../desktop/D012_SPEECH_BOUNDARIES.md).
+
 `ExportModule` saves a manifest, workflow configuration and run snapshot; it
 includes available artifacts/references and explicitly reports missing optional
 ones. Platform handoff builders collect validated metadata and checksummed

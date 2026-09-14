@@ -627,16 +627,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D012 — Measured speech boundary map
 
-- **Status:** Planned
+- **Status:** Partial — automated acceptance PASS; manual prosody comparison pending
 - **Milestone:** M3
 - **Priority:** P0
 - **Goal:** Map complete textual blocks to actual source audio positions.
 - **Scope:** Retain sentence/source spans through synthesis and assembly, measured cumulative sample boundaries and processed-tempo mapping; record method/quality and full coverage.
 - **Out of scope:** Word-level forced alignment, equal word-duration claims and changing scenes solely to meet chunk limits.
 - **Dependencies:** D010, D011.
+- **Implementation boundary:** Desktop synthesis request version 2 retains sentence identity and original section character spans, never packs different sentences into one technical chunk, and measures cumulative PCM frames including silence. Version 1 jobs and legacy chunking remain supported without invented sentence timing. Persist the map with existing audio metadata, validate it at publication and carry it to tempo derivatives by the measured input/output frame ratio (explicitly approximate internal positions, exact full coverage). No alignment, scene changes or database migration. Manual listening remains separate evidence from automated timing checks.
 - **Main code areas:** app/tts/chunking.py, chunk_synthesis.py, manifest.py, assembly mapping and new speech boundary values; tests.
 - **Acceptance criteria:** Map covers the full selected WAV and section text without gaps/overlap; changing tempo maps to processed audio; sentence identity survives technical subchunks.
 - **Test strategy:** Synthetic variable-length chunk and silence fixtures, incompatible parameters, punctuation/long-sentence cases and processed-duration checks; manual prosody comparison.
+- **Evidence:** [D012 speech boundary contracts and real-media evidence](D012_SPEECH_BOUNDARIES.md): desktop synthesis v2 retains original character spans and sentence identity through technical subchunks/retry, then publishes independently validated cumulative PCM boundaries with the WAV. Original/processed maps survive reopen; tempo uses measured frame ratios with explicit approximate internal positions. Legacy v1 jobs and unmapped historical media remain supported. Real managed Piper/FFmpeg smoke covers 282 characters, four sentences and five chunks: raw 391936 frames at 22050 Hz (17.774875283 s), 0.8x 489861 frames, 1.25x 313599 frames; raw/history unchanged. Listening fixtures and comparison instructions are ready; manual prosody result has not been supplied.
+- **Validation:** Focused tests — 114 passed, including 36 new D012 cases; `python -m pytest backend/tests` — 1007 passed in 69.77 s; real managed-worker/FFmpeg smoke — PASS (2026-09-14, Windows/isolated Python 3.11.9). Automated acceptance criteria pass; final diff/documentation checks recorded in the evidence document. Only D012 task status changed; D002/D008 remain Partial, D013 not started, branch unmerged.
 
 ### D013 — Semantic scene planning
 

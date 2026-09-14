@@ -112,6 +112,15 @@ input/output durations. D005 dependencies and separate D040 raw/processed
 selections describe currentness; no parallel audio entity or selection schema is
 introduced. See [D011 derivative semantics](../desktop/D011_TEMPO_DERIVATIVE.md).
 
+D012 adds immutable `SourceSpan`, `SpeechChunkBoundary`, `SpeechBlock` and
+`SpeechBoundaryMap` values. Original text ranges and cumulative measured PCM
+frames cover the complete section/WAV; sentence blocks group technical chunks
+without creating editorial sections or render scenes. `SectionAudio` exposes an
+optional map from retained metadata. Tempo maps use measured duration ratios and
+explicitly approximate internal positions; neither map is word alignment.
+Legacy audio remains readable without invented boundaries. See [D012 contracts
+and validation](../desktop/D012_SPEECH_BOUNDARIES.md).
+
 ## Existing workflow and service boundaries
 
 Canonical presets are `short_video` and `long_form_script_voiceover`. Content type

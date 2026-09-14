@@ -11,6 +11,8 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from app.domain.speech_boundary import SourceSpan
+
 
 def stable_hash(value: object) -> str:
     """Return a stable SHA-256 identity for JSON-compatible configuration."""
@@ -76,6 +78,7 @@ class ChunkManifest:
     artifact_ref: str | None = None
     attempts: int = 0
     error: str | None = None
+    source_span: SourceSpan | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -91,6 +94,7 @@ class ChunkManifest:
             "artifact_ref": self.artifact_ref,
             "attempts": self.attempts,
             "error": self.error,
+            "source_span": asdict(self.source_span) if self.source_span is not None else None,
         }
 
     @classmethod
@@ -104,6 +108,7 @@ class ChunkManifest:
             audio_parameters=AudioParameters.from_payload(audio) if isinstance(audio, Mapping) else None,
             artifact_ref=_optional_str(payload.get("artifact_ref")), attempts=int(payload.get("attempts", 0)),
             error=_optional_str(payload.get("error")),
+            source_span=SourceSpan(**payload["source_span"]) if payload.get("source_span") is not None else None,
         )
 
 

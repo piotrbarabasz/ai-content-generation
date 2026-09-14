@@ -6,9 +6,11 @@ offsets refer to the normalized narration returned by :func:`normalize_narration
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import re
+
+from app.domain.speech_boundary import SourceSpan
 
 
 _WHITESPACE = re.compile(r"\s+")
@@ -52,6 +54,7 @@ class NarrationChunk:
     word_count: int
     text_hash: str
     is_oversized: bool = False
+    source_span: SourceSpan | None = None
 
     @property
     def source_offset(self) -> int:
@@ -147,6 +150,44 @@ def _paragraph_then_sentence_units(text: str) -> list[list[str]]:
         if paragraph:
             units.append(_sentences(paragraph))
     return units
+
+
+def sentence_chunks(text: str, *, max_words: int = 120) -> list[NarrationChunk]:
+    """Desktop v2: isolate complete sentence blocks and retain original offsets.
+
+    Leading whitespace belongs to the first block; other separating whitespace
+    belongs to the preceding chunk. Offsets are Python Unicode character indices.
+    Legacy chunk_narration packing and normalized offsets remain unchanged.
+    """
+    NarrationChunkingSettings(max_words)
+    normalized = normalize_narration(text)
+    words = list(_WORD.finditer(text))
+    if not words:
+        return []
+    result = []
+    word_cursor = normalized_cursor = 0
+    for sentence_index, sentence in enumerate(s for p in _paragraph_then_sentence_units(text) for s in p):
+        count = _count_words(sentence)
+        sentence_start = 0 if word_cursor == 0 else words[word_cursor].start()
+        sentence_end = words[word_cursor + count].start() if word_cursor + count < len(words) else len(text)
+        digest = sha256(sentence.encode("utf-8")).hexdigest()
+        sentence_id = f"sentence-{sentence_index:04d}-{digest[:12]}"
+        for piece in chunk_narration(sentence, max_words=max_words):
+            start = normalized.find(piece.text, normalized_cursor)
+            end = start + len(piece.text)
+            if start < 0:
+                raise ValueError("Sentence text differs from normalized source.")
+            source_start = 0 if word_cursor == 0 else words[word_cursor].start()
+            word_cursor += piece.word_count
+            source_end = words[word_cursor].start() if word_cursor < len(words) else len(text)
+            index = len(result)
+            result.append(replace(piece, id=f"sentence-chunk-{index:04d}-{piece.text_hash[:12]}", index=index,
+                                  source_start=start, source_end=end,
+                                  source_span=SourceSpan(sentence_id, sentence_start, sentence_end, source_start, source_end)))
+            normalized_cursor = end
+    if word_cursor != len(words):
+        raise ValueError("Sentence chunks do not cover all source words.")
+    return result
 
 
 def _sentences(paragraph: str) -> list[str]:

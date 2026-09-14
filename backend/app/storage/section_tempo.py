@@ -52,6 +52,8 @@ class SectionTempoArtifacts:
                 or self.index.selected().get(key) != artifact_id
                 or self.index.repository.active_script().section(section.section_id) != section):
             raise ValueError("Tempo input must be the selected raw audio for the expected current section.")
+        if audio.speech_boundary_map is not None:
+            audio.speech_boundary_map.validate_source(section.text, audio.checksum, audio.sample_rate, audio.frame_count)
         return audio
 
     def settings(self, raw, tempo):
@@ -74,6 +76,8 @@ class SectionTempoArtifacts:
                 or json.loads(job.input_snapshot_json)["inputs"]["section_tempo"] != expected
                 or json.loads(job.request.effective_identity_json) != {"processor_version": TEMPO_PROCESSOR_VERSION}):
             raise ValueError("Derivative source or processor identity differs from enqueue.")
+        if raw.speech_boundary_map is not None:
+            raw.speech_boundary_map.validate_source(section.text, raw.checksum, raw.sample_rate, raw.frame_count)
         self.work_root.resolve().relative_to(self.index.repository.workspace)
         self.work_root.mkdir(parents=True, exist_ok=True)
         result = process_pcm_wav_tempo(payload, settings["tempo"], process_runner=self.process_runner,
@@ -84,6 +88,10 @@ class SectionTempoArtifacts:
         audio = {"version": 1, "section_id": section.section_id, "revision_id": section.id,
                  "checksum": result.output_checksum, "audio_parameters": measured.to_payload(),
                  "duration_seconds": measured.duration_seconds, "request_fingerprint": job.request.fingerprint}
+        if raw.speech_boundary_map is not None:
+            audio["speech_boundary_map"] = raw.speech_boundary_map.retime(
+                checksum=result.output_checksum, sample_rate=measured.sample_rate,
+                frame_count=measured.frame_count).to_payload()
         derivative = {"version": 1, **settings, "raw_artifact_id": raw.artifact_id, **result.evidence()}
         with io.BytesIO(result.audio_bytes) as source:
             yield source, {"section_audio": audio, "audio_derivative": derivative}
@@ -100,6 +108,8 @@ class SectionTempoArtifacts:
         _, raw, _ = self._read(raw_id)
         if raw.revision_id != section.id or raw.section_id != section.section_id:
             return None
+        if raw.speech_boundary_map is not None:
+            raw.speech_boundary_map.validate_source(section.text, raw.checksum, raw.sample_rate, raw.frame_count)
         if variant == "original":
             return raw
         processed_id = heads.get("section:" + section.section_id + ":audio:processed")
@@ -111,4 +121,8 @@ class SectionTempoArtifacts:
                 or derivative["raw_artifact_id"] != raw_id or derivative["raw_checksum"] != raw.checksum
                 or derivative["processor_version"] != TEMPO_PROCESSOR_VERSION):
             return None  # Retained historical media is never advertised as current.
+        if processed.speech_boundary_map is not None:
+            processed.speech_boundary_map.validate_source(section.text, processed.checksum, processed.sample_rate, processed.frame_count)
+            if processed.speech_boundary_map.source_audio_checksum != raw.checksum:
+                raise ValueError("Processed speech map differs from the selected raw source.")
         return processed
