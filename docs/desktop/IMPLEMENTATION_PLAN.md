@@ -691,16 +691,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D016 — Controlled image import
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-14)
 - **Milestone:** M5
 - **Priority:** P0
 - **Goal:** Use real user-supplied visuals before a generative provider exists.
 - **Scope:** Import PNG/JPEG, validate decoded dimensions/format, retain source/provenance, create immutable image artifact and select it for a scene.
 - **Out of scope:** Video import, remote search, image generation and public absolute paths.
 - **Dependencies:** D004, D013, D044.
+- **Implementation boundary:** Application service and local project adapter reuse D013 accepted scene ownership, D044 source containment and D004 immutable media/index commits. Lazy Pillow decoding accepts single-frame PNG/JPEG after byte/axis/pixel limits, container verification and full decode. Retain original source bytes and basename/checksum/measurements without persisting absolute paths. Import retains a candidate; explicit compare-and-select appends a scene choice event under the existing project session. Failed selection preserves the previous choice and any committed candidate; post-commit cleanup failures are reconciled against exact bytes. No schema, Qt/HTTP, image-generation or other-task changes.
 - **Main code areas:** New app/application/ image intake, image metadata, ArtifactStore; image fixture tests.
 - **Acceptance criteria:** Image remains available after moving/reopening the project; invalid/oversized decode is rejected; prior selected image remains intact on failure.
 - **Test strategy:** Synthetic image imports, corrupt input, limits, path containment and project relocation tests.
+- **Evidence:** [D016 controlled image import](D016_IMAGE_IMPORT.md): PNG RGB/RGBA/palette and JPEG RGB/grayscale/CMYK sources survive deletion of the original and relocation/reopen into Unicode/space paths with exact bytes, dimensions and retained EXIF orientation. Invalid/truncated/animated/unsupported images and compressed/decode limits fail before publication. Cross-project/scene access, traversal/ADS/junction paths, stale scene revisions and selection tokens are rejected. Selection history and other scenes/audio survive import and index failures; committed cleanup outcomes are reported truthfully.
+- **Validation:** 53 new D016 cases PASS. Focused tests: 114 passed, 11 skipped in 34.22 s. Full `python -m pytest backend/tests`: 1204 passed, 11 skipped in 227.50 s. Existing D044 symlink tests are skipped for Windows privilege error 1314; the new D016 junction case PASS. `pip check`, `git diff --check`, UTF-8/whitespace/EOF, evidence-link and task-status scope checks PASS (2026-09-14, Windows, isolated Python 3.11.9, Pillow 12.3.0). All three acceptance criteria PASS. Only D016 status changed; no D017 work, commit, push or merge. Branch `feat/d016-controlled-image-import`.
 
 ### D017 — Image generation contract and mock
 
