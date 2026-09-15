@@ -11,7 +11,7 @@ domain/__init__ domain/base domain/content_brief domain/dependencies domain/enum
 domain/export_config domain/generation_job domain/narrative_segment domain/project
 domain/provider_config domain/publication domain/types domain/workflow_config domain/speech_boundary
 jobs/__init__ jobs/coordinator providers/__init__ providers/chatterbox_v3
-providers/interfaces providers/mock_tts providers/piper_catalog providers/piper_tts
+providers/interfaces providers/image_generation providers/mock_tts providers/piper_catalog providers/piper_tts
 providers/registry providers/tts_capabilities providers/tts_catalog providers/tts_factory
 providers/tts_result providers/tts_settings providers/xtts_v2 runtime/__init__
 runtime/model_index runtime/native_piper runtime/piper_health runtime/piper_worker

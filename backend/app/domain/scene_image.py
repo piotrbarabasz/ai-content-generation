@@ -1,4 +1,4 @@
-"""Immutable imported image measurements and explicit scene choice events."""
+"""Immutable scene image measurements and explicit scene choice events."""
 
 from dataclasses import asdict, dataclass
 
@@ -31,12 +31,12 @@ class SceneImage:
             _text(value)
         if any(c in self.source_name for c in "/\\:"):
             raise ValueError("Image source name must not expose a path.")
-        if (self.format not in ("PNG", "JPEG") or self.provenance != "imported"
+        if (self.format not in ("PNG", "JPEG") or self.provenance not in ("imported", "generated")
                 or any(type(n) is not int or n <= 0 for n in (self.size_bytes, self.width, self.height))
                 or type(self.orientation) is not int or self.orientation not in range(1, 9)
                 or type(self.checksum) is not str or len(self.checksum) != 64
                 or any(c not in "0123456789abcdef" for c in self.checksum)):
-            raise ValueError("Invalid imported image measurements.")
+            raise ValueError("Invalid scene image measurements.")
 
     def to_payload(self):
         return {"version": 1, **asdict(self)}
@@ -47,7 +47,7 @@ class SceneImage:
         if type(data.pop("version")) is not int or manifest.metadata["scene_image"]["version"] != 1:
             raise ValueError("Unsupported scene image version.")
         if manifest.artifact_type != "scene_image":
-            raise ValueError("Expected an imported image artifact.")
+            raise ValueError("Expected a scene image artifact.")
         return cls(artifact_id=manifest.artifact_id, checksum=manifest.checksum,
                    size_bytes=manifest.size_bytes, **data)
 

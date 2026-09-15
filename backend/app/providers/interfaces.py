@@ -13,6 +13,7 @@ from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 from app.providers.tts_capabilities import TTSCapabilities
 from app.providers.tts_result import TTSSynthesisResult
+from app.providers.image_generation import ImageGenerationProvider
 from app.storage.manifest import ArtifactManifest
 
 

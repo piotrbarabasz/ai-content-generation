@@ -707,16 +707,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D017 — Image generation contract and mock
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-15)
 - **Milestone:** M5
 - **Priority:** P0
 - **Goal:** Support image generation and variants without binding core to one model.
 - **Scope:** Small ImageGenerationProvider request/result contract, explicit capabilities, prompt/settings fingerprint, deterministic valid-image mock and variant selection.
 - **Out of scope:** Real model/API, img2img, character consistency and a universal media-provider union.
 - **Dependencies:** D015, D016, D040.
+- **Implementation boundary:** Pure text-to-image request/result/capabilities and lazy explicit factory with one standard-library PNG mock. Pin the selected D015 prompt revision/event, section, dimensions, format, seed, negative prompt and effective provider identity. Reuse D006/D040 for generation records and a candidate head, D016 for independent explicit image choices and decoded media validation. A scoped ImageResultIndex compares D015 selection events at the D040 transaction boundary, retaining obsolete results without promoting them. Normal requests reuse matching validated completed candidates; force always creates a new job/generation/artifact. Preserve imported payloads and selection history, with generated provenance as an additive value. No schema, real-provider/runtime, UI, enum/union migration or other-task changes.
 - **Main code areas:** app/providers/interfaces.py, new mock image adapter and image application service; tests.
 - **Acceptance criteria:** Mock returns decodable image bytes; forced regeneration creates a new generation record; selecting an old variant changes no audio.
 - **Test strategy:** Offline contract, format-validation, cache-versus-new-variant and stale-publication tests.
+- **Evidence:** [D017 image contract and variants](D017_IMAGE_GENERATION.md): mock returns independently decodable PNG; injected JPEG fixture uses the same service. Forced identical requests retain the fingerprint but get distinct job/generation/artifact IDs; normal cache hits create no job/provider call. Old/generated/imported variant choices preserve prior bytes and audio, including selection with generation disabled. Late section/prompt/ABA/pre-commit changes and superseding jobs retain obsolete results. Invalid bytes/measurements, cancellation, identity drift and transaction failure preserve prior selections; replay and post-commit cleanup report committed outcomes. Reopen and cache-corruption tests PASS.
+- **Validation:** Baseline dependencies: 104 passed. Compatibility focused suite: 173 passed in 105.13 s; final D017 focused suite: 59 new cases passed in 79.08 s. Full `python -m pytest backend/tests`: 1263 passed, 11 skipped in 351.06 s. The 11 skips are existing D044 symlink privilege cases (Windows error 1314); no new D017 test skipped. All three acceptance criteria PASS. `git diff --check`, UTF-8/whitespace/EOF, evidence-link and task-status scope checks PASS (2026-09-15, Windows, isolated Python 3.11.9). Only D017 status changed; no D018 work, commit, push or merge. Branch `feat/d017-image-generation-contract`.
 
 ### D018 — Immutable timeline description
 
