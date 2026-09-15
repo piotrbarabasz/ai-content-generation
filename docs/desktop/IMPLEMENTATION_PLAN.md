@@ -723,16 +723,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D018 — Immutable timeline description
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-15)
 - **Milestone:** M6
 - **Priority:** P0
 - **Goal:** Compile selected media into a deterministic render snapshot.
 - **Scope:** TimelineRevision/clips with image IDs, exact audio source ranges, durations, output timebase, fit/fill policy and validated ordering/offsets.
 - **Out of scope:** GUI, FFmpeg execution, multiple tracks and keyframes.
 - **Dependencies:** D011, D013, D016.
+- **Implementation boundary:** Frozen versioned domain values and a provider-free compiler over an injected selected-media resolver. A read-only project adapter resolves explicit D013 timing/scene IDs, D011 original/processed choice and D016 image selection, verifies retained bytes and rejects stale/mismatched inputs. Ordered unique scene inputs may explicitly select a subset; output has no gaps. Keep half-open audio sample ranges and exact rational audio offsets/durations separate from video frames. Round cumulative video boundaries to nearest frame (ties up), rejecting clips that collapse to zero frames; record a reduced rational seconds-per-frame timebase and fit/fill policy. Content-derived identity includes ordered pinned inputs and settings. No schema, publication, provider calls, rendering, GUI or other-task implementation.
 - **Main code areas:** New app/domain/ timeline values and application compiler; unit tests.
 - **Acceptance criteria:** Every clip resolves exact selected inputs; invalid/out-of-range spans fail; reorder changes timeline identity without regenerating media.
 - **Test strategy:** Pure timeline fixtures for timing sums, frame rounding, reordering, gaps, missing artifacts and mixed source sample rates.
+- **Evidence:** [D018 immutable timeline](D018_IMMUTABLE_TIMELINE.md): frozen versioned snapshots pin exact D011 audio artifact/checksum/sample range and explicit variant, D013 plan/acceptance/timing/quality, D016 image artifact/checksum and selection event, rational offsets, cumulative video-frame bounds, reduced output timebase and fit/fill. Actual project tests reject missing/stale/corrupt/foreign selections and timing/audio mismatches; processed audio requires explicit retiming. Reordering changes content identity while preserving all media bytes, heads, jobs and provider calls. Mixed 44.1/48 kHz sources, subsets, reopen, JSON validation and selection changes during compilation PASS.
+- **Validation:** Dependency baseline: 99 passed. Final focused D018: 70 passed in 15.68 s. Full `python -m pytest backend/tests`: 1333 passed, 11 skipped in 320.05 s on the confirming run. An earlier full run had one transient existing T064 failure (1332 passed, 11 skipped); its complete file immediately passed 3/3 and no TTS code changed. The 11 skips are existing D044 Windows symlink privilege cases. All acceptance criteria, `git diff --check`, UTF-8/whitespace/EOF, documentation links and task-status scope checks PASS (2026-09-15, Windows, isolated Python 3.11.9). Only D018 status changed; no D019 work, commit, push or merge. Branch `feat/d018-immutable-timeline`.
 
 ### D019 — Real static-image MP4 renderer
 

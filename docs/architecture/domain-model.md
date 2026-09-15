@@ -5,7 +5,8 @@ immutable revision and timeline model is specified in the
 [desktop plan](../desktop/IMPLEMENTATION_PLAN.md#project-and-pipeline-model).
 SectionRevision and ScriptRevision provide the D001 foundation described below;
 [D003 storage](api-and-storage.md#editable-project-persistence-d003) retains them.
-D005 adds the dependency values below. Remaining target models are still planned.
+D005 adds the dependency values below. D018 adds the immutable timeline snapshot
+described below. Other target models remain governed by the desktop plan.
 
 Entities are Python dataclasses with explicit validation in `backend/app/domain`;
 HTTP schemas are separate Pydantic models in `backend/app/api/schemas.py`.
@@ -27,6 +28,7 @@ validation failures. Internal snake_case fields map to camelCase API payloads.
 | `SectionRevision` | Frozen editorial text/title/role with stable section/project IDs and a parent revision ID |
 | `ScriptRevision` | Frozen ordered selection of exact section revisions, stable script/project IDs and parent snapshot ID |
 | `RenderScene` | Ordered render unit, scene-plan reference, timing hint and visual intensity |
+| `TimelineRevision` / `TimelineClip` | Frozen ordered selected media, exact audio sample spans and rational offsets, separately rounded video frame boundaries, output timebase and fit/fill policy (D018) |
 | `Voiceover` | Text reference, provider, audio storage key, duration and optional approval time |
 | `CaptionTrack` / `CaptionSegment` | Caption metadata and validated ordered subtitle segments; `serialize_srt` emits UTF-8-compatible text |
 | `VideoRender` | Render storage key, duration, format and optional approval time |
@@ -59,6 +61,21 @@ text is authoritative at this explicit boundary: flat script text is not parsed
 into guessed sections. Mutable legacy objects are never retained in snapshots.
 Run metadata, approval state and duration estimates remain on the legacy objects;
 importing a snapshot does not constitute approval or measured audio timing.
+
+## Immutable timeline snapshot (D018)
+
+`domain/timeline.py` defines frozen `AudioSpan`, `TimelineMedia`, `TimelineClip`,
+`OutputTimebase` and `TimelineRevision` values. `application.timeline.TimelineCompiler`
+consumes an explicit ordered selection of timing/scene IDs and audio variants
+through an injected resolver. `storage.timeline.ProjectTimelineMedia` verifies
+current project selections and retained bytes through D011, D013 and D016.
+
+Audio keeps half-open sample ranges and rational durations/offsets. Video uses
+cumulative nearest-frame boundaries, with ties rounded up and zero-frame clips
+rejected. Versioned JSON and a content-derived ID pin inputs, ordering, timing
+quality, timebase and fit/fill. Reordering moves audio with the image and changes
+only the timeline snapshot. There is no renderer, timeline database table or
+automatic active-timeline selection. See [D018 rules and evidence](../desktop/D018_IMMUTABLE_TIMELINE.md).
 
 ## Consumed inputs and freshness (D005)
 
