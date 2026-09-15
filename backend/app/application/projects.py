@@ -9,6 +9,7 @@ from app.domain.enums import ContentGenre, ContentType, TargetPlatform
 from app.domain.project import Project
 from app.domain.narrative_segment import SectionRevision
 from app.domain.script import ScriptRevision
+from app.application.section_editing import SectionEditingService
 
 
 class ProjectRepositoryPort(Protocol):
@@ -75,6 +76,21 @@ class ProjectSession:
         revision = current.reorder(section_ids)
         self.save_script(revision, expected_active_revision_id=current.id)
         return revision
+
+    def split_section(self, section_id: str, boundary: int, *, expected_active_revision_id: str,
+                      left_title: str | None = None, right_title: str | None = None):
+        return SectionEditingService(self.repository).split(
+            section_id, boundary, expected_active_revision_id=expected_active_revision_id,
+            left_title=left_title, right_title=right_title)
+
+    def merge_sections(self, section_ids: Sequence[str], *, expected_active_revision_id: str,
+                       separator: str = "\n\n", title: str | None = None, role: str | None = None):
+        return SectionEditingService(self.repository).merge(
+            section_ids, expected_active_revision_id=expected_active_revision_id,
+            separator=separator, title=title, role=role)
+
+    def describe_section_edit(self, script_revision_id: str):
+        return SectionEditingService(self.repository).describe(script_revision_id)
 
     def select_section_revision(self, revision_id: str) -> ScriptRevision:
         current = self.active_script

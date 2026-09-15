@@ -62,6 +62,15 @@ into guessed sections. Mutable legacy objects are never retained in snapshots.
 Run metadata, approval state and duration estimates remain on the legacy objects;
 importing a snapshot does not constitute approval or measured audio timing.
 
+### Split and merge topology (D038)
+
+Split/merge create new section identities and one immutable child script snapshot;
+unaffected section revisions remain identical. Exact cross-identity source slices
+and downstream impact are represented by the frozen values in
+`domain/section_edit.py`. The lineage is reconstructed durably from D003's exact
+parent/child snapshots, keeping `SectionRevision.parent_revision_id` reserved for
+edits of one stable identity. See [D038 semantics and evidence](../desktop/D038_SECTION_SPLIT_MERGE.md).
+
 ## Immutable timeline snapshot (D018)
 
 `domain/timeline.py` defines frozen `AudioSpan`, `TimelineMedia`, `TimelineClip`,

@@ -83,6 +83,15 @@ rollback, actual competing processes and abrupt process exit before/after commit
 This task does not publish media, implement jobs, add undo UI or harden untrusted
 filesystem paths; those remain separate desktop tasks.
 
+### Transactional split and merge (D038)
+
+`SectionEditingService` and the `ProjectSession.split_section`, `merge_sections`
+and `describe_section_edit` conveniences reuse `save_and_select`. New section
+identities, the child script and active pointer commit together. Exact retained
+parent/child snapshots encode source lineage without changing schema version 1;
+rollback cannot leave partial identities. Details and validation are in
+[D038 split/merge](../desktop/D038_SECTION_SPLIT_MERGE.md).
+
 ## Durable local job queue (D006)
 
 `app.jobs.repository.JobRepository` binds `jobs.sqlite` to the live D003 session.

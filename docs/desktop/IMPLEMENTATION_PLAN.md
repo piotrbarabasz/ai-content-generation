@@ -989,16 +989,18 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D038 — Transactional section split and merge
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-15)
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Provide small pure/service editing operations without hiding lineage changes.
 - **Scope:** Split at explicit text boundary and merge selected adjacent sections, new identities with retained source lineage, new script snapshot and invalidation metadata.
 - **Out of scope:** Audio splicing, implicit LLM edits and UI widgets.
 - **Dependencies:** D001, D003, D005.
+- **Implementation boundary:** Pure split/merge topology and immutable lineage/impact values plus repository-neutral application commands. Persist no new schema: lineage is durably and unambiguously reconstructed from the exact retained parent/child ScriptRevision snapshots. Split replaces one source at an explicit Python text offset with two new section identities whose exact half-open source slices concatenate to the source. Merge replaces two or more selected adjacent sections in current order with one new identity and retains every complete source revision; separator/title/role policy is explicit. Preserve unaffected revision values and order. Impact metadata identifies retired sources, new D005 text fingerprints, reusable section IDs, section outputs requiring rebuild and project timeline/render. D003 save-and-select is the single transaction and expected active revision is mandatory. No artifact mutation/scheduling, audio splicing, implicit LLM edit, reorder behavior or UI.
 - **Main code areas:** app/application/ section editing and narrow domain helpers; unit/integration tests.
 - **Acceptance criteria:** Split/merge preserves original revisions and unaffected section IDs; invalid selection fails atomically; changed sections require appropriate downstream work.
 - **Test strategy:** Text-boundary and lineage unit tests; SQLite rollback/reopen tests for both commands.
+- **Evidence:** Pure split/merge and lineage/impact values, repository-neutral commands, transactional SQLite persistence, rollback/reopen coverage and architecture notes are implemented on `feat/d038-transactional-section-editing`. Validation: 50 new tests passed; 160 focused tests passed; full backend suite 1421 passed and 11 skipped; `pip check`, compile, plan/link/static checks and `git diff --check` passed. The 11 skips belong to the existing optional D044 suite.
 
 ### D039 — Persist section ordering changes
 
