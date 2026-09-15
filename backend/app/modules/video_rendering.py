@@ -1,4 +1,8 @@
-"""Deterministic video rendering module."""
+"""Legacy deterministic rendering module and reference output contract.
+
+Desktop D019 uses application.video_render.VideoRenderService and the measured
+domain.render_result.RenderedVideo contract for real, fully decoded MP4 bytes.
+"""
 
 from __future__ import annotations
 

@@ -25,6 +25,14 @@ requirements for enabled modules before direct engine execution.
 registration alone is not application wiring. Add adapters at this boundary,
 keeping provider-specific settings/errors out of the core execution engine.
 
+## Desktop MP4 rendering (D019)
+
+`VideoRenderService` uses an injected `RendererPort`. `FFmpegRenderer` returns
+measured `RenderedVideo` evidence after actual MP4 encoding, probing and full
+audio/video decoding; D040 publishes the bytes. The legacy
+`VideoRendererProvider` dictionary contract above remains unchanged. See
+[D019 composition and validation](../desktop/D019_STATIC_IMAGE_MP4.md).
+
 ## TTS
 
 `TTSSynthesisResult` carries actual audio bytes, sample rate, duration, format,

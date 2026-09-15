@@ -739,16 +739,19 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D019 — Real static-image MP4 renderer
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-15)
 - **Milestone:** M6
 - **Priority:** P0
 - **Goal:** Export actual playable video for one timeline snapshot.
 - **Scope:** FFmpeg process adapter with fixed initial profile, derived audio normalization, static frames/simple cuts, progress/cancel, ffprobe/decode validation and immutable publication.
 - **Out of scope:** Transitions, captions, GPU encoding requirement and scene-MP4 caching.
 - **Dependencies:** D007, D018, D040, D044.
+- **Implementation boundary:** Async native FFmpeg/ffprobe adapter with D007-style owned-process cancellation/deadlines and Windows kill-on-close containment. Fixed v1 profile: 1280x720, 25 FPS, H.264/yuv420p, mono AAC/48 kHz. Stage verified immutable inputs under configured D044 work storage; trim original sample ranges before derived resampling and concatenate narration independently of rounded visual cuts. Probe exact video frame count/profile and audio duration, then fully decode both streams before D040 publication. A render-specific index validates explicit D016 choices rather than generated candidate heads/upstream prompts, so a deliberately selected old image can render; late changes retain the result without promotion. Pin timeline payload, all media/checksums and executable identity; preserve legacy mock module contracts. No UI, transitions, captions, GPU requirement or scene-MP4 cache.
 - **Main code areas:** New app/providers/ FFmpeg adapter, app/modules/video_rendering.py result contract and render service; tests.
 - **Acceptance criteria:** Fixture produces MP4 containing decodable audio/video with expected dimensions and duration tolerance; nonzero exit/truncation never publishes success.
 - **Test strategy:** Fake process failure/cancel tests and mandatory synthetic real FFmpeg integration smoke with no AI/network.
+- **Evidence:** [D019 static-image MP4](D019_STATIC_IMAGE_MP4.md): actual 1280x720/25 FPS H.264/AAC MP4 for fit/fill passes frame-count/profile/duration probing and full audio/video decode, and survives project reopen. Synthetic red/blue frames and 220/440 Hz tones verify cuts, reorder, exact source sample ranges and 44.1/48 kHz normalization. A genuinely truncated MP4 fails validation. Nonzero encode/probe/decode, cancellation, source/output corruption and changed executable identity cannot replace prior renders. Explicit older generated images render correctly; late section/image changes and superseding jobs retain results without promotion. Transaction/checksum gates, replay, post-commit cleanup and D044 work-junction rejection PASS.
+- **Validation:** Baseline: 98 passed. Focused suite: 37 passed in 177.09 s; final contract check: 3 passed; final real-media/reopen/junction checks: 3 passed. There are 38 new D019 cases. Full `python -m pytest backend/tests`: 1371 passed, 11 skipped in 696.23 s. Skips are existing D044 Windows symlink privilege cases; no D019 skips. Both acceptance criteria, `git diff --check`, `pip check`, UTF-8/whitespace/EOF, documentation-link and D019-only backlog checks PASS (2026-09-15, Windows, isolated Python 3.11.9, real FFmpeg/ffprobe 8.1.2-full_build). Only D019 status changed; no D020 work, commit, push or merge. Branch `feat/d019-static-image-mp4`.
 
 ### D020 — Project and section editor UI
 
