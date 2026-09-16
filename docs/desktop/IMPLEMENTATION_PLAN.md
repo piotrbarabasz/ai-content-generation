@@ -770,16 +770,18 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D021 — Audio controls and playback UI
 
-- **Status:** Planned
+- **Status:** Partial — automated acceptance PASS; real managed-runtime and audible playback smoke pending (2026-09-16).
 - **Milestone:** M7
 - **Priority:** P0
 - **Goal:** Select a compatible voice and operate section audio without blocking Qt.
 - **Scope:** Catalog/selection controls, short preview, section generation, original/tempo playback and progress/cancel state through services.
 - **Out of scope:** New provider registry/cache, reference-audio intake and silent CPU/provider fallback.
 - **Dependencies:** D010, D011, D020.
+- **Implementation boundary:** Qt audio panel and injected service adapter; reuse catalog/selection/preview contracts, D010 enqueue/D007 async execution and D011 retained original/processed artifacts. Pump asyncio on the SQLite-owning GUI thread; synthesis/preview preparation runs off-thread without project connections. Preview provider effective identity must match the production voice port. No automatic provider/runtime provisioning or fallback. Playback exposes selected retained media, labels incompatibility, and never changes active selections. D002 clean-machine/manual playback evidence remains deferred; D021 manual listening is recorded separately.
 - **Main code areas:** New app/desktop/ audio panel; adapters for app/tts/catalog.py, selection.py and preview.py; UI tests.
 - **Acceptance criteria:** Preview and production use the same effective selection; stale audio is labeled and playable; generation leaves editing responsive.
 - **Test strategy:** Qt tests with fake audio/jobs, existing selection identity tests and manual playback in the packaged spike environment.
+- **Evidence:** [D021 audio controls](D021_AUDIO_CONTROLS.md): docked voice selection, cached preview, responsive D010/D007 generation, cancellation, verified original/processed playback and explicit revision/selection/effective-identity staleness pass. Managed preview now executes the frozen D010 request in the private worker and returns only validated WAV bytes. Focused D021 tests: 22 passed; broader audio/runtime/publication tests passed; full `python -m pytest backend/tests`: 1469 passed, 11 optional tests skipped in 296.24s. Retained D008 runtimes fail current worker-closure verification, so no real Piper inference was claimed; audible playback remains unverified.
 
 ### D022 — Scene and prompt editor UI
 
