@@ -755,16 +755,18 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D020 — Project and section editor UI
 
-- **Status:** Planned
+- **Status:** Completed — PASS with authorized D002 gate deferral (2026-09-16).
 - **Milestone:** M7
 - **Priority:** P0
 - **Goal:** Create/open a project and edit its script through application services.
 - **Scope:** PySide6 project screen, section list/text edit, structured generation action, save and bindings to existing split/merge/reorder commands.
 - **Out of scope:** Implementing editing rules in widgets, audio/scene panels and full undo browser.
 - **Dependencies:** D002, D003, D014, D038, D039.
+- **Authorized boundary (2026-09-16):** User explicitly authorized D020 implementation with the D002 clean-Windows/manual-playback gate deferred. D002 remains Partial; this exception permits editor development and testing, not a claim of packaged release readiness. Generation runs against a frozen session in a background Qt thread; only the GUI thread commits the result through D003 with the captured expected revision. Providers are injected, never imported by widgets.
 - **Main code areas:** New app/desktop/ project/section widgets and presentation adapters; UI tests.
 - **Acceptance criteria:** User can create/open/edit/split/merge/reorder and reopen with stable revisions; errors preserve unsaved text and valid saved state.
 - **Test strategy:** Qt tests with fake application ports plus SQLite-backed user-flow smoke; no provider imports from widgets.
+- **Evidence:** [D020 project editor](D020_PROJECT_EDITOR.md): source Qt create/open, append/edit/save/discard, split/merge/reorder and SQLite reopen pass; dirty drafts survive invalid input, save/open failure and stale tokens. Background structured generation uses an injected provider and conditionally commits on the GUI thread. Native Windows rendering inspected. 12 D020 cases and 86 focused tests passed; full `python -m pytest backend/tests`: 1447 passed, 11 existing optional D044 tests skipped in 283.50s; `pip check`, compile and `git diff --check` passed. D002 remains Partial; D021 not started.
 
 ### D021 — Audio controls and playback UI
 
