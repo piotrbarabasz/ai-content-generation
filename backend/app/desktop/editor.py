@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from app.application.script_generation import ScriptGenerationService
 from app.desktop.audio_panel import AudioPanel
+from app.desktop.scene_panel import ScenePanel
 
 
 class GenerationThread(QThread):
@@ -36,14 +37,18 @@ class GenerationThread(QThread):
 
 
 class ProjectEditor(QMainWindow):
-    def __init__(self, projects, provider=None, audio_factory=None):
+    def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
-        self.audio_factory = audio_factory
+        self.audio_factory, self.scene_factory = audio_factory, scene_factory
         self.audio = AudioPanel(self)
         audio_dock = QDockWidget("Section audio", self)
         audio_dock.setWidget(self.audio)
         self.addDockWidget(Qt.BottomDockWidgetArea, audio_dock)
+        self.visuals = ScenePanel(self)
+        scene_dock = QDockWidget("Scene visuals", self)
+        scene_dock.setWidget(self.visuals)
+        self.addDockWidget(Qt.RightDockWidgetArea, scene_dock)
         self.session = self.snapshot = self.selected_id = None
         self.worker = None
         self.dirty = False
@@ -119,6 +124,8 @@ class ProjectEditor(QMainWindow):
             raise ValueError("Create or open a project first.")
         if clean and self.dirty:
             raise ValueError("Save or discard your draft first.")
+        if self.visuals.prompt_dirty:
+            raise ValueError("Save the scene prompt draft first.")
 
     def _run(self, action):
         try:
@@ -133,13 +140,14 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy:
+            if self.worker is not None or self.dirty or self.audio.busy or self.visuals.prompt_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
             try:
                 snapshot, project = candidate.active_script, candidate.project
                 audio_services = self.audio_factory(candidate) if self.audio_factory else None
+                scene_services = self.scene_factory(candidate) if self.scene_factory else None
             except Exception:
                 candidate.close()
                 raise
@@ -148,6 +156,7 @@ class ProjectEditor(QMainWindow):
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
             self.audio.bind(audio_services, project.language)
+            self.visuals.bind(scene_services)
             self.project_name.setText(project.name)
             self.language.setText(project.language)
             self._refresh()
@@ -176,12 +185,12 @@ class ProjectEditor(QMainWindow):
     def _select(self, row):
         if self.loading:
             return
-        if self.dirty or self.worker is not None:
+        if self.dirty or self.worker is not None or self.visuals.prompt_dirty:
             self.sections.blockSignals(True)
             ids = [s.section_id for s in self.snapshot.sections]
             self.sections.setCurrentRow(ids.index(self.selected_id) if self.selected_id in ids else -1)
             self.sections.blockSignals(False)
-            self.status.setText("Save or discard your draft and finish generation before switching sections.")
+            self.status.setText("Save or discard drafts and finish generation before switching sections.")
             return
         section = self.snapshot.sections[row] if self.snapshot and row >= 0 else None
         self.selected_id = section.section_id if section else None
@@ -191,6 +200,7 @@ class ProjectEditor(QMainWindow):
         self.text.setPlainText(section.text if section else "")
         self.loading = False
         self.audio.select_section(section)
+        self.visuals.select_section(section)
 
     def new_section(self):
         def action():
@@ -306,7 +316,7 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy:
+        if self.worker is not None or self.dirty or self.audio.busy or self.visuals.prompt_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return

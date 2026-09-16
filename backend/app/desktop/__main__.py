@@ -17,9 +17,10 @@ class LocalProjects:
         return ProjectSession.open(path, repository_factory=ProjectRepository)
 
 
-def main(provider=None, audio_factory=None):
+def main(provider=None, audio_factory=None, scene_factory=None):
     application = QApplication(sys.argv)
-    window = ProjectEditor(LocalProjects(), provider=provider, audio_factory=audio_factory)
+    window = ProjectEditor(LocalProjects(), provider=provider, audio_factory=audio_factory,
+                           scene_factory=scene_factory)
     window.show()
     return application.exec()
 
