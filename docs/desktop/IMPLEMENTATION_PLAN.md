@@ -785,7 +785,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D022 — Scene and prompt editor UI
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-16)
 - **Milestone:** M7
 - **Priority:** P0
 - **Goal:** Inspect and change each scene's visual independently.
@@ -795,6 +795,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/desktop/ scene panel and presentation adapters; UI tests.
 - **Acceptance criteria:** Changing one prompt or image does not call TTS or modify another scene; failed generation preserves prior selection and manual text.
 - **Test strategy:** Fake service call assertions, manual prompt preservation and persisted selection round-trip UI smoke.
+- **Evidence:** [D022 scene and prompt editor](D022_SCENE_PROMPT_EDITOR.md): the docked panel displays immutable scene text/visual descriptions and measured timing, edits or regenerates one D015 prompt, imports/generates one D016/D017 image and explicitly selects retained prompt/image variants. Scene-local and real project tests preserve the other scene and retained audio; provider failures preserve manual text and prior selections. Reopen restores prompt/image selections and validated preview bytes. Focused D022/editor tests: 20 passed; D013–D017 compatibility suite: 152 passed; full `python -m pytest backend/tests`: 1477 passed, 11 existing optional tests skipped in 320.82s. Native 720×760 panel rendering inspected; compile, dependency and diff checks passed.
 
 ### D023 — Timeline Lite editor
 
