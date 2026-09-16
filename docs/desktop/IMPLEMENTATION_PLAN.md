@@ -1004,16 +1004,18 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D039 — Persist section ordering changes
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-15)
 - **Milestone:** M1
 - **Priority:** P0
 - **Goal:** Reorder sections atomically while retaining identities and media.
 - **Scope:** Application reorder command with expected revision, complete unique section list, new script order and dependency impact.
 - **Out of scope:** Timeline widgets, rewriting section text and TTS regeneration.
 - **Dependencies:** D001, D003, D005.
+- **Implementation boundary:** A pure complete-permutation result retains every exact SectionRevision value and records the D005 fingerprint of the selected order. A repository-neutral application command requires the active ScriptRevision token, delegates durable save/select to D003 only when order changes, and returns reusable section IDs plus the project outputs (`timeline`, `video_render`) that require rebuilding. No section output is regenerated, invalidated or selected, and no schema, artifact, queue, timeline-widget or text-edit behavior changes.
 - **Main code areas:** app/application/ section order command and repository transaction; tests.
 - **Acceptance criteria:** Reorder A-B-C to C-A-B retains all section/revision identities and existing media; stale/missing/duplicate IDs are rejected.
 - **Test strategy:** Pure order validation and repository expected-version/round-trip tests.
+- **Evidence:** `domain/section_order.py` provides immutable order/fingerprint/impact values and `application/section_ordering.py` provides the mandatory expected-revision command. D003 persists only changed permutations atomically; unchanged order performs no write. SQLite round-trip coverage proves exact revision/media retention, stale/invalid rejection and rollback. Validation: 14 new D039 tests passed; 78 focused tests passed; full backend suite 1435 passed and 11 existing optional D044 tests skipped; `compileall`, `pip check` and `git diff --check` passed. Implemented on `feat/d039-persist-section-order`; no D040 work.
 
 ### D040 — Revision-aware publication gate
 

@@ -71,6 +71,17 @@ and downstream impact are represented by the frozen values in
 parent/child snapshots, keeping `SectionRevision.parent_revision_id` reserved for
 edits of one stable identity. See [D038 semantics and evidence](../desktop/D038_SECTION_SPLIT_MERGE.md).
 
+### Section ordering impact (D039)
+
+`domain/section_order.py` applies one complete permutation to the selected
+section IDs. Its child `ScriptRevision` retains the exact existing
+`SectionRevision` values and only changes their order. `SectionOrderImpact`
+records the prior/current order, the D005 fingerprint of the current ordered ID
+list and every reusable section ID. A changed order requires a new timeline and
+video render; it does not require new audio, scene, prompt or image outputs. An
+identical requested order is a no-write result with no downstream work. See
+[D039 semantics and evidence](../desktop/D039_SECTION_ORDERING.md).
+
 ## Immutable timeline snapshot (D018)
 
 `domain/timeline.py` defines frozen `AudioSpan`, `TimelineMedia`, `TimelineClip`,

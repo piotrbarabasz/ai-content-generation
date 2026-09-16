@@ -10,6 +10,7 @@ from app.domain.project import Project
 from app.domain.narrative_segment import SectionRevision
 from app.domain.script import ScriptRevision
 from app.application.section_editing import SectionEditingService
+from app.application.section_ordering import SectionOrderingService
 
 
 class ProjectRepositoryPort(Protocol):
@@ -71,11 +72,10 @@ class ProjectSession:
         self.save_script(revision, expected_active_revision_id=current.id)
         return revision
 
-    def reorder_sections(self, section_ids: Sequence[str]) -> ScriptRevision:
-        current = self.active_script
-        revision = current.reorder(section_ids)
-        self.save_script(revision, expected_active_revision_id=current.id)
-        return revision
+    def reorder_sections(self, section_ids: Sequence[str], *, expected_active_revision_id: str):
+        return SectionOrderingService(self.repository).reorder(
+            section_ids, expected_active_revision_id=expected_active_revision_id
+        )
 
     def split_section(self, section_id: str, boundary: int, *, expected_active_revision_id: str,
                       left_title: str | None = None, right_title: str | None = None):

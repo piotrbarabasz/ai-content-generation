@@ -41,7 +41,9 @@ def test_create_edit_close_reopen_and_move_workspace(tmp_path):
         session.save_script(abc, expected_active_revision_id=draft.id)
         a, b1, c = abc.sections
         edited = session.edit_section(b1.section_id, text="B2: tekst po zmianie", title="B updated")
-        reordered = session.reorder_sections([c.section_id, b1.section_id, a.section_id])
+        reordered = session.reorder_sections(
+            [c.section_id, b1.section_id, a.section_id], expected_active_revision_id=edited.id
+        ).script
         history = session.repository.script_history()
     # Relocate only a closed workspace; there are no absolute media/root paths in its state.
     moved = tmp_path / "Przeniesiony żółty projekt"

@@ -92,6 +92,17 @@ parent/child snapshots encode source lineage without changing schema version 1;
 rollback cannot leave partial identities. Details and validation are in
 [D038 split/merge](../desktop/D038_SECTION_SPLIT_MERGE.md).
 
+### Transactional section ordering (D039)
+
+`SectionOrderingService` and `ProjectSession.reorder_sections` require the exact
+active script revision ID and pass it to D003's `save_and_select` transaction.
+The command rejects stale, incomplete, duplicate and unknown selections before
+writing. A changed complete permutation inserts one script snapshot and changes
+the active pointer atomically; its existing section and section-revision rows are
+reused unchanged. Repeating the active order performs no write. The service has
+no SQLite, artifact, Qt, HTTP or provider import. See
+[D039 ordering](../desktop/D039_SECTION_ORDERING.md).
+
 ## Durable local job queue (D006)
 
 `app.jobs.repository.JobRepository` binds `jobs.sqlite` to the live D003 session.
