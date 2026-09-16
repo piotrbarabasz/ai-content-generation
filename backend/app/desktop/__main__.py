@@ -17,10 +17,12 @@ class LocalProjects:
         return ProjectSession.open(path, repository_factory=ProjectRepository)
 
 
-def main(provider=None, audio_factory=None, scene_factory=None):
+def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory=None):
+    from app.desktop.timeline_composition import compose_timeline
+
     application = QApplication(sys.argv)
     window = ProjectEditor(LocalProjects(), provider=provider, audio_factory=audio_factory,
-                           scene_factory=scene_factory)
+                           scene_factory=scene_factory, timeline_factory=timeline_factory or compose_timeline)
     window.show()
     return application.exec()
 
