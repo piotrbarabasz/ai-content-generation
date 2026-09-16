@@ -40,7 +40,7 @@ def test_adapter_keeps_database_on_owner_and_stale_output_historical(setup, tmp_
 
     adapter = AudioServices(catalog=_catalog(), production=production, coordinator=coordinator,
                             supervisor=Supervisor(), index=index, store=store, preview_root=tmp_path / "previews",
-                            preview_builder=lambda config: Provider(), providers=("mock",))
+                            preview_builder=lambda config, prepared=None: Provider(), providers=("mock",))
     result = asyncio.run(adapter.generate(section, adapter.choices("pl")[0]))
     assert result == "completed"
     assert prepare_threads and all(t != owner for t in prepare_threads)
@@ -60,7 +60,7 @@ def test_failure_before_worker_claim_cancels_queued_request(setup, tmp_path):
             raise RuntimeError("Worker unavailable")
     adapter = AudioServices(catalog=_catalog(), production=production, coordinator=JobCoordinator(jobs),
                             supervisor=Supervisor(), index=index, store=store, preview_root=tmp_path,
-                            preview_builder=lambda config: Provider(), providers=("mock",))
+                            preview_builder=lambda config, prepared=None: Provider(), providers=("mock",))
     with pytest.raises(RuntimeError, match="unavailable"):
         asyncio.run(adapter.generate(session.active_script.sections[0], adapter.choices("pl")[0]))
     assert jobs.attempts(jobs.jobs()[0].id)[0].status == "canceled"
@@ -71,7 +71,7 @@ def test_cancel_during_preparation_leaves_no_job(setup, tmp_path):
     session, jobs, index, store, outputs, production = setup
     adapter = AudioServices(catalog=_catalog(), production=production, coordinator=JobCoordinator(jobs),
                             supervisor=None, index=index, store=store, preview_root=tmp_path,
-                            preview_builder=lambda config: Provider(), providers=("mock",))
+                            preview_builder=lambda config, prepared=None: Provider(), providers=("mock",))
     adapter.cancel()
     result = asyncio.run(adapter.generate(session.active_script.sections[0], adapter.choices("pl")[0]))
     assert result == "Canceled before enqueue" and not jobs.jobs()

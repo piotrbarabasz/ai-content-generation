@@ -145,7 +145,7 @@ class AudioPanel(QWidget):
 
     def play(self):
         try:
-            self._play(self.services.playback(self.section, self.variant.currentData()))
+            self._play(self.services.playback(self.section, self.variant.currentData(), self.voices.currentData()))
         except Exception as exc:
             self.status.setText(str(exc))
 

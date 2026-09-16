@@ -4,8 +4,11 @@ import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
+from inspect import signature
+import json
 
 from app.application.section_audio import SectionAudioService
+from app.domain.dependencies import DEPENDENCY_METADATA_KEY, DependencyDeclaration, canonical_json
 from app.domain.section_audio import SectionAudio
 from app.tts.assembly import inspect_pcm_wav
 from app.tts.preview import TTSPreviewService
@@ -47,6 +50,7 @@ class AudioServices:
         self.index, self.store = index, store
         self.preview_root, self.preview_builder = preview_root, preview_builder
         self.providers, self.settings = tuple(providers), deepcopy(settings or {})
+        self._prepared_identities = {}
         self.attempt = None
         self.canceled = False
 
@@ -73,6 +77,7 @@ class AudioServices:
 
     def _preview(self, selection, text):
         prepared = self.production.voices.prepare(selection, 120)
+        self._prepared_identities[canonical_json(selection)] = deepcopy(prepared["effective_identity"])
         expected = prepared["effective_identity"]["synthesis"]
         build = self.preview_builder
 
@@ -89,8 +94,17 @@ class AudioServices:
             def __getattr__(self, name):
                 return getattr(self.wrapped, name)
 
+        def provider(config):
+            try:
+                signature(build).bind(config, prepared)
+            except (TypeError, ValueError):
+                wrapped = build(config)
+            else:
+                wrapped = build(config, prepared)
+            return CheckedProvider(wrapped)
+
         preview = TTSPreviewService(catalog=self.catalog, preview_root=self.preview_root,
-                                    provider_builder=lambda config: CheckedProvider(build(config)))
+                                    provider_builder=provider)
         result = preview.synthesize_preview(
             **{key: selection[key] for key in ("provider", "model", "voice", "language")},
             synthesis_settings=selection["settings"], tempo=1.0, text=text)
@@ -102,6 +116,7 @@ class AudioServices:
     async def generate(self, section, choice):
         selection = self.selection(choice)
         prepared = await asyncio.to_thread(self.production.voices.prepare, selection, 120)
+        self._prepared_identities[canonical_json(selection)] = deepcopy(prepared["effective_identity"])
         if self.canceled:
             return "Canceled before enqueue"
         jobs = self.coordinator.repository
@@ -140,7 +155,22 @@ class AudioServices:
         if self.attempt:
             self.coordinator.cancel(self.attempt.id)
 
-    def playback(self, section, variant):
+    def _selection_stale(self, manifest, choice):
+        if choice is None:
+            return False
+        payload = manifest.metadata.get(DEPENDENCY_METADATA_KEY)
+        if payload is None:
+            return True
+        declaration = DependencyDeclaration.from_payload(payload)
+        settings = json.loads(declaration.request.settings_json)
+        selection = self.selection(choice)
+        if canonical_json(settings.get("selection", {})) != canonical_json(selection):
+            return True
+        current_identity = self._prepared_identities.get(canonical_json(selection))
+        return (current_identity is not None
+                and declaration.request.effective_identity_json != canonical_json(current_identity))
+
+    def playback(self, section, variant, choice=None):
         if variant not in ("original", "processed"):
             raise ValueError("Choose original or processed audio explicitly.")
         heads = self.index.selected()
@@ -158,8 +188,14 @@ class AudioServices:
                 measured.to_payload() != manifest.metadata["section_audio"]["audio_parameters"]):
             raise ValueError("Retained audio failed checksum or measurement validation.")
         stale = audio.revision_id != section.id
+        raw_manifest = manifest
         if variant == "processed":
             derivative = manifest.metadata["audio_derivative"]
             stale |= derivative["raw_artifact_id"] != heads.get(f"section:{section.section_id}:audio:raw")
             stale |= derivative["processor_version"] != TEMPO_PROCESSOR_VERSION
+            raw_id = derivative["raw_artifact_id"]
+            raw_manifest = next((item for item in self.index.manifests() if item.artifact_id == raw_id), None)
+            stale |= raw_manifest is None
+        if raw_manifest is not None:
+            stale |= self._selection_stale(raw_manifest, choice)
         return PlaybackAudio(payload, stale, f"{variant}: {'STALE — retained recording' if stale else 'current revision'}")

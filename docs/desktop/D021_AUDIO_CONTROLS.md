@@ -15,10 +15,11 @@ The panel provides preview, single-section synthesis, progress, cancellation,
 original/tempo-processed playback and stop. Original and processed are explicit
 choices; missing processed audio never falls back to raw. D011 derivatives are
 played from existing selections; this task does not add a derivative scheduler.
-Selected retained recordings whose section revision changed are labeled STALE
-and remain playable. Processed audio is also stale when its raw selection or
-processor version changed. The label "current revision" describes the editorial
-revision, not a claim that every possible future voice/setting dependency is fresh.
+Selected retained recordings whose section revision or effective voice selection
+changed are labeled STALE and remain playable. Processed audio is also stale when
+its raw selection or processor version changed. Once the current managed voice has
+been prepared, its effective runtime/model identity is compared with the retained
+request identity as well.
 Checksums and full PCM measurements are verified before playback. Playback never
 modifies publication heads or historical artifacts.
 
@@ -50,8 +51,8 @@ There is no hidden mock, download or CPU/provider fallback.
 
 `app.desktop.audio_composition.compose_audio` constructs the existing D006,
 D010, D040 and D007 services for an open session. Product composition supplies
-catalog, voice/output adapters, trusted worker launch, configured preview root,
-preview provider builder, enabled provider IDs and optional synthesis settings:
+catalog, managed voice/output adapter, trusted worker launch, configured preview
+root, enabled provider IDs and optional synthesis settings:
 
 ```python
 from app.desktop.__main__ import main
@@ -61,24 +62,33 @@ from app.desktop.audio_composition import compose_audio
 def audio_factory(session):
     return compose_audio(
         session, catalog=catalog, voices=voices, outputs=outputs, launch=launch,
-        preview_root=preview_root, preview_builder=preview_builder,
+        preview_root=preview_root,
         providers=("piper",), settings={"piper": {"device": "cpu"}},
     )
 
 main(audio_factory=audio_factory)
 ```
 
-`voices` and `outputs` may be the same D010 `ManagedSectionAudio` instance.
-The preview builder must provide the same effective provider implementation and
-bound execution time; private runtime packages must not be assumed present in
-the desktop interpreter. A deployed managed preview composition is not silently
-invented here. The composition function adds no provider implementation or cache.
+`voices` and `outputs` may be the same D010 `ManagedSectionAudio` instance. The
+default preview adapter freezes that instance's prepared selection, sends a
+single-section D010 request through D007, validates the resulting workspace and
+then hands the WAV to the existing preview cache. Piper, ONNX Runtime and NumPy
+remain inside the private interpreter. Tests may explicitly inject a preview
+builder; there is no provider fallback or automatic provisioning.
 
 ## Validation evidence
 
-Validation is in progress. Tests use fake audio/providers, actual Qt events and
-async subprocess I/O, and actual temporary D003/D006/D040 databases with synthetic
-PCM. No remote API, private recording or real model inference is used.
+Automated D021 tests use fake audio/providers, actual Qt events and async
+subprocess I/O, and actual temporary D003/D006/D040 databases with synthetic PCM.
+The managed preview adapter has a focused contract test proving that it freezes a
+D010 request and only returns coordinator-validated WAV bytes. The full suite on
+2026-09-16 passed: 1469 passed, 11 optional tests skipped in 296.24 seconds.
+
+A real managed smoke was attempted against the retained D008/D009 artifacts in
+`.tmp`. D009's Gosia model is present, but every retained D008 runtime is rejected
+by current integrity verification because its worker source closure predates the
+current application revision (for example, `speech_boundary.py` is absent). No
+runtime was provisioned automatically, so real inference remains unverified.
 
 Windows native playback probe (2026-09-16, CPython 3.11.9, Qt/PySide6 6.11.2):
 muted QMediaPlayer/QBuffer playback decoded a synthetic mono PCM WAV at 8000 Hz,

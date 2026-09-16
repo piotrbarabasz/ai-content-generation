@@ -47,8 +47,8 @@ class Services:
     def progress(self):
         return "synthesis: 1/3"
 
-    def playback(self, section, variant):
-        self.calls.append(("playback", variant, section))
+    def playback(self, section, variant, choice):
+        self.calls.append(("playback", variant, section, choice))
         return PlaybackAudio(_wav(), True, "STALE — retained recording")
 
 
