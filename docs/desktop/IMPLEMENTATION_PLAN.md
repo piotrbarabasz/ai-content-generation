@@ -799,7 +799,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D023 — Timeline Lite editor
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-16)
 - **Milestone:** M7
 - **Priority:** P0
 - **Goal:** Expose a bounded timeline without a multitrack editor.
@@ -809,6 +809,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/desktop/ timeline widgets and application editing adapters; UI tests.
 - **Acceptance criteria:** Displayed durations/order match the persisted timeline; invalid bounds fail without corrupting it; clip moves keep their intended audio reference.
 - **Test strategy:** Qt command tests and timeline round trips using known sample boundaries and changed selection/order.
+- **Implementation boundary:** One docked paired visual/narration track is edited through a provider-free application service. Immutable parent-linked D004 artifact snapshots retain every valid D018 revision and reject stale event tokens. New clips resolve explicit current retained selections; reorder, removal and range edits only rebuild existing pinned media with D018 exact cumulative offsets/frame rounding. Source cuts are limited to verified D012 measured sentence edges in the D013 scene span; approximate or missing maps expose only existing endpoints. No renderer, proxy, keyframes, multitrack controls, generation, providers or schema were added.
+- **Evidence:** [D023 Timeline Lite](D023_TIMELINE_LITE.md): actual SQLite/files and Qt command tests prove displayed saved order/offset/duration values, reopen, project switch/rebind and unavailable states. Invalid arbitrary, reversed, empty and technical-chunk bounds do not create a new event; measured trimming/restoration round-trips. Reorder retains the exact pinned image/audio pair after active selection changes, with no provider calls or media-byte changes. Tests also cover mixed sample rates, stale/ABA event tokens, subset removal, corrupt history, failed publication and post-commit cleanup reconciliation.
+- **Validation:** Focused `python -m pytest backend/tests/unit/test_timeline_editing.py backend/tests/integration/test_timeline_editing.py backend/tests/integration/test_timeline_panel.py -q --tb=short`: 15 passed in 15.06 s. Broader D018/D021/D022 compatibility suite: 102 passed in 26.70 s. Full `python -m pytest backend/tests`: 1492 passed, 11 existing optional tests skipped in 308.05 s (Windows, isolated Python 3.11.9). `git diff --check`, scope review and secret/cache/path checks PASS. D021's separately documented managed-runtime/audible-playback smoke remains outside D023.
 
 ### D024 — Selective regeneration composition
 

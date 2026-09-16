@@ -97,6 +97,12 @@ quality, timebase and fit/fill. Reordering moves audio with the image and change
 only the timeline snapshot. There is no renderer, timeline database table or
 automatic active-timeline selection. See [D018 rules and evidence](../desktop/D018_IMMUTABLE_TIMELINE.md).
 
+D023 adds explicit editing through `application.timeline_editing` and immutable
+parent-linked snapshots in `storage.timeline_edits`. The final validated event
+selects the current timeline; earlier revisions remain retained. The Qt Timeline
+Lite panel edits pinned paired visual/audio clips with contiguous offsets and
+measured sentence-boundary controls. See [D023 behavior and limits](../desktop/D023_TIMELINE_LITE.md).
+
 ## Consumed inputs and freshness (D005)
 
 `domain/dependencies.py` supplies immutable `InputEdge`, `RequestFingerprint` and

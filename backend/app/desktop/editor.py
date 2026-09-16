@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from app.application.script_generation import ScriptGenerationService
 from app.desktop.audio_panel import AudioPanel
 from app.desktop.scene_panel import ScenePanel
+from app.desktop.timeline_panel import TimelinePanel
 
 
 class GenerationThread(QThread):
@@ -37,10 +38,15 @@ class GenerationThread(QThread):
 
 
 class ProjectEditor(QMainWindow):
-    def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None):
+    def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
+        self.timeline_factory = timeline_factory
+        self.timeline = TimelinePanel(self)
+        timeline_dock = QDockWidget("Timeline Lite", self)
+        timeline_dock.setWidget(self.timeline)
+        self.addDockWidget(Qt.BottomDockWidgetArea, timeline_dock)
         self.audio = AudioPanel(self)
         audio_dock = QDockWidget("Section audio", self)
         audio_dock.setWidget(self.audio)
@@ -148,6 +154,7 @@ class ProjectEditor(QMainWindow):
                 snapshot, project = candidate.active_script, candidate.project
                 audio_services = self.audio_factory(candidate) if self.audio_factory else None
                 scene_services = self.scene_factory(candidate) if self.scene_factory else None
+                timeline_services = self.timeline_factory(candidate) if self.timeline_factory else None
             except Exception:
                 candidate.close()
                 raise
@@ -157,6 +164,7 @@ class ProjectEditor(QMainWindow):
             self.session, self.snapshot = candidate, snapshot
             self.audio.bind(audio_services, project.language)
             self.visuals.bind(scene_services)
+            self.timeline.bind(timeline_services)
             self.project_name.setText(project.name)
             self.language.setText(project.language)
             self._refresh()
