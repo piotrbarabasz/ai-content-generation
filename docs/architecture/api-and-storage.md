@@ -26,6 +26,13 @@ route functions directly; newer TTS tests also exercise the ASGI request boundar
 
 ## Editable project persistence (D003)
 
+The D020 source editor (`python -m app.desktop`) composes `ProjectSession` with
+the SQLite repository at its entrypoint. Widgets call D014/D038/D039 services,
+preserve drafts on failures and pass expected revision tokens. Structured
+generation runs on a frozen session without SQLite in a Qt background thread;
+the GUI thread commits its result conditionally. Providers are injected and
+optional. See [D020 editor and gate exception](../desktop/D020_PROJECT_EDITOR.md).
+
 `app.application.projects.ProjectSession` provides create/open, section editing,
 reorder and retained-revision selection through injected repository/factory ports.
 It has no SQLite, Qt, HTTP or provider imports. Composition supplies
