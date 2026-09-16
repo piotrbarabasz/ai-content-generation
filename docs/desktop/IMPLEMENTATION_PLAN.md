@@ -777,6 +777,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Scope:** Catalog/selection controls, short preview, section generation, original/tempo playback and progress/cancel state through services.
 - **Out of scope:** New provider registry/cache, reference-audio intake and silent CPU/provider fallback.
 - **Dependencies:** D010, D011, D020.
+- **Implementation boundary:** Qt audio panel and injected service adapter; reuse catalog/selection/preview contracts, D010 enqueue/D007 async execution and D011 retained original/processed artifacts. Pump asyncio on the SQLite-owning GUI thread; synthesis/preview preparation runs off-thread without project connections. Preview provider effective identity must match the production voice port. No automatic provider/runtime provisioning or fallback. Playback exposes selected retained media, labels incompatibility, and never changes active selections. D002 clean-machine/manual playback evidence remains deferred; D021 manual listening is recorded separately.
 - **Main code areas:** New app/desktop/ audio panel; adapters for app/tts/catalog.py, selection.py and preview.py; UI tests.
 - **Acceptance criteria:** Preview and production use the same effective selection; stale audio is labeled and playable; generation leaves editing responsive.
 - **Test strategy:** Qt tests with fake audio/jobs, existing selection identity tests and manual playback in the packaged spike environment.

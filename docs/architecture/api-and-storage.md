@@ -203,6 +203,14 @@ See [D009 behavior, smoke and limitations](../desktop/D009_PIPER_VOICE_DOWNLOAD.
 
 ## Single-section raw audio (D010)
 
+The D021 Qt audio dock connects through an explicitly injected `AudioServices`
+adapter and `compose_audio` factory. Canonical selection/preview are shared;
+effective preview/provider identity mismatch fails closed. A timer advances D007
+async process work on the SQLite-owning coordinator thread, while preview and
+preparation run without database connections in worker threads. Retained raw and
+D011 processed recordings are checksum-validated and labeled when incompatible
+with the current section revision. See [D021 controls and validation limits](../desktop/D021_AUDIO_CONTROLS.md).
+
 `application.section_audio.SectionAudioService` enqueues one immutable section
 through D040, using injected voice and output ports. `ManagedSectionAudio` verifies
 the approved runtime and installed D009 voice, reuses catalog selection/effective

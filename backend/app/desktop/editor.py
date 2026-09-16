@@ -4,10 +4,11 @@ from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget, QDockWidget,
 )
 
 from app.application.script_generation import ScriptGenerationService
+from app.desktop.audio_panel import AudioPanel
 
 
 class GenerationThread(QThread):
@@ -35,9 +36,14 @@ class GenerationThread(QThread):
 
 
 class ProjectEditor(QMainWindow):
-    def __init__(self, projects, provider=None):
+    def __init__(self, projects, provider=None, audio_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
+        self.audio_factory = audio_factory
+        self.audio = AudioPanel(self)
+        audio_dock = QDockWidget("Section audio", self)
+        audio_dock.setWidget(self.audio)
+        self.addDockWidget(Qt.BottomDockWidgetArea, audio_dock)
         self.session = self.snapshot = self.selected_id = None
         self.worker = None
         self.dirty = False
@@ -104,6 +110,7 @@ class ProjectEditor(QMainWindow):
     def _dirty(self):
         if not self.loading:
             self.dirty = True
+            self.audio.set_draft(True)
 
     def _ready(self, clean=True):
         if self.worker is not None:
@@ -126,18 +133,21 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty:
+            if self.worker is not None or self.dirty or self.audio.busy:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
             try:
                 snapshot, project = candidate.active_script, candidate.project
+                audio_services = self.audio_factory(candidate) if self.audio_factory else None
             except Exception:
                 candidate.close()
                 raise
             if self.session:
+                self.audio.stop()
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
+            self.audio.bind(audio_services, project.language)
             self.project_name.setText(project.name)
             self.language.setText(project.language)
             self._refresh()
@@ -180,6 +190,7 @@ class ProjectEditor(QMainWindow):
         self.role.setText(section.role if section else "body")
         self.text.setPlainText(section.text if section else "")
         self.loading = False
+        self.audio.select_section(section)
 
     def new_section(self):
         def action():
@@ -295,11 +306,12 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty:
+        if self.worker is not None or self.dirty or self.audio.busy:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return
         if self.session:
+            self.audio.stop()
             self.session.close()
             self.session = None
         event.accept()
