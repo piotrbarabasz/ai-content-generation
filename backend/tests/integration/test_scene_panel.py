@@ -129,6 +129,8 @@ def test_failed_generation_preserves_manual_text_and_selection(panel):
 
 def test_import_generation_and_variant_selection_are_scene_local(panel, monkeypatch):
     widget, services = panel
+    changes = []
+    widget.media_changed.connect(lambda: changes.append(True))
     other = services.values[1]
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: ("chosen.png", ""))
     QTest.mouseClick(widget.buttons["Import image"], Qt.LeftButton)
@@ -141,6 +143,7 @@ def test_import_generation_and_variant_selection_are_scene_local(panel, monkeypa
     QTest.mouseClick(widget.buttons["Select image"], Qt.LeftButton)
     assert services.calls[-1][0:2] == ("select_image", "scene-1")
     assert services.values[1] == other
+    assert len(changes) == 3
 
 
 def test_editor_wires_scene_factory_and_preserves_unsaved_prompt(qt, tmp_path):

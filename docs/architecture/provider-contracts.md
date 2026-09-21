@@ -33,6 +33,15 @@ audio/video decoding; D040 publishes the bytes. The legacy
 `VideoRendererProvider` dictionary contract above remains unchanged. See
 [D019 composition and validation](../desktop/D019_STATIC_IMAGE_MP4.md).
 
+## Timeline preview (D046)
+
+`PreviewService` is UI- and provider-independent. It uses the exact active D018
+snapshot, a renderer identity-bound cache key and a media/cache port. The FFmpeg
+adapter's proxy profile shares D019's source trimming, fit/fill, cancellation,
+probe and full-decode path at 640×360; final export remains 1280×720. The Qt
+adapter never plays a result after its timeline or selected media becomes stale.
+See [D046 preview behavior and evidence](../desktop/D046_SCENE_FILM_PREVIEW.md).
+
 ## TTS
 
 `TTSSynthesisResult` carries actual audio bytes, sample rate, duration, format,

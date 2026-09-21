@@ -1,9 +1,7 @@
 """D046 snapshot/cache identity and stale-result coordination."""
 
 import asyncio
-from fractions import Fraction
 from hashlib import sha256
-from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -57,6 +55,19 @@ class Renderer:
                              timeline.video_duration, timeline.duration)
 
 
+class CancelingRenderer(Renderer):
+    def __init__(self):
+        super().__init__()
+        self.service = None
+
+    async def render(self, timeline, root, *, canceled, progress):
+        self.calls += 1
+        self.service.cancel()
+        if canceled():
+            raise RuntimeError("fixture render canceled")
+        raise AssertionError("Cancellation callback was not forwarded to the renderer.")
+
+
 def test_cache_key_pins_full_timeline_and_renderer_identity():
     first = compile_values(media())
     changed = compile_values(media("b"))
@@ -99,6 +110,21 @@ def test_changed_selected_media_rejects_cache_hit(tmp_path):
     else:
         raise AssertionError("Changed media must invalidate the cached preview.")
     assert renderer.calls == 1
+
+
+def test_cancel_reaches_renderer_and_does_not_publish_cache(tmp_path):
+    timeline = compile_values(media())
+    storage = PreviewMedia(tmp_path)
+    renderer = CancelingRenderer()
+    service = PreviewService(lambda: SimpleNamespace(timeline=timeline), storage, renderer)
+    renderer.service = service
+    try:
+        asyncio.run(service.proxy(timeline))
+    except RuntimeError as exc:
+        assert "canceled" in str(exc)
+    else:
+        raise AssertionError("Canceled render must not succeed.")
+    assert renderer.calls == 1 and storage.cache == {}
 
 
 def test_application_import_does_not_load_concrete_media_storage_or_qt():

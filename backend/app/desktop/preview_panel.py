@@ -63,14 +63,14 @@ class PreviewPanel(QWidget):
     def bind(self, services):
         if self.busy:
             raise ValueError("Cancel preview rendering before switching projects.")
-        self.stop()
+        self.clear()
         self.services, self.edit = services, None
         self.scene_choice.clear()
         self.status.setText("Preview services are not configured." if services is None else "Save a timeline to preview it.")
         self._enable()
 
     def timeline_changed(self, edit):
-        self.stop()
+        self.clear()
         self.edit = edit
         self.scene_choice.clear()
         if edit is not None:
@@ -87,6 +87,7 @@ class PreviewPanel(QWidget):
         self._enable()
 
     def preview_scene(self):
+        self.clear()
         try:
             result = self.services.scene(self.edit.timeline, self.scene_choice.currentData())
             pixmap = QPixmap(str(result.image_path))
@@ -104,6 +105,7 @@ class PreviewPanel(QWidget):
     def preview_film(self):
         if self.busy or self.services is None or self.edit is None:
             return
+        self.clear()
         self.loop = asyncio.new_event_loop()
         self.task = self.loop.create_task(self.services.proxy(self.edit.timeline, self._render_progress))
         self._progress = "Starting proxy render"
@@ -124,6 +126,7 @@ class PreviewPanel(QWidget):
         try:
             result = self.task.result()
             if not result.current:
+                self.clear()
                 self.status.setText("Finished proxy is stale and will not be played.")
             else:
                 self.image.hide()
@@ -148,3 +151,10 @@ class PreviewPanel(QWidget):
     def stop(self):
         self.player.stop()
 
+    def clear(self):
+        self.player.stop()
+        self.player.setSource(QUrl())
+        self.video.hide()
+        self.image.show()
+        self.image.setPixmap(QPixmap())
+        self.image.setText("Select a saved timeline to preview.")

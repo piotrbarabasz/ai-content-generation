@@ -1112,7 +1112,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D046 — Scene and whole-film preview
 
-- **Status:** Planned
+- **Status:** Completed — PASS with existing D002 clean-Windows/manual-observation gate deferred (2026-09-21)
 - **Milestone:** M6
 - **Priority:** P0
 - **Goal:** Inspect the same selected media and timeline that will be exported.
@@ -1122,6 +1122,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/application/ preview service, renderer profile and app/desktop/ playback adapter; tests.
 - **Acceptance criteria:** Proxy references the exact timeline snapshot; changing one image invalidates the proxy without TTS calls; obsolete preview never presents itself as current.
 - **Test strategy:** Snapshot/cache/call-count tests, audio-range checks and packaged Qt playback smoke for the generated proxy.
+- **Implementation boundary:** Provider-free preview coordination consumes the active D023 timeline and reuses D019 input staging and FFmpeg semantics. Scene preview is normalized PNG plus an exact sample-trimmed PCM WAV, not a scene MP4. Whole-film proxy is fixed 640×360/25 FPS H.264/AAC, checksum-cached by the full canonical timeline and executable identity, cancellable through the owned media process, and fully probed/decoded. Timeline/image changes are rechecked before cache use and after rendering; the Qt adapter refuses stale playback. Cache files are regenerable project-local data and do not alter retained artifacts, selections or TTS. D019 was narrowly reconciled with D023 verified sentence-range trims so preview and final export accept the same timeline.
+- **Evidence:** [D046 scene and whole-film preview](D046_SCENE_FILM_PREVIEW.md): exact scene WAV range, shared trimmed proxy/final export, cache reuse/corruption recovery, cancellation, image-change invalidation with unchanged TTS call count, late-result suppression and Qt command wiring pass over real SQLite/artifacts and deterministic fakes. A real 640×360 proxy from selected samples `[12000, 84000)` was encoded/probed/fully decoded, then the existing standalone D002 Qt 6.11.2 bundle decoded 38 video frames and 72,704 audio frames and reached end-of-media at 1,520 ms with Python/Qt environment variables removed and System32-only `PATH`.
+- **Validation:** Focused preview/Qt/scene suite: 15 passed. Full `python -m pytest backend/tests`: 1502 passed, 11 existing optional tests skipped (1513 collected). Real packaged smoke, `python -m compileall -q backend/app packaging/d046`, `pip check` and `git diff --check`: PASS on Windows / CPython 3.11.9 / PySide6 6.11.2 / FFmpeg 8.1.2. The smoke is automated and muted; D002 remains Partial because clean-Windows and human picture/sound observation are still pending, and D046 does not claim that release gate.
 
 ### D047 — Reference-aware storage cleanup
 

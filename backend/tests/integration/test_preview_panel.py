@@ -54,6 +54,8 @@ def test_proxy_control_only_loads_current_result(qt, tmp_path, current):
         if current:
             assert panel.player.source().toLocalFile().replace("\\", "/") == str(path).replace("\\", "/")
             assert "current film proxy" in panel.status.text()
+            panel.timeline_changed(SimpleNamespace(timeline=timeline))
+            assert panel.player.source().isEmpty() and panel.video.isHidden()
         else:
             assert panel.player.source().isEmpty()
             assert "stale" in panel.status.text()
