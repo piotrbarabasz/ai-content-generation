@@ -12,6 +12,7 @@ from app.desktop.audio_panel import AudioPanel
 from app.desktop.scene_panel import ScenePanel
 from app.desktop.timeline_panel import TimelinePanel
 from app.desktop.preview_panel import PreviewPanel
+from app.desktop.regeneration_panel import RegenerationPanel
 
 
 class GenerationThread(QThread):
@@ -40,12 +41,20 @@ class GenerationThread(QThread):
 
 class ProjectEditor(QMainWindow):
     def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
-                 preview_factory=None):
+                 preview_factory=None, regeneration_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
         self.timeline_factory = timeline_factory
         self.preview_factory = preview_factory
+        self.regeneration_factory = regeneration_factory
+        self.regeneration = RegenerationPanel(self)
+        self.regeneration.before_start = self._regeneration_ready
+        regeneration_dock = QDockWidget("Selective regeneration", self)
+        regeneration_dock.setWidget(self.regeneration)
+        self.addDockWidget(Qt.BottomDockWidgetArea, regeneration_dock)
+        self.regeneration.busy_changed.connect(self._regenerating)
+        self.regeneration.finished.connect(self._regenerated)
         self.timeline = TimelinePanel(self)
         timeline_dock = QDockWidget("Timeline Lite", self)
         timeline_dock.setWidget(self.timeline)
@@ -133,6 +142,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.regeneration.busy:
+            raise ValueError("Wait for regeneration cleanup.")
         if self.worker is not None:
             raise ValueError("Wait for generation to finish.")
         if self.session is None:
@@ -155,7 +166,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.visuals.prompt_dirty:
+            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.prompt_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -201,7 +212,35 @@ class ProjectEditor(QMainWindow):
         self.loading = False
         self.dirty = False
         self._select(row)
+        self._bind_regeneration()
         self.status.setText("Saved.")
+
+    def _bind_regeneration(self):
+        if self.regeneration_factory and self.session and not self.regeneration.busy:
+            def selection(section):
+                choice = self.audio.voices.currentData()
+                if choice is None:
+                    raise ValueError("Choose an audio voice before rebuilding narration.")
+                return self.audio.services.selection(choice)
+            self.regeneration.bind(self.regeneration_factory(self.session, self.audio.services,
+                self.visuals.services, self.timeline.services, self.preview.services, selection))
+
+    def _regenerating(self, busy):
+        for widget in (self.centralWidget(), self.audio, self.visuals, self.timeline, self.preview):
+            widget.setEnabled(not busy)
+        if busy:
+            self.audio.stop()
+            self.preview.stop()
+
+    def _regeneration_ready(self):
+        self._ready()
+        if self.audio.busy or self.preview.busy:
+            raise ValueError("Finish audio or preview work before regeneration.")
+
+    def _regenerated(self):
+        if self.timeline.services:
+            self.timeline.run(self.timeline.refresh)
+        self._run(self._bind_regeneration)
 
     def _select(self, row):
         if self.loading:
@@ -337,7 +376,7 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.visuals.prompt_dirty:
+        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.prompt_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return

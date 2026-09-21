@@ -50,6 +50,12 @@ durable jobs and editing services before optional HTTP integration. The existing
 engine remains a reusable batch executor; the application dependency planner owns
 selective regeneration against project revisions.
 
+`application.regeneration.RegenerationService` now provides that bounded desktop
+operation. `storage.regeneration.ProjectRegeneration` composes existing stage
+services, rechecks retained requests/bytes, retries matching D006 jobs and reports
+review gates for owned selections. The desktop dock binds rebuild/cancel and
+per-output outcomes. See [D024 selective regeneration](../desktop/D024_SELECTIVE_REGENERATION.md).
+
 ## Useful offline evidence
 
 Run `python -m pytest backend/tests/integration/test_long_form_workflow.py` to

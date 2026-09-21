@@ -825,6 +825,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** New app/application/ regeneration composition and desktop action binding; integration tests.
 - **Acceptance criteria:** After editing B in A-B-C, only B's actual dependent generations run; A/C checksums remain; canceled/crashed work resumes safely; late B1 output never selects over B2.
 - **Test strategy:** Offline end-to-end call-count, checksum, concurrent-edit and crash/restart scenarios over real SQLite/files with fake providers.
+- **Implementation boundary:** Compose existing section-audio, scene proposal/timing, prompt, image, pinned-timeline, proxy and final-render services. Rebuild-all evaluates configured outputs; a single target executes only its prerequisite closure. Resume re-evaluates retained outputs and retries the latest matching D006 job, retaining D010 chunk workspaces. A new scene proposal requires explicit D013 acceptance; imported/selected images, manual prompts and D023 timeline edits are preserved and incompatible choices report review-required. No automatic scene acceptance, timeline replacement, provider installation or new generation stage is authorized by rebuild.
 
 ### D025 — Installable MVP acceptance
 

@@ -38,9 +38,7 @@ class ImageGenerationService:
             raise ValueError("Provider must declare image generation capabilities.")
         return capabilities
 
-    def enqueue(self, prompt_revision_id, *, width, height, seed=0, format="PNG", negative_prompt="", force=False):
-        if type(force) is not bool:
-            raise ValueError("Forced image regeneration must be explicit.")
+    def prepare_request(self, prompt_revision_id, *, width, height, seed=0, format="PNG", negative_prompt=""):
         prepared = self.artifacts.prepare(prompt_revision_id)
         request = ImageGenerationRequest(prepared["prompt"], width, height, seed, format, negative_prompt)
         capabilities = self._capabilities()
@@ -50,6 +48,13 @@ class ImageGenerationService:
         fingerprint = RequestFingerprint.create(OPERATION, "1", inputs=[edge],
             settings={"request": request.to_payload(), "prompt_revision_id": prompt_revision_id,
                       "prompt_selection_id": prepared["prompt_selection_id"]}, effective_identity=capabilities.to_payload())
+        return prepared, fingerprint
+
+    def enqueue(self, prompt_revision_id, *, width, height, seed=0, format="PNG", negative_prompt="", force=False):
+        if type(force) is not bool:
+            raise ValueError("Forced image regeneration must be explicit.")
+        prepared, fingerprint = self.prepare_request(prompt_revision_id, width=width, height=height,
+                                                     seed=seed, format=format, negative_prompt=negative_prompt)
         if not force:
             cached = self.artifacts.cached(prepared, fingerprint)
             if cached is not None:
