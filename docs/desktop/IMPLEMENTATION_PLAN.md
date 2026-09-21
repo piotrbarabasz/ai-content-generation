@@ -1046,7 +1046,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D041 — Windows MVP installer
 
-- **Status:** Planned
+- **Status:** Partial — implementation and developer-host installer lifecycle PASS; clean-Windows media/private-worker and signed-release evidence pending (2026-09-21)
 - **Milestone:** M9
 - **Priority:** P0
 - **Goal:** Package the already working desktop and its managed CPU entry path.
@@ -1056,6 +1056,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** Packaging/installer configuration, pyproject.toml dependency groups and desktop composition; Windows smoke assets.
 - **Acceptance criteria:** Installed app locates bundled media and private runtime without PATH; launch/uninstall does not delete projects; release records provenance/licenses and signing outcome.
 - **Test strategy:** Clean Windows install/launch/media/worker/uninstall smoke, Unicode and non-admin paths; inspect package for tests, secrets, caches and unnecessary AI weights.
+- **Implementation boundary:** A pinned Nuitka/PySide6 standalone bundle is wrapped by a per-user Inno Setup installer. Exact FFmpeg shared binaries and Qt multimedia plugins are app-local; packaged discovery never falls back to PATH. Mutable runtimes/models/cache/logs use `%LOCALAPPDATA%\AI Content Studio`, projects remain user-selected and uninstall owns no user-data path. Product composition uses an already active D008 Piper CPU runtime without implicit provisioning or download. Core/desktop/API/dev dependencies are separated; manifests audit files, provenance, notices and signing outcome, and unsigned output is explicitly ineligible for release.
+- **Evidence:** [D041 Windows installer](D041_WINDOWS_INSTALLER.md): pinned component lock, bundle audit, per-user installer, signing recipe and automated lifecycle harness are implemented. On the developer Windows host the installed GUI launched from a Unicode/space path with System32-only PATH, resolved and executed bundled FFmpeg/ffprobe 8.1.2, included both Qt multimedia backends, removed program files on uninstall and preserved an external project sentinel. The final 91-file standalone audit contains no FastAPI/pytest payload, tests, secrets, caches or AI weights.
+- **Validation:** Focused release/desktop/media/runtime suites: 87 passed. Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1527 passed, 11 existing optional tests skipped in 383.54 s. Real unsigned standalone build and Inno Setup 6.7.3 installer build PASS; final install-launch-media-uninstall lifecycle PASS in `.tmp/d041-installer-smoke-v4`. `compileall`, `pip check` and `git diff --check` PASS. Signing status is truthfully `unsigned`/not release-eligible. The required clean-Windows human playback, provisioned private-worker and signed/timestamped release checks remain NOT RUN, so D041 and inherited D002/D008 release gates stay Partial.
 
 ### D042 — Project schema migration and backup
 

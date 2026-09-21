@@ -8,14 +8,18 @@ version = "0.1.0"
 description = "Backend foundation for the AI Content Studio MVP."
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115",
   "pydantic>=2.7",
-  "pytest>=8.0",
   "Pillow>=12.3,<13",
 ]
 
 [project.optional-dependencies]
 desktop = ["PySide6==6.11.2"]
+api = ["fastapi>=0.115"]
+dev = [
+  "fastapi>=0.115",
+  "PySide6==6.11.2",
+  "pytest>=8.0",
+]
 # Keep the real local TTS runtime out of the default application and CI install.
 # Select torch and torchaudio separately for the target CPU/CUDA device; see
 # docs/tts/CHATTERBOX_SETUP.md for the validated CUDA 12.4 combination.
@@ -34,6 +38,9 @@ youtube = [
   "google-api-python-client>=2.177,<3",
   "google-auth>=2.40,<3",
 ]
+
+[project.gui-scripts]
+ai-content-studio = "app.desktop.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "backend"}

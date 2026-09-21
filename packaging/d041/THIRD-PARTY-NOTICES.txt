@@ -1,0 +1,25 @@
+AI Content Studio — third-party component notice
+================================================
+
+The release manifest installed beside this file records exact file hashes and
+the signing outcome for the tested bundle.
+
+Qt for Python / PySide6 6.11.2
+  Project: https://doc.qt.io/qtforpython-6/
+  License options and notices: https://www.qt.io/licensing/
+  The bundle includes only runtime files selected by the pinned deployment tool.
+
+FFmpeg 8.1.2 full shared build from gyan.dev
+  Project: https://ffmpeg.org/
+  Binary provenance: https://www.gyan.dev/ffmpeg/builds/
+  Corresponding upstream source: https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+  License: GPL-3.0-or-later for this configured build. Run
+  `media\ffmpeg.exe -L` for the binary's complete license statement.
+
+Python 3.11 and other Python distributions
+  Package metadata and license files selected by Nuitka remain in the standalone
+  distribution. Review the generated release manifest and bundle before release.
+
+Piper voices and the private Piper runtime are not included in the base installer.
+Their immutable receipts retain source and license metadata when explicitly
+installed under the user's data directory.

@@ -64,6 +64,21 @@ load optional models, use GPUs, download weights or contact providers. Real TTS 
 publishing runs use explicitly configured optional runtimes. Keep secrets, model
 weights, private reference audio and generated outputs outside Git.
 
+## Windows desktop distribution
+
+The D041 product build is a Nuitka standalone application wrapped by a per-user
+Inno Setup installer. Core, desktop, API and development dependency groups are
+separate. Installed code resolves pinned FFmpeg/ffprobe beside the executable;
+source runs may use PATH. Mutable runtimes, models, caches and logs live under the
+user's local application-data directory, never under the installation or inside
+project workspaces. The default audio composition only attaches an already active,
+verified D008 Piper runtime and never provisions or downloads one at startup.
+
+Exact binary inventory, component provenance, notices and signing outcome are
+release artifacts. Unsigned builds are test-only. See
+[D041 Windows installer](../desktop/D041_WINDOWS_INSTALLER.md) for the build and
+clean-machine acceptance boundary.
+
 ## Documentation
 
 - [Domain model](domain-model.md)
@@ -73,6 +88,7 @@ weights, private reference audio and generated outputs outside Git.
 - [API and storage](api-and-storage.md)
 - [TTS selection API](../tts/TTS_SELECTION_API.md)
 - [Publishing handoff](../publishing/YOUTUBE_HANDOFF.md)
+- [Windows installer](../desktop/D041_WINDOWS_INSTALLER.md)
 - [Architecture decisions](../INDEX.md#architecture-decisions)
 
 These pages describe inspected code, replacing early design drafts. Historical

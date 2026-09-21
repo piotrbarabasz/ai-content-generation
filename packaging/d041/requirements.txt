@@ -1,0 +1,4 @@
+# Isolated Windows release environment. Application dependencies come from
+# `pip install .[desktop]`; API and development extras are intentionally absent.
+PySide6==6.11.2
+Nuitka==4.1.1

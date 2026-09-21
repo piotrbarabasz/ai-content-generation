@@ -1,0 +1,40 @@
+#define AppVersion "@APP_VERSION@"
+#define BundleDir "@BUNDLE_DIR@"
+#define OutputDir "@OUTPUT_DIR@"
+
+[Setup]
+AppId={{A8537A12-E157-4DE3-A87C-B34E6617B693}
+AppName=AI Content Studio
+AppVersion={#AppVersion}
+AppPublisher=AI Content Studio
+DefaultDirName={localappdata}\Programs\AI Content Studio
+DefaultGroupName=AI Content Studio
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+OutputDir={#OutputDir}
+OutputBaseFilename=AI-Content-Studio-{#AppVersion}-windows-x64-setup
+Compression=lzma2/max
+SolidCompression=yes
+WizardStyle=modern
+UninstallDisplayIcon={app}\AIContentStudio.exe
+LicenseFile={#BundleDir}\THIRD-PARTY-NOTICES.txt
+SignedUninstaller=@SIGNED_UNINSTALLER@
+@SIGNTOOL_LINE@
+
+[Files]
+Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{group}\AI Content Studio"; Filename: "{app}\AIContentStudio.exe"
+Name: "{autodesktop}\AI Content Studio"; Filename: "{app}\AIContentStudio.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
+
+[Run]
+Filename: "{app}\AIContentStudio.exe"; Description: "Launch AI Content Studio"; Flags: nowait postinstall skipifsilent
+
+; Deliberately no uninstall-delete section. Projects and managed runtimes live
+; outside {app}; uninstall removes only files owned by this installation.
