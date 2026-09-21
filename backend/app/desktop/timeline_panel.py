@@ -1,5 +1,7 @@
 """One paired visual/narration layer. All edits are committed through the service."""
 
+from PySide6.QtCore import Signal
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
@@ -7,6 +9,8 @@ from PySide6.QtWidgets import (
 
 
 class TimelinePanel(QWidget):
+    changed = Signal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.services = self.edit = None
@@ -63,6 +67,8 @@ class TimelinePanel(QWidget):
         self.status.setText("Timeline service is unavailable." if services is None else "")
         if services is not None:
             self.run(self.refresh)
+        else:
+            self.changed.emit(None)
 
     def refresh(self):
         edit = self.services.current()
@@ -91,6 +97,7 @@ class TimelinePanel(QWidget):
         self.status.setText(f"Saved timeline: {len(clips)} clips; "
                             f"duration {self.edit.timeline.duration if self.edit else 0} s.")
         self.select()
+        self.changed.emit(self.edit)
 
     def clip(self):
         row = self.table.currentRow()

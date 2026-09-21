@@ -11,6 +11,7 @@ from app.application.script_generation import ScriptGenerationService
 from app.desktop.audio_panel import AudioPanel
 from app.desktop.scene_panel import ScenePanel
 from app.desktop.timeline_panel import TimelinePanel
+from app.desktop.preview_panel import PreviewPanel
 
 
 class GenerationThread(QThread):
@@ -38,20 +39,28 @@ class GenerationThread(QThread):
 
 
 class ProjectEditor(QMainWindow):
-    def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None):
+    def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
+                 preview_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
         self.timeline_factory = timeline_factory
+        self.preview_factory = preview_factory
         self.timeline = TimelinePanel(self)
         timeline_dock = QDockWidget("Timeline Lite", self)
         timeline_dock.setWidget(self.timeline)
         self.addDockWidget(Qt.BottomDockWidgetArea, timeline_dock)
+        self.preview = PreviewPanel(self)
+        preview_dock = QDockWidget("Scene / film preview", self)
+        preview_dock.setWidget(self.preview)
+        self.addDockWidget(Qt.RightDockWidgetArea, preview_dock)
+        self.timeline.changed.connect(self.preview.timeline_changed)
         self.audio = AudioPanel(self)
         audio_dock = QDockWidget("Section audio", self)
         audio_dock.setWidget(self.audio)
         self.addDockWidget(Qt.BottomDockWidgetArea, audio_dock)
         self.visuals = ScenePanel(self)
+        self.visuals.media_changed.connect(lambda: self.preview.timeline_changed(self.timeline.edit))
         scene_dock = QDockWidget("Scene visuals", self)
         scene_dock.setWidget(self.visuals)
         self.addDockWidget(Qt.RightDockWidgetArea, scene_dock)
@@ -146,7 +155,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy or self.visuals.prompt_dirty:
+            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.visuals.prompt_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -155,15 +164,19 @@ class ProjectEditor(QMainWindow):
                 audio_services = self.audio_factory(candidate) if self.audio_factory else None
                 scene_services = self.scene_factory(candidate) if self.scene_factory else None
                 timeline_services = self.timeline_factory(candidate) if self.timeline_factory else None
+                preview_services = (self.preview_factory(candidate, timeline_services)
+                                    if self.preview_factory and timeline_services else None)
             except Exception:
                 candidate.close()
                 raise
             if self.session:
                 self.audio.stop()
+                self.preview.stop()
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
             self.audio.bind(audio_services, project.language)
             self.visuals.bind(scene_services)
+            self.preview.bind(preview_services)
             self.timeline.bind(timeline_services)
             self.project_name.setText(project.name)
             self.language.setText(project.language)
@@ -324,12 +337,13 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy or self.visuals.prompt_dirty:
+        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.visuals.prompt_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return
         if self.session:
             self.audio.stop()
+            self.preview.stop()
             self.session.close()
             self.session = None
         event.accept()

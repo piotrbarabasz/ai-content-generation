@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from app.domain.render_result import RenderedVideo, render_request
+from app.domain.timeline import OutputTimebase, TimelineRevision
 from app.runtime.media_process import MediaProcess, RenderCanceled
 from app.storage.paths import contained_path
 
@@ -16,17 +17,30 @@ def checksum(path):
 
 
 class FFmpegRenderer:
-    def __init__(self, ffmpeg, ffprobe, *, process=None):
+    def __init__(self, ffmpeg, ffprobe, *, process=None, proxy=False):
         # Executables are trusted composition, never taken from job JSON.
         self.ffmpeg, self.ffprobe = Path(ffmpeg).resolve(strict=True), Path(ffprobe).resolve(strict=True)
         self.process = process if process is not None else MediaProcess()
+        self.proxy = proxy
+
+    @property
+    def width(self):
+        return 640 if self.proxy else 1280
+
+    @property
+    def height(self):
+        return 360 if self.proxy else 720
 
     def identity(self):
-        return {"provider": "ffmpeg", "adapter": "static-mp4-v1",
+        return {"provider": "ffmpeg", "adapter": "proxy-mp4-360p25-v1" if self.proxy else "static-mp4-v1",
                 "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
 
     async def render(self, timeline, root, *, canceled, progress):
-        render_request(timeline, self.identity())
+        if self.proxy:
+            if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
+                raise ValueError("MP4 proxy requires a D018 timeline at 25 FPS.")
+        else:
+            render_request(timeline, self.identity())
         root = Path(root)
         command = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-n"]
         filters, videos, audios = [], [], []
@@ -35,9 +49,11 @@ class FFmpegRenderer:
             image = contained_path(root, f"image-{i}.png")
             audio = contained_path(root, f"audio-{i}.wav")
             command.extend(("-loop", "1", "-framerate", "25", "-i", image.name, "-i", audio.name))
-            fit = ("scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+            fit = (f"scale={self.width}:{self.height}:force_original_aspect_ratio=decrease,"
+                   f"pad={self.width}:{self.height}:(ow-iw)/2:(oh-ih)/2:black"
                    if timeline.fit_policy == "fit" else
-                   "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720")
+                   f"scale={self.width}:{self.height}:force_original_aspect_ratio=increase,"
+                   f"crop={self.width}:{self.height}")
             filters.append(f"[{2*i}:v]{fit},setsar=1,format=yuv420p,trim=end_frame={clip.duration_frames},setpts=PTS-STARTPTS[v{i}]")
             span = clip.media.audio
             filters.append(f"[{2*i+1}:a]atrim=start_sample={span.start_sample}:end_sample={span.end_sample},"
@@ -50,7 +66,8 @@ class FFmpegRenderer:
         script.write_text(";\n".join(filters), encoding="utf-8")
         output = contained_path(root, "render.mp4")
         command.extend(("-filter_complex_script", script.name, "-filter_complex_threads", "1",
-                        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                        "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
+                        "-preset", "ultrafast" if self.proxy else "veryfast", "-crf", "28" if self.proxy else "20",
                         "-threads", "2", "-pix_fmt", "yuv420p", "-r", "25", "-c:a", "aac", "-b:a", "128k",
                         "-ar", "48000", "-ac", "1", "-movflags", "+faststart", "-progress", "pipe:1", output.name))
         progress("encoding", 0, timeline.total_frames)
@@ -80,7 +97,8 @@ class FFmpegRenderer:
         audio = next(s for s in streams if s["codec_type"] == "audio")
         vd, ad = Fraction(video["duration"]), Fraction(audio["duration"])
         tolerance = Fraction(1024, 48000) + Fraction(len(timeline.clips), 48000)
-        if ((video["codec_name"], video["width"], video["height"], video["pix_fmt"]) != ("h264", 1280, 720, "yuv420p")
+        if ((video["codec_name"], video["width"], video["height"], video["pix_fmt"])
+                != ("h264", self.width, self.height, "yuv420p")
                 or Fraction(video["avg_frame_rate"]) != 25 or int(video["nb_read_frames"]) != timeline.total_frames
                 or abs(vd - timeline.video_duration) > Fraction(1, 1000000)
                 or (audio["codec_name"], int(audio["sample_rate"]), audio["channels"]) != ("aac", 48000, 1)

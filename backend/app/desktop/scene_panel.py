@@ -1,6 +1,6 @@
 """Qt scene/prompt/image controls over an injected D022 service port."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QListWidget,
@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 
 
 class ScenePanel(QWidget):
+    media_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.services = self.section = self.current = None
@@ -173,9 +175,11 @@ class ScenePanel(QWidget):
         self._show(view)
         self.status.setText(message)
 
-    def _act(self, callback, message):
+    def _act(self, callback, message, *, media_changed=False):
         try:
             self._replace(callback(), message)
+            if media_changed:
+                self.media_changed.emit()
         except Exception as exc:
             self.status.setText(str(exc))
             self._enable()
@@ -199,18 +203,20 @@ class ScenePanel(QWidget):
             return
         path, _ = QFileDialog.getOpenFileName(self, "Import scene image", filter="Images (*.png *.jpg *.jpeg)")
         if path:
-            self._act(lambda: self.services.import_image(self.current.id, path), "Image imported and selected.")
+            self._act(lambda: self.services.import_image(self.current.id, path), "Image imported and selected.",
+                      media_changed=True)
 
     def generate_image(self):
         if self.current:
             self._act(lambda: self.services.generate_image(
                 self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value()),
-                "Image generated and selected.")
+                "Image generated and selected.", media_changed=True)
 
     def select_image(self):
         if self.current and self.image_variants.currentData():
             value = self.image_variants.currentData()
-            self._act(lambda: self.services.select_image(self.current.id, value), "Image variant selected.")
+            self._act(lambda: self.services.select_image(self.current.id, value), "Image variant selected.",
+                      media_changed=True)
 
 
 __all__ = ["ScenePanel"]

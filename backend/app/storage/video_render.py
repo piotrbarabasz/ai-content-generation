@@ -55,7 +55,17 @@ class RenderResultIndex(ResultArtifactIndex):
         if not super()._artifact_inputs_match(connection, remaining, visiting):
             return False
         try:
-            return all(self.media.resolve(source) == clip.media for source, clip in zip(timeline_inputs(timeline), timeline.clips))
+            for source, clip in zip(timeline_inputs(timeline), timeline.clips):
+                selected = self.media.resolve(source)
+                full = selected.audio
+                normalized = replace(clip.media, audio=replace(clip.media.audio,
+                                                               start_sample=full.start_sample,
+                                                               end_sample=full.end_sample))
+                boundaries = self.media.boundaries(clip.media)
+                if (normalized != selected or clip.media.audio.start_sample not in boundaries
+                        or clip.media.audio.end_sample not in boundaries):
+                    return False
+            return True
         except (ValueError, FileNotFoundError):
             return False
 
@@ -69,8 +79,17 @@ class ProjectVideoRender:
     def current(self, timeline):
         compiled = TimelineCompiler(self.media).compile(self.index.project_id, timeline_inputs(timeline),
                                                        timebase=timeline.timebase, fit_policy=timeline.fit_policy)
-        if compiled != timeline:
+        if len(compiled.clips) != len(timeline.clips):
             raise ValueError("Render requires the exact currently selected timeline inputs.")
+        for selected, clip in zip(compiled.clips, timeline.clips):
+            full = selected.media.audio
+            normalized = replace(clip.media, audio=replace(clip.media.audio,
+                                                           start_sample=full.start_sample,
+                                                           end_sample=full.end_sample))
+            boundaries = self.media.boundaries(clip.media)
+            if (normalized != selected.media or clip.media.audio.start_sample not in boundaries
+                    or clip.media.audio.end_sample not in boundaries):
+                raise ValueError("Render requires the exact currently selected timeline inputs.")
 
     def stage(self, timeline):
         # A unique private directory per invocation retains failed bytes for
@@ -79,37 +98,55 @@ class ProjectVideoRender:
         root = contained_path(workspace, "work/render/" + uuid4().hex)
         root.mkdir(parents=True)
         for i, clip in enumerate(timeline.clips):
-            media = clip.media
-            timing = self.media.plans.timing(media.timing_id)
-            accepted = self.media.plans.acceptance(timing.acceptance_id)
-            span = next(s for s in timing.scenes if s.scene_id == media.scene_id)
-            image = self.media.images.image(media.image.artifact_id)
-            selection = next(s for s in self.media.images.selection_history(media.scene_id) if s.id == media.image_selection_id)
-            _, audio, _ = self.media.audio._read(media.audio.artifact_id)
-            retained = TimelineMedia(self.index.project_id, accepted.plan.section_id, accepted.plan.revision_id,
-                span.scene_id, accepted.plan.id, accepted.id, timing.id, timing.quality, selection.id, image,
-                AudioSpan(audio.artifact_id, audio.checksum, media.audio.variant, audio.sample_rate,
-                          audio.frame_count, span.start_frame, span.end_frame))
-            if (retained != media or selection.artifact_id != image.artifact_id
-                    or (timing.audio_artifact_id, timing.audio_checksum, timing.sample_rate, timing.frame_count)
-                    != (audio.artifact_id, audio.checksum, audio.sample_rate, audio.frame_count)):
-                raise ValueError("Retained media differs from the enqueue timeline snapshot.")
-            for kind, artifact_id, expected in (("image", image.artifact_id, image.checksum),
-                                                 ("audio", audio.artifact_id, audio.checksum)):
-                key = f"{kind}-{i}.source" if kind == "image" else f"audio-{i}.wav"
-                path = contained_path(root, key)
-                with self.store.open_artifact_id(artifact_id) as source, path.open("xb") as target:
-                    shutil.copyfileobj(source, target, 1024 * 1024)
-                with contained_path(root, key).open("rb") as copied:
-                    if file_digest(copied, "sha256").hexdigest() != expected:
-                        raise ValueError("Source changed while staging render inputs.")
-            # Apply EXIF orientation and deterministic black alpha composition.
-            with Image.open(contained_path(root, f"image-{i}.source")) as original:
-                oriented = ImageOps.exif_transpose(original).convert("RGBA")
-                background = Image.new("RGBA", oriented.size, "black")
-                background.alpha_composite(oriented)
-                background.convert("RGB").save(contained_path(root, f"image-{i}.png"), format="PNG")
+            self._stage_clip(root, i, clip)
         return root
+
+    def stage_scene(self, timeline, scene_id):
+        self.current(timeline)
+        clip = next((value for value in timeline.clips if value.media.scene_id == scene_id), None)
+        if clip is None:
+            raise ValueError("Scene is not present in the selected timeline.")
+        root = contained_path(self.index.repository.workspace, "work/preview/" + uuid4().hex)
+        root.mkdir(parents=True)
+        self._stage_clip(root, 0, clip)
+        return root, clip
+
+    def _stage_clip(self, root, index, clip):
+        media = clip.media
+        timing = self.media.plans.timing(media.timing_id)
+        accepted = self.media.plans.acceptance(timing.acceptance_id)
+        span = next(s for s in timing.scenes if s.scene_id == media.scene_id)
+        image = self.media.images.image(media.image.artifact_id)
+        selection = next(s for s in self.media.images.selection_history(media.scene_id) if s.id == media.image_selection_id)
+        _, audio, _ = self.media.audio._read(media.audio.artifact_id)
+        retained = TimelineMedia(self.index.project_id, accepted.plan.section_id, accepted.plan.revision_id,
+            span.scene_id, accepted.plan.id, accepted.id, timing.id, timing.quality, selection.id, image,
+            AudioSpan(audio.artifact_id, audio.checksum, media.audio.variant, audio.sample_rate,
+                      audio.frame_count, span.start_frame, span.end_frame))
+        # D023 may narrow a scene to verified sentence boundaries. Preserve that
+        # exact range after validating the retained D013 parent span.
+        if (retained != replace(media, audio=replace(media.audio, start_sample=span.start_frame,
+                                                     end_sample=span.end_frame))
+                or not span.start_frame <= media.audio.start_sample < media.audio.end_sample <= span.end_frame
+                or selection.artifact_id != image.artifact_id
+                or (timing.audio_artifact_id, timing.audio_checksum, timing.sample_rate, timing.frame_count)
+                != (audio.artifact_id, audio.checksum, audio.sample_rate, audio.frame_count)):
+            raise ValueError("Retained media differs from the enqueue timeline snapshot.")
+        for kind, artifact_id, expected in (("image", image.artifact_id, image.checksum),
+                                             ("audio", audio.artifact_id, audio.checksum)):
+            key = f"{kind}-{index}.source" if kind == "image" else f"audio-{index}.wav"
+            path = contained_path(root, key)
+            with self.store.open_artifact_id(artifact_id) as source, path.open("xb") as target:
+                shutil.copyfileobj(source, target, 1024 * 1024)
+            with contained_path(root, key).open("rb") as copied:
+                if file_digest(copied, "sha256").hexdigest() != expected:
+                    raise ValueError("Source changed while staging render inputs.")
+        # Apply EXIF orientation and deterministic black alpha composition.
+        with Image.open(contained_path(root, f"image-{index}.source")) as original:
+            oriented = ImageOps.exif_transpose(original).convert("RGBA")
+            background = Image.new("RGBA", oriented.size, "black")
+            background.alpha_composite(oriented)
+            background.convert("RGB").save(contained_path(root, f"image-{index}.png"), format="PNG")
 
     @contextmanager
     def output(self, root, timeline, result):
