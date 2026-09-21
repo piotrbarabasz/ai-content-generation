@@ -1,0 +1,16 @@
+{
+  "clean_windows": "pending",
+  "installed_app_launch": "pending",
+  "wav_audible": "pending",
+  "mp4_picture_and_sound": "pending",
+  "private_worker": "pending",
+  "real_output_playback": "pending",
+  "uninstall_project_preserved": "pending",
+  "installer_sha256": "",
+  "tester": "",
+  "tested_at": "",
+  "windows_edition_build": "",
+  "machine_or_vm": "",
+  "audio_device": "",
+  "observations": ""
+}

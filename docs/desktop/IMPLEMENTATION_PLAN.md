@@ -831,7 +831,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D025 — Installable MVP acceptance
 
-- **Status:** Planned
+- **Status:** Partial — automated 16-step evidence and real developer-host Piper/render PASS; signed clean-Windows manual end-to-end pending (2026-09-21)
 - **Milestone:** M9
 - **Priority:** P0
 - **Goal:** Prove the complete 16-step MVP boundary on the delivered package.
@@ -841,6 +841,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** docs/desktop/ release evidence and packaged acceptance harness/fixtures; existing integration tests.
 - **Acceptance criteria:** All 16 MVP steps pass without system Python/FFmpeg; explicitly selected voice language is correct; real output plays; A/C generation is reused after B edit. Record installer size, downloads, machine/profile and duration evidence.
 - **Test strategy:** Clean Windows install-to-export manual smoke with real Piper and FFmpeg; automated offline flow and interruption tests. Failures return to their owning task rather than broadening this gate.
+- **Implementation boundary:** Acceptance-only evidence assembly over existing D024/D041 behavior. The harness requires the named behavioral cases, real Piper language/profile evidence, a fully decoded real video and packaged-Qt evidence. Final release PASS additionally requires complete human observations bound to the exact installer SHA-256 and signed/release-eligible D041 evidence; partial automated evidence cannot satisfy those gates.
+- **Evidence:** [D025 MVP acceptance evidence](D025_MVP_ACCEPTANCE.md) records the 16-step mapping, installer/runtime/model sizes, machine/profile, real Polish Piper duration, real MP4 decode, reproduction command and remaining external gates. The generated report is Partial: all automated checks pass, while the development installer is unsigned and clean-Windows audible/visible/private-worker evidence is not yet recorded.
+- **Validation:** Focused acceptance aggregation tests: 5 passed. Selected existing 16-step behavioral evidence: 13 passed. Fresh real Piper smoke: PASS (`pl_PL-gosia-medium`, 14.837551 s); existing D046 packaged real-render evidence: PASS (H.264/AAC, fully decoded, 1.52 s). Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1532 passed, 11 existing optional tests skipped in 378.43 s (Windows, isolated Python 3.11). `python -m compileall -q backend/app backend/tests packaging/d025`, `python -m pip check` and `git diff --check` PASS.
 
 ### D026 — One real structured LLM adapter
 

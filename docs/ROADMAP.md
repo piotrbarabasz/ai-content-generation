@@ -55,7 +55,9 @@ boundary. Manual text and images make the app useful before real AI integrations
 Mock content is labeled and does not count as production-quality generation.
 
 See the [complete MVP acceptance boundary](desktop/IMPLEMENTATION_PLAN.md#mvp-definition).
-The desktop editor and real renderer are still planned, not existing capabilities.
+The desktop editor and real renderer are implemented. D025 automated acceptance is
+green; signed-installer and human-operated clean-Windows evidence remain before M9
+can be declared complete.
 
 ## Preserved later work
 
