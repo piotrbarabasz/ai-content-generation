@@ -815,7 +815,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D024 — Selective regeneration composition
 
-- **Status:** Planned
+- **Status:** Completed — PASS (2026-09-21)
 - **Milestone:** M8
 - **Priority:** P0
 - **Goal:** Turn dependency planning into one bounded user operation across existing stages.
@@ -826,6 +826,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** After editing B in A-B-C, only B's actual dependent generations run; A/C checksums remain; canceled/crashed work resumes safely; late B1 output never selects over B2.
 - **Test strategy:** Offline end-to-end call-count, checksum, concurrent-edit and crash/restart scenarios over real SQLite/files with fake providers.
 - **Implementation boundary:** Compose existing section-audio, scene proposal/timing, prompt, image, pinned-timeline, proxy and final-render services. Rebuild-all evaluates configured outputs; a single target executes only its prerequisite closure. Resume re-evaluates retained outputs and retries the latest matching D006 job, retaining D010 chunk workspaces. A new scene proposal requires explicit D013 acceptance; imported/selected images, manual prompts and D023 timeline edits are preserved and incompatible choices report review-required. No automatic scene acceptance, timeline replacement, provider installation or new generation stage is authorized by rebuild.
+- **Evidence:** [D024 Selective regeneration](D024_SELECTIVE_REGENERATION.md): application and desktop composition cover full-project and selected-output dependency closure, truthful reuse/rebuild/review/unavailable outcomes, and UI cancellation/busy guards. Real SQLite/files integration tests prove A–B–C isolation and retained checksums, exact-job retry and reopen recovery, preservation of unrelated queued jobs and user-owned prompt/image/timeline choices, and conditional publication that prevents late B1 work from selecting over B2.
+- **Validation:** Focused `python -m pytest backend/tests/unit/test_regeneration.py backend/tests/integration/test_regeneration.py backend/tests/integration/test_regeneration_panel.py -o addopts='' -q --tb=short`: 15 passed in 39.28 s. Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1517 passed, 11 existing optional tests skipped in 377.22 s (Windows, isolated Python 3.11). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS.
 
 ### D025 — Installable MVP acceptance
 
