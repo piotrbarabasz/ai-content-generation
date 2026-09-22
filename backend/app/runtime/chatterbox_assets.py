@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from .chatterbox_profile import MODEL_FILES, profile_fingerprint
+from .chatterbox_profile import MODEL_FILES, MODEL_REVISION, profile_fingerprint
 from .model_index import _plain
 from .provisioning import _install_lock
 from app.storage.paths import contained_path
@@ -18,7 +18,9 @@ class ChatterboxAssets:
 
     def _verified(self, directory):
         _plain(directory)
-        if {p.name for p in directory.iterdir()} != {name for name, _, _ in MODEL_FILES}:
+        names = {name for name, _, _ in MODEL_FILES}
+        derived = {"models--ResembleAI--chatterbox"} if "Cangjie5_TC.json" in names else set()
+        if {p.name for p in directory.iterdir()} != names | derived:
             raise ValueError("Chatterbox model directory has missing or unexpected files.")
         for name, size, digest in MODEL_FILES:
             path = contained_path(directory, name)
@@ -28,6 +30,15 @@ class ChatterboxAssets:
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                     raise ValueError("Chatterbox model checksum mismatch: " + name)
+        if derived:
+            hub = directory / "models--ResembleAI--chatterbox"
+            ref = hub / "refs" / "main"
+            cached = hub / "snapshots" / MODEL_REVISION / "Cangjie5_TC.json"
+            for path in (hub, hub / "refs", hub / "snapshots", hub / "snapshots" / MODEL_REVISION,
+                         ref, cached):
+                _plain(path)
+            if ref.read_text(encoding="ascii") != MODEL_REVISION or cached.read_bytes() != (directory / "Cangjie5_TC.json").read_bytes():
+                raise ValueError("Chatterbox Cangjie tokenizer cache differs from the pinned model asset.")
         return directory
 
     def installed(self):
@@ -73,6 +84,16 @@ class ChatterboxAssets:
                     os.fsync(output.fileno())
                 if count != size or checksum.hexdigest() != digest:
                     raise ValueError("Chatterbox model checksum/size mismatch: " + name)
+            # The upstream tokenizer asks huggingface_hub for this already pinned
+            # file. Materialize the exact offline cache layout so that the worker
+            # never attempts a network lookup even though it uses from_local().
+            if "Cangjie5_TC.json" in {name for name, _, _ in MODEL_FILES}:
+                hub = directory / "models--ResembleAI--chatterbox"
+                (hub / "refs").mkdir(parents=True)
+                snapshot = hub / "snapshots" / MODEL_REVISION
+                snapshot.mkdir(parents=True)
+                (hub / "refs" / "main").write_text(MODEL_REVISION, encoding="ascii")
+                shutil.copyfile(directory / "Cangjie5_TC.json", snapshot / "Cangjie5_TC.json")
             if canceled():
                 raise InterruptedError("Chatterbox activation canceled; complete candidate retained.")
             destination = contained_path(self.root, profile_fingerprint())

@@ -19,7 +19,7 @@ runtime/profile_catalog runtime/profiles runtime/protocol runtime/provisioning r
 runtime/section_synthesis runtime/section_voice runtime/section_worker runtime/supervisor
 runtime/voice_http runtime/windows_job runtime/worker runtime/worker_bundle
 runtime/chatterbox_profile runtime/chatterbox_assets runtime/chatterbox_health
-runtime/chatterbox_voice runtime/chatterbox_worker
+runtime/chatterbox_distribution runtime/chatterbox_voice runtime/chatterbox_worker
 storage/__init__ storage/manifest storage/paths tts/__init__ tts/assembly tts/catalog
 tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/selection
 """.split()
@@ -27,6 +27,7 @@ tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/selection
 
 def source_files():
     names = {"app/__init__.py", "app/runtime/piper_cpu_windows_x64.json",
+             "app/runtime/chatterbox_gpu_windows_x64.json",
              *("app/" + module + ".py" for module in MODULES)}
     root = files("app")
     packed = root.joinpath("runtime/worker_sources.json")

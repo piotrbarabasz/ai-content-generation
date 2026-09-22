@@ -1,10 +1,9 @@
-# D029 — Chatterbox V3 managed-runtime candidate
+# D029 — Chatterbox V3 managed runtime
 
-Status: **Partial**. The candidate contract, verified model intake, private worker
-and explicit audio composition are implemented and tested offline. This is **not**
-an approved/installable runtime and does not enable Chatterbox in the installed
-product. D029 must not be marked complete until the distribution and measured
-hardware gates below pass.
+Status: **Completed** (2026-09-22). The candidate contract is now backed by an
+approved, reproducible private Windows/CUDA distribution, restart-verified
+activation, explicit installed-product selection and retained real EN/PL hardware
+evidence. The Piper/D045 distribution remains independent and unchanged.
 
 ## Implemented boundary
 
@@ -17,10 +16,11 @@ hardware gates below pass.
   complete immutable version. `ChatterboxDirectorySource` can read a selected local
   Hugging Face snapshot. Every reuse verifies the bytes; missing/corrupt files fail
   closed. Cancellation, insufficient space and corrupt inputs never activate a
-  candidate. Incomplete candidates remain available for diagnosis. Intake does not
-  yet support partial-file range resume or automatic HTTP download.
-- `check_private_runtime` runs only in the private child. It checks private
-  interpreter/package locations, exact core versions and source revision, V3 API,
+  candidate. Incomplete candidates remain available for diagnosis. The pinned
+  Cangjie file is also materialized into the exact private Hugging Face cache layout.
+  Intake does not support partial-file range resume or automatic HTTP download.
+- `check_private_runtime` runs only in the private child. Approved launches check
+  private interpreter/package locations, all 111 exact package versions and source revision, V3 API,
   CUDA version/index and the supported source languages. It loads no model and
   allocates no model tensors. `probe_chatterbox` supervises this bounded operation
   with D007, reserves D028 ownership before CUDA initialization (without asserting
@@ -41,7 +41,9 @@ hardware gates below pass.
 - `compose_candidate_chatterbox_audio` connects production and preview to the same
   D028 manager. Both use the existing catalog/selection contract and built-in
   voice. No CPU fallback, speaker-reference intake, alternate provider or XTTS
-  policy change is introduced. Default installed composition stays Piper-only.
+  policy change is introduced. `compose_installed_chatterbox_audio` is the separate,
+  explicit installed selector and returns unavailable unless both the approved
+  active runtime and verified model snapshot exist. Default Piper composition stays intact.
 - Native and Python library logs are redirected away from the framed stdout
   protocol; imports occur before the blocking cancel reader. CUDA OOM from loading
   or generation becomes `gpu_oom` after preserving completed chunks. Further model
@@ -71,50 +73,58 @@ files were hashed locally and their Git blob IDs matched that same snapshot:
 `d77891f84ca1db0d6f7058a4ee081d4bb0bfe88e` (Cangjie). The shipped code contains only
 metadata, never weights or private reference audio.
 
-## Remaining D029 acceptance gates
+## Completed D029 acceptance gates
 
-1. Produce and review the complete Windows x64 private-runtime dependency closure,
-   exact downloadable/buildable artifacts, hashes, native libraries and licenses.
-   Include auxiliary tokenizer data: the fixed upstream tokenizer constructs a
-   Chinese converter even for English/Polish, calls Hugging Face for Cangjie data,
-   and initializes `spacy_pkuseg`, which may fetch its segmentation model. Six main
-   checkpoint files alone are not a complete isolated/offline runtime. The worker
-   now refuses such implicit connections; the auxiliary assets/cache layout need
-   explicit provisioning and verification before activation.
-   The source build must preserve the pinned commit despite its shared 0.1.7
-   version. The current D045 v1 validator/allowlist deliberately admits only the
-   Piper CPU distribution; it has not been weakened to accept arbitrary manifests.
-2. Implement approved Chatterbox distribution provisioning/activation with those
-   pins, including restart verification. Supply its trusted launch and content
-   fingerprint to the candidate composition. No development venv may be copied or
-   adopted as an installed product runtime. Add explicit installed-product
-   selection only after this gate, preserving the working Piper path.
-3. Run real Windows/GPU source-language synthesis, interrupted-chunk resume,
-   preview/production contention and unload/restart. Retain the project, audio
-   checksums, package/source/model versions, durations, measured peak VRAM and
-   post-exit ownership evidence outside Git. Test English and Polish separately;
-   the upstream language list is not measured audio-quality evidence.
+1. `chatterbox_gpu_windows_x64.json` records the complete reviewed CPython 3.11
+   Windows x64 closure: 111 wheels with exact bytes/provenance/license evidence,
+   37 Torch/CUDA DLL hashes, the pinned interpreter and MSVC runtime, and the
+   `spacy_pkuseg` OntoNotes archive. The reproducible Chatterbox wheel is built from
+   the fixed source commit and normalized without changing its Python sources;
+   its mutable dependency declaration is replaced by the reviewed exact Perth
+   version. Cangjie and pkuseg are provisioned before offline execution. The
+   separate content fingerprint is allowlisted; the Piper v1 validator was not widened.
+2. `ChatterboxProvisioner` verifies every input byte, performs bounded non-executing
+   wheel extraction, verifies the reviewed native-library inventory, writes source
+   provenance, runs health in the embedded interpreter and only then atomically
+   activates the generation. Restart discovery rehashes the installed inventory,
+   worker sources and profile content. The installed runtime was created from the
+   reviewed wheelhouse, not copied from `.venv-tts311`, and a fresh application
+   process recovered the same trusted launch and distribution fingerprint.
+3. The repeatable `packaging/d029/validate_hardware.py` run passed on Windows with
+   an NVIDIA GeForce GTX 1660 SUPER (6,442,123,264 bytes reported device memory).
+   English produced 2.80 s / 24 kHz audio with SHA-256
+   `fd9a8c1bf13956025dc80dc6cb14a65c727ea66a21230e2fc7137b27669e803f`;
+   Polish produced 7.92 s / 24 kHz audio with SHA-256
+   `a68e05d4c14be839b4492d324c380329a7b002c8a5925df537d8663f60b72e1a`.
+   The Polish first attempt was canceled after one chunk and the restarted worker
+   reused that chunk while generating two. Concurrent preview was rejected while
+   production owned `cuda:0`. Peak reserved bytes were 3,458,203,648 (EN) and
+   3,477,078,016 (PL); after unload no private worker remained and D028 reported
+   the GPU available.
 
 Read-only inspection of the existing development `.venv-tts311` found matching
 Torch/torchaudio and Chatterbox source, but setuptools **65.5.0**, not the documented
 80.10.2, and a venv rather than a private embedded interpreter. It was not modified,
 imported into the application or used as proof of managed runtime readiness.
-No real model/GPU synthesis or large asset download was performed in this change.
+The accepted runtime was built separately from exact cached publisher/build artifacts.
 
-## Offline validation
+## Validation and retained evidence
 
 Tests use fake assets, health modules and model outputs. Real subprocess tests cover
 framed IPC, native/Python log isolation, publication/reopen, reuse of completed
 chunks, preview identity, contention and bounded OOM retry. Separate handler tests
 exercise the actual local-loader bridge with fake native OOM, and health tests
 reject changed source/version, missing CUDA/index/language and non-private Python.
-They do not stand in for any remaining gate above.
+These tests complement, rather than substitute for, the real hardware run above.
 
-Windows / isolated Python 3.11.9 validation (2026-09-22): focused candidate,
-health, section/preview, GPU ownership, D007 lifecycle and Piper provisioning
-regressions: **131 passed in 41.72 s**. `python -m compileall -q backend/app
-backend/tests`, `python -m pip check` and `git diff --check`: PASS.
+Windows / isolated Python 3.11.9 validation (2026-09-22): focused D029
+distribution/profile/health, provisioning, section/preview and installed-selection
+tests: **55 passed**. `python -m compileall -q backend/app backend/tests
+packaging/d029`, `python -m pip check` and `git diff --check`: PASS.
 
-Full `python -m pytest backend/tests`: **1631 passed, 11 existing optional tests
-skipped in 640.81 s**. The D029 hardware/distribution gates remain pending despite
-the green offline suite.
+Full `python -m pytest backend/tests`: **1640 passed, 11 skipped in 367.65 s**.
+The hardware evidence directory is intentionally outside Git at
+`.runtime/d029-evidence-20260922-194850/`; `evidence.json` records the project tree
+hash, audio hashes/durations, complete package map, source/model revisions, timing,
+peak VRAM, contention result and post-exit ownership. The reviewed wheelhouse,
+installed runtime, models and synthesized project/audio also remain outside Git.

@@ -80,12 +80,13 @@ class CandidateChatterboxAudio:
     It must never be called with paths or health supplied by a project/job snapshot.
     """
 
-    def __init__(self, launch, health, runtime_fingerprint, model_root, work_root):
+    def __init__(self, launch, health, runtime_fingerprint, model_root, work_root, *, runtime_cache=None):
         if not isinstance(health, ChatterboxHealth) or not re.fullmatch(r"[0-9a-f]{64}", runtime_fingerprint):
             raise ValueError("A verified runtime fingerprint and fixed health result are required.")
         self.launch, self.health = launch, health
         self.device = health.decision()
         self.model_root, self.work_root = Path(model_root).resolve(), Path(work_root).resolve()
+        self.runtime_cache = Path(runtime_cache if runtime_cache is not None else work_root).resolve()
         self.identity = {"profile": profile_fingerprint(), "distribution": runtime_fingerprint}
 
     def prepare(self, selection, max_words):
@@ -95,7 +96,7 @@ class CandidateChatterboxAudio:
         return prepared
 
     def worker_launch(self):
-        return replace(self.launch, environment=self.launch.environment | _private_cache_environment(self.work_root) | {
+        return replace(self.launch, environment=self.launch.environment | _private_cache_environment(self.runtime_cache) | {
             "AICS_CHATTERBOX_DEVICE": self.health.device, "AICS_SECTION_MODELS": str(self.model_root),
             "AICS_SECTION_WORK": str(self.work_root), "AICS_SECTION_RUNTIME": canonical_json(self.identity)})
 

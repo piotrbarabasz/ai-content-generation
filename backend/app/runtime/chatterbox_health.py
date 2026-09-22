@@ -3,6 +3,7 @@
 from importlib import metadata
 import inspect
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -15,7 +16,19 @@ def check_private_runtime(device):
             or not sys.flags.no_site or Path(sys.prefix).resolve() != root
             or any(not Path(p).resolve().is_relative_to(root) for p in sys.path)):
         raise ValueError("Chatterbox needs a private Windows CPython 3.11.9 runtime, not a development venv.")
-    for name, version in PACKAGES:
+    distribution_path = os.environ.get("AICS_CHATTERBOX_DISTRIBUTION")
+    if distribution_path:
+        from .chatterbox_distribution import distribution_from_payload
+        profile_path = Path(distribution_path).resolve(strict=True)
+        if not profile_path.is_relative_to(root):
+            raise ValueError("Chatterbox distribution metadata escaped the private runtime.")
+        distribution = distribution_from_payload(json.loads(profile_path.read_text(encoding="utf-8")))
+        packages = distribution.package_versions.items()
+    else:
+        # Candidate-only diagnostic compatibility. Approved launches always carry
+        # the full reviewed distribution metadata above.
+        packages = PACKAGES
+    for name, version in packages:
         dist = metadata.distribution(name)
         if dist.version != version or not Path(dist.locate_file("")).resolve().is_relative_to(root):
             raise ValueError("Chatterbox private package identity mismatch: " + name)
