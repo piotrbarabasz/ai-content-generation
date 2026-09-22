@@ -40,8 +40,10 @@ definitions exist only in the desktop plan.
   or resuming a run updates status but does not invoke `CoreWorkflowEngine`.
   The API export endpoint constructs metadata; `ExportModule` performs actual
   artifact packaging when called through application code.
-- Mock LLM, transcription, captions, assets and rendering prove contracts. The
-  mock renderer returns a reference; the `.mp4` artifact is not playable video.
+- The deterministic mock remains the offline/default LLM. An opt-in OpenAI
+  Responses adapter provides strict structured script and visual-prompt output.
+  Mock transcription, captions, assets and rendering continue to prove their
+  contracts; the mock renderer returns a reference rather than playable video.
 - Chatterbox V3 and Piper are optional real TTS adapters. XTTS-v2 is evaluation-only.
   Narration bytes, resumable chunks, cache integrity, previews and tempo already
   exist. Catalog discovery needs no model installation.

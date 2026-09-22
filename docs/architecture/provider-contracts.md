@@ -11,7 +11,7 @@ requirements for enabled modules before direct engine execution.
 
 | Protocol | Operations | Current implementations |
 | --- | --- | --- |
-| `LLMProvider` | `generate_text(prompt, context) -> str`; `generate_structured(prompt, schema) -> dict` | Deterministic mock |
+| `LLMProvider` | `generate_text(prompt, context) -> str`; `generate_structured(prompt, schema) -> dict` | Deterministic mock; opt-in OpenAI Responses adapter |
 | `TTSProvider` | `capabilities()`; `effective_synthesis_identity(voice_config)`; `synthesize(text, voice_config) -> TTSSynthesisResult` | Mock, Chatterbox V3, Piper, evaluation-only XTTS-v2 |
 | `TranscriptionProvider` | `transcribe(audio_ref) -> dict` | Mock |
 | `CaptionProvider` | `generate_captions(audio_ref, transcript_ref) -> dict` | Mock |
@@ -24,6 +24,13 @@ requirements for enabled modules before direct engine execution.
 `ProviderConfig`. Modules receive implementations through constructors; provider
 registration alone is not application wiring. Add adapters at this boundary,
 keeping provider-specific settings/errors out of the core execution engine.
+
+The D026 OpenAI adapter uses strict Responses API Structured Outputs through a
+factory and an injected transport. Installed composition is opt-in through process
+environment settings. API keys are resolved only at call time from a named
+environment variable and never enter `ProviderConfig`, project DTOs, generation
+identity, usage metadata or provider error text. See
+[D026 provider evidence](../desktop/D026_OPENAI_STRUCTURED_LLM.md).
 
 ## Desktop MP4 rendering (D019)
 

@@ -847,7 +847,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D026 — One real structured LLM adapter
 
-- **Status:** Planned
+- **Status:** Partial — OpenAI Responses adapter/composition and offline acceptance PASS; credentialed smoke pending (2026-09-21)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Replace mock-only script/prompt generation with one configured provider.
@@ -857,6 +857,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/ adapter/settings/factory, script/prompt composition and usage boundary; transport tests.
 - **Acceptance criteria:** Actual structured output becomes editable sections/prompts; malformed or failed responses preserve current revisions; serialized errors/config contain no credentials.
 - **Test strategy:** Offline injected transport for success/schema/error/rate-limit cases; explicit credentialed smoke outside default CI after provider choice.
+- **Implementation boundary:** OpenAI is the single selected vendor. A dependency-free HTTPS transport targets only the fixed Responses endpoint and uses strict `text.format` JSON Schema output. Validated settings cover explicit model, timeout, output limit, bounded retry and local request interval; credentials are lazy environment-only inputs. The existing D014/D015 application validation and revision publication remain authoritative. Installed composition is opt-in and shares one provider between script and prompt generation. The user explicitly authorized work while D025 remains Partial; that exception does not mark D025/M9 complete.
+- **Evidence:** [D026 OpenAI structured LLM adapter](D026_OPENAI_STRUCTURED_LLM.md) records configuration, credential/redaction boundaries, usage identity, service wiring, failure preservation and the opt-in credentialed smoke command. Injected-transport integration proves returned sections remain editable and returned prompts become versioned/selectable without storing credentials.
+- **Validation:** Focused provider, D014/D015, desktop and registry checks: 101 passed in 39.13 s; static suite: 19 passed. Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1545 passed, 11 existing optional tests skipped in 361.19 s (Windows, isolated Python 3.11). `python -m compileall -q backend/app backend/tests packaging/d025`, `python -m pip check` and `git diff --check` PASS. The credentialed OpenAI smoke remains pending and keeps this task Partial.
 
 ### D027 — One real image API adapter
 

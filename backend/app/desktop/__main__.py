@@ -1,5 +1,6 @@
 """Desktop editor entrypoint for source and standalone release runs."""
 
+from functools import partial
 import json
 from pathlib import Path
 import sys
@@ -31,8 +32,10 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
             raise ValueError("--release-smoke requires an explicit report path.") from exc
         del sys.argv[position:position + 2]
     from app.desktop.regeneration_composition import compose_regeneration
+    from app.desktop.llm_composition import compose_installed_llm
     from app.desktop.preview_composition import compose_preview
     from app.desktop.product_composition import compose_installed_audio
+    from app.desktop.scene_composition import compose_scenes
     from app.desktop.timeline_composition import compose_timeline
 
     from app.desktop.deployment import APPLICATION_VERSION
@@ -41,7 +44,20 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     QCoreApplication.setApplicationName("AI Content Studio")
     QCoreApplication.setApplicationVersion(APPLICATION_VERSION)
     application = QApplication(sys.argv)
-    window = ProjectEditor(LocalProjects(), provider=provider, audio_factory=audio_factory or compose_installed_audio,
+    llm_provider = provider if provider is not None else compose_installed_llm()
+    if scene_factory is None and llm_provider is not None:
+        identity_builder = getattr(llm_provider, "generation_identity", None)
+        prompt_identity = (
+            identity_builder()
+            if callable(identity_builder)
+            else {"provider": getattr(llm_provider, "provider_name", "configured")}
+        )
+        scene_factory = partial(
+            compose_scenes,
+            prompt_provider=llm_provider,
+            prompt_identity=prompt_identity,
+        )
+    window = ProjectEditor(LocalProjects(), provider=llm_provider, audio_factory=audio_factory or compose_installed_audio,
                            scene_factory=scene_factory, timeline_factory=timeline_factory or compose_timeline,
                            preview_factory=preview_factory or compose_preview,
                            regeneration_factory=regeneration_factory or compose_regeneration)
