@@ -15,7 +15,7 @@ from app.jobs.coordinator import JobCoordinator
 from .protocol import (
     MAX_FRAME_BYTES, ProtocolError, check_identity, encode_frame, message, read_message_async,
 )
-from .resources import APPLICATION_GPU_RESOURCES, DeviceDecision
+from .resources import APPLICATION_GPU_RESOURCES, DeviceDecision, _device
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,13 @@ class WorkerSupervisor:
 
     def __init__(self, coordinator: JobCoordinator, launch: WorkerLaunch, *, limits=WorkerLimits(),
                  completion_handler: Callable[[JobAttempt, tuple[str, ...]], object] | None = None,
-                 device: DeviceDecision | None = None, resources=None):
+                 device: DeviceDecision | None = None, resources=None, reservation_device=None):
+        # Trusted preflight composition reserves a device without claiming it has
+        # passed health. Synthesis still requires its separately pinned decision.
+        if reservation_device is not None:
+            _device(reservation_device)
+            if reservation_device == "cpu" or device is not None:
+                raise ValueError("Use either a GPU preflight reservation or a tested device decision.")
         self.coordinator = coordinator
         self.launch = launch
         self.limits = limits
@@ -92,6 +98,7 @@ class WorkerSupervisor:
         self._started = None
         self._process_job = None
         self.device = device
+        self.reservation_device = device.effective if device is not None else reservation_device
         self.resources = APPLICATION_GPU_RESOURCES if resources is None else resources
         self._resource_lease = None
         self._unresolved_claim = None
@@ -234,8 +241,8 @@ class WorkerSupervisor:
             raise RuntimeError("This supervisor already owns an attempt.")
         if self._resource_lease is not None:
             raise RuntimeError("GPU cleanup is unresolved; unload the previous worker first.")
-        if self.device is not None and self.device.effective != "cpu":
-            lease = self.resources.acquire(owner, self.device.effective)
+        if self.reservation_device is not None and self.reservation_device != "cpu":
+            lease = self.resources.acquire(owner, self.reservation_device)
             if lease is None:
                 return None  # Contention must leave durable work queued.
             self._resource_lease = lease

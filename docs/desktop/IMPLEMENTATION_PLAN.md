@@ -895,7 +895,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D029 — Managed Chatterbox profile
 
-- **Status:** Planned
+- **Status:** Partial — pinned candidate, verified model intake and offline worker/audio composition implemented; approved private distribution and measured GPU acceptance pending (2026-09-22)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Expose the existing Chatterbox adapter through a tested isolated runtime.
@@ -905,6 +905,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/chatterbox_v3.py integration, runtime manifests/provisioning and selection wiring; tests.
 - **Acceptance criteria:** Configured Windows/device profile generates and resumes section audio through the app; missing GPU/runtime fails honestly; supported source languages are evidenced.
 - **Test strategy:** Offline profile/dispatch tests plus explicit real Windows/GPU synthesize-resume/unload smoke with versions, peak memory and retained artifact evidence.
+- **Implementation boundary:** Preserve the Piper-only approved v1 distribution contract. Chatterbox V3 requires source commit `5de7a54aa4e5e2baadb0182dde554908b48b85c2`, not merely the PyPI version `0.1.7`. Implement a separate pinned candidate profile, verified external model assets, private-worker health/synthesis and explicit D028-aware audio composition. Do not activate it in the installed product until a reviewed, reproducible private runtime distribution and real Windows/GPU evidence exist. An existing development venv is diagnostic evidence, not an installable approved runtime. Reference-audio intake stays in D030; no automatic CPU fallback or network access during synthesis.
+- **Evidence:** [D029 managed Chatterbox candidate](D029_MANAGED_CHATTERBOX.md) records implemented behavior, upstream source/model provenance, offline test boundaries and the remaining distribution, activation and hardware acceptance gates. This partial implementation does not authorize starting D030 or claim a production-installable Chatterbox profile.
+- **Validation:** Focused candidate/profile/health, section/preview, GPU ownership, D007 and Piper provisioning tests: 131 passed in 41.72 s. Full `python -m pytest backend/tests`: 1631 passed, 11 existing optional tests skipped in 640.81 s (Windows, isolated Python 3.11.9). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS. No model/GPU smoke or runtime installation was performed; source review identified auxiliary tokenizer downloads that must be pinned/provisioned before managed activation.
 
 ### D030 — Approved reference-audio intake
 

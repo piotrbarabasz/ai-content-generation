@@ -15,7 +15,7 @@ from app.providers.tts_capabilities import TTSCapabilities
 from app.providers.tts_result import TTSSynthesisResult
 from app.tts.assembly import inspect_pcm_wav
 from .section_synthesis import workspace
-from .supervisor import WorkerSupervisor
+from .supervisor import WorkerLimits, WorkerSupervisor
 
 
 class _OneJobCoordinator:
@@ -85,12 +85,14 @@ class ManagedSectionPreviewProvider:
     provider_type = ProviderType.TTS
     provider_name = "piper"
 
-    def __init__(self, managed, launch, prepared):
+    def __init__(self, managed, launch, prepared, *, device=None, limits=WorkerLimits()):
         self.managed, self.launch, self.prepared = managed, launch, prepared
+        self.device, self.limits = device, limits
+        self.provider_name = prepared["selection"]["provider"]
 
     def capabilities(self):
         selection = self.prepared["selection"]
-        return TTSCapabilities("piper", (selection["language"],), ("builtin",), False, False)
+        return TTSCapabilities(self.provider_name, (selection["language"],), ("builtin",), False, False)
 
     def effective_synthesis_identity(self, voice_config=None):
         if canonical_json(dict(voice_config or {})) != canonical_json(self.prepared["voice_config"]):
@@ -108,7 +110,8 @@ class ManagedSectionPreviewProvider:
         job = JobRequest(new_id("preview_job"), "preview:audio", request, canonical_json({
             PUBLICATION_KEY: snapshot.to_payload(), "inputs": {"section_audio": self.prepared}}), utc_now())
         coordinator = _OneJobCoordinator(job)
-        result = asyncio.run(WorkerSupervisor(coordinator, self.launch).run_next("desktop-preview"))
+        result = asyncio.run(WorkerSupervisor(coordinator, self.launch, device=self.device,
+                                             limits=self.limits).run_next("desktop-preview"))
         if result is None or result.attempt.status != AttemptStatus.COMPLETED:
             detail = "worker did not run" if result is None else result.attempt.error
             raise RuntimeError(f"Managed preview failed: {detail}")

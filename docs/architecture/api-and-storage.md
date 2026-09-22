@@ -181,6 +181,15 @@ pinned in request and result identity, and a typed OOM failure permits one expli
 retry after exit. This is scheduling within one application process; D029 provides
 the real GPU profile. See [D028 ownership and recovery](../desktop/D028_GPU_RESOURCE_LEASE.md).
 
+## Chatterbox runtime candidate (D029)
+
+D029's [Chatterbox candidate](../desktop/D029_MANAGED_CHATTERBOX.md) adds a separate
+pinned contract, verified public-model intake and private-worker section/preview
+composition with D028 ownership. It reuses D010 resume and D040 publication but
+is not an approved/installable profile: complete distribution pins, provisioning
+and measured GPU acceptance remain pending. The shipped allowlist and default
+installed audio composition remain Piper-only.
+
 ## Private Piper runtime provisioning (D008)
 
 `runtime.provisioning.PiperProvisioner` installs the approved profile from an

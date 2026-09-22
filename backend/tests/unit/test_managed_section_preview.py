@@ -29,7 +29,8 @@ def test_managed_preview_runs_frozen_section_audio_job_and_returns_validated_wav
             yield io.BytesIO(_wav()), {}
 
     class Supervisor:
-        def __init__(self, coordinator, launch):
+        def __init__(self, coordinator, launch, *, device, limits):
+            assert device is None  # Existing Piper preview remains CPU-only.
             seen["coordinator"] = coordinator
 
         async def run_next(self, owner):

@@ -18,6 +18,8 @@ runtime/model_index runtime/native_piper runtime/piper_health runtime/piper_work
 runtime/profile_catalog runtime/profiles runtime/protocol runtime/provisioning runtime/resources
 runtime/section_synthesis runtime/section_voice runtime/section_worker runtime/supervisor
 runtime/voice_http runtime/windows_job runtime/worker runtime/worker_bundle
+runtime/chatterbox_profile runtime/chatterbox_assets runtime/chatterbox_health
+runtime/chatterbox_voice runtime/chatterbox_worker
 storage/__init__ storage/manifest storage/paths tts/__init__ tts/assembly tts/catalog
 tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/selection
 """.split()
