@@ -42,8 +42,10 @@ definitions exist only in the desktop plan.
   artifact packaging when called through application code.
 - The deterministic mock remains the offline/default LLM. An opt-in OpenAI
   Responses adapter provides strict structured script and visual-prompt output.
-  Mock transcription, captions, assets and rendering continue to prove their
-  contracts; the mock renderer returns a reference rather than playable video.
+  Image generation likewise has a deterministic offline mock and an opt-in OpenAI
+  Images adapter with verified PNG/JPEG publication. Mock transcription, captions,
+  assets and rendering continue to prove their contracts; the mock renderer returns
+  a reference rather than playable video.
 - Chatterbox V3 and Piper are optional real TTS adapters. XTTS-v2 is evaluation-only.
   Narration bytes, resumable chunks, cache integrity, previews and tempo already
   exist. Catalog discovery needs no model installation.

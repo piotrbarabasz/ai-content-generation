@@ -863,7 +863,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D027 — One real image API adapter
 
-- **Status:** Planned
+- **Status:** Partial — OpenAI Images adapter/composition and offline D017 acceptance PASS; credentialed remote smoke pending (2026-09-22)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Generate useful visuals through the established image contract.
@@ -873,6 +873,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/ image adapter/factory, image application composition; transport tests.
 - **Acceptance criteria:** Real image is selected/exportable; regeneration retains older variants; timeout/corrupt output cannot replace a valid image.
 - **Test strategy:** Offline transport and decode fixtures; explicit remote smoke after provider selection. No network in default tests.
+- **Implementation boundary:** OpenAI Images is the single selected API. The fixed HTTPS endpoint accepts an explicit `gpt-image-*` model and maps pinned prompt, one of three supported dimensions, quality/background/moderation and PNG/JPEG output. Credentials are lazy environment-only inputs; inline secrets, custom endpoints, URL-only results and unbounded bodies are rejected. The provider verifies base64, format and exact dimensions before D017 independently decodes and conditionally publishes. The neutral contract now expresses exact sizes, safe effective settings and result metadata; `seed=0` is the unspecified value for providers declaring no seed support. Existing job cancellation, failure, retained variants and explicit selection remain authoritative. The user requested D027 while D025 remains Partial; this exception does not mark D025/M9 complete.
+- **Evidence:** [D027 OpenAI image API adapter](D027_OPENAI_IMAGE_API.md) records API/configuration boundaries, secret redaction, contract extension, provenance, installed wiring, cancellation and the credentialed smoke command. Injected-transport integration proves a verified generated PNG is exportable/selectable, old variants remain selectable, and timeout/corruption/cancellation cannot replace the valid selection.
+- **Validation:** Focused D027/D017/provider/UI checks: 89 passed in 76.06 s; static plus D027 adapter/integration checks: 40 passed in 8.27 s; final post-composition focused check: 63 passed in 120.81 s. Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1567 passed, 11 existing optional tests skipped in 568.78 s (Windows, isolated Python 3.11). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS. The credentialed OpenAI image smoke remains pending and keeps this task Partial.
 
 ### D028 — Application-wide GPU resource lease
 

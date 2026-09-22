@@ -172,5 +172,8 @@ class SceneServices:
         with self.store.open_artifact_id(artifact_id) as source:
             return source.read()
 
+    def image_capabilities(self):
+        return self.generation.capabilities() if self.generation.provider is not None else None
+
 
 __all__ = ["ImageVariant", "PromptVariant", "SceneServices", "SceneView"]

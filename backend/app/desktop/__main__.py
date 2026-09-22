@@ -32,6 +32,7 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
             raise ValueError("--release-smoke requires an explicit report path.") from exc
         del sys.argv[position:position + 2]
     from app.desktop.regeneration_composition import compose_regeneration
+    from app.desktop.image_composition import compose_installed_image
     from app.desktop.llm_composition import compose_installed_llm
     from app.desktop.preview_composition import compose_preview
     from app.desktop.product_composition import compose_installed_audio
@@ -45,17 +46,17 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     QCoreApplication.setApplicationVersion(APPLICATION_VERSION)
     application = QApplication(sys.argv)
     llm_provider = provider if provider is not None else compose_installed_llm()
-    if scene_factory is None and llm_provider is not None:
-        identity_builder = getattr(llm_provider, "generation_identity", None)
-        prompt_identity = (
-            identity_builder()
-            if callable(identity_builder)
-            else {"provider": getattr(llm_provider, "provider_name", "configured")}
-        )
+    image_provider = compose_installed_image() if scene_factory is None else None
+    if scene_factory is None and (llm_provider is not None or image_provider is not None):
+        identity_builder = getattr(llm_provider, "generation_identity", None) if llm_provider else None
+        prompt_identity = (identity_builder() if callable(identity_builder) else
+                           ({"provider": getattr(llm_provider, "provider_name", "configured")}
+                            if llm_provider else {}))
         scene_factory = partial(
             compose_scenes,
             prompt_provider=llm_provider,
             prompt_identity=prompt_identity,
+            image_provider=image_provider,
         )
     window = ProjectEditor(LocalProjects(), provider=llm_provider, audio_factory=audio_factory or compose_installed_audio,
                            scene_factory=scene_factory, timeline_factory=timeline_factory or compose_timeline,

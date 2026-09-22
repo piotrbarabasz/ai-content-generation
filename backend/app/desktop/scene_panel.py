@@ -78,6 +78,24 @@ class ScenePanel(QWidget):
         self.views = ()
         self.scenes.clear()
         self._show(None)
+        if services:
+            try:
+                capability_reader = getattr(services, "image_capabilities", None)
+                capabilities = capability_reader() if callable(capability_reader) else None
+                if capabilities is not None:
+                    self.width.setMaximum(capabilities.max_dimension)
+                    self.height.setMaximum(capabilities.max_dimension)
+                    if capabilities.supported_sizes:
+                        width, height = capabilities.supported_sizes[0]
+                        self.width.setValue(width)
+                        self.height.setValue(height)
+                    self.seed.setEnabled(capabilities.seeded)
+                    if not capabilities.seeded:
+                        self.seed.setValue(0)
+            except Exception as exc:
+                self.status.setText(str(exc))
+                self._enable()
+                return
         self.status.setText("Select a section." if services else "Scene services are not configured.")
         self._enable()
 

@@ -106,5 +106,6 @@ class ProjectImageGeneration:
                     "image_generation": {"version": 1, "generation_id": snapshot.generation_id,
                                          "prompt_revision_id": prepared["prompt_revision_id"],
                                          "request": request.to_payload(), "provider": json.loads(job.request.effective_identity_json)}}
+        metadata["image_generation"]["result"] = dict(result.metadata)
         with io.BytesIO(result.image_bytes) as source:
             yield source, metadata

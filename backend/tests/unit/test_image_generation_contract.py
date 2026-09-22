@@ -45,10 +45,20 @@ def test_invalid_requests_fail_without_provider(settings):
     (ImageGenerationCapabilities("p", "m", "1", max_pixels=4), ImageGenerationRequest("p", 3, 2)),
     (ImageGenerationCapabilities("p", "m", "1"), ImageGenerationRequest("p", 2, 2, format="JPEG")),
     (ImageGenerationCapabilities("p", "m", "1", negative_prompt=False), ImageGenerationRequest("p", 2, 2, negative_prompt="blur")),
-    (ImageGenerationCapabilities("p", "m", "1", seeded=False), ImageGenerationRequest("p", 2, 2)),
+    (ImageGenerationCapabilities("p", "m", "1", seeded=False), ImageGenerationRequest("p", 2, 2, seed=1)),
 ])
 def test_capabilities_reject_unsupported_features(capabilities, image_request):
     with pytest.raises(ValueError): capabilities.validate(image_request)
+
+
+def test_unseeded_provider_accepts_only_the_zero_unspecified_seed_and_exact_sizes():
+    capabilities = ImageGenerationCapabilities(
+        "p", "m", "1", seeded=False, supported_sizes=((2, 3),), settings={"quality": "low"}
+    )
+    capabilities.validate(ImageGenerationRequest("p", 2, 3))
+    with pytest.raises(ValueError):
+        capabilities.validate(ImageGenerationRequest("p", 3, 2))
+    assert capabilities.to_payload()["settings"] == {"quality": "low"}
 
 
 def test_factory_is_explicit_and_imports_no_decoder_or_mock_until_requested():

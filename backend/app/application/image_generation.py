@@ -38,6 +38,10 @@ class ImageGenerationService:
             raise ValueError("Provider must declare image generation capabilities.")
         return capabilities
 
+    def capabilities(self):
+        """Expose static provider capabilities to composition/presentation adapters."""
+        return self._capabilities()
+
     def prepare_request(self, prompt_revision_id, *, width, height, seed=0, format="PNG", negative_prompt=""):
         prepared = self.artifacts.prepare(prompt_revision_id)
         request = ImageGenerationRequest(prepared["prompt"], width, height, seed, format, negative_prompt)
