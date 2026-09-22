@@ -80,29 +80,55 @@ class CandidateChatterboxAudio:
     It must never be called with paths or health supplied by a project/job snapshot.
     """
 
-    def __init__(self, launch, health, runtime_fingerprint, model_root, work_root, *, runtime_cache=None):
+    def __init__(self, launch, health, runtime_fingerprint, model_root, work_root, *, runtime_cache=None,
+                 references=None, reference_cache=None):
         if not isinstance(health, ChatterboxHealth) or not re.fullmatch(r"[0-9a-f]{64}", runtime_fingerprint):
             raise ValueError("A verified runtime fingerprint and fixed health result are required.")
         self.launch, self.health = launch, health
         self.device = health.decision()
         self.model_root, self.work_root = Path(model_root).resolve(), Path(work_root).resolve()
         self.runtime_cache = Path(runtime_cache if runtime_cache is not None else work_root).resolve()
+        self.references = references
+        self.reference_cache = (Path(reference_cache).resolve() if reference_cache is not None
+                                else Path(references.runtime_root).resolve() if references is not None else None)
         self.identity = {"profile": profile_fingerprint(), "distribution": runtime_fingerprint}
 
-    def prepare(self, selection, max_words):
+    def prepare(self, selection, max_words, *, resolved_reference=None):
         if ChatterboxAssets(self.model_root).installed() is None:
             raise ValueError("Install verified Chatterbox model assets first.")
-        prepared, _ = prepare_voice(selection, max_words, self.health, self.identity)
+        reference_path = None
+        if selection.get("voice") == "reference":
+            if self.references is None or self.reference_cache is None:
+                raise ValueError("Approved reference-audio storage is not configured.")
+            resolved = resolved_reference or self.references.resolve(
+                selection.get("reference_audio_artifact_id"))
+            metadata = selection.get("reference_audio_metadata")
+            if (resolved is not None and resolved.artifact_id is not None
+                    and resolved.artifact_id != selection.get("reference_audio_artifact_id")):
+                raise ValueError("Resolved reference audio has a different opaque identity.")
+            expected = None if resolved is None else {
+                "checksum": resolved.checksum, "approval_label": resolved.approval_label, "approved": True}
+            if not isinstance(metadata, dict) or metadata != expected:
+                raise ValueError("Reference audio approval or checksum changed.")
+            from app.tts.reference_audio import resolve_cached_reference
+            reference_path = resolve_cached_reference(
+                self.reference_cache, selection["reference_audio_artifact_id"], metadata)
+        prepared, _ = prepare_voice(selection, max_words, self.health, self.identity,
+                                    reference_path=reference_path)
         return prepared
 
     def worker_launch(self):
-        return replace(self.launch, environment=self.launch.environment | _private_cache_environment(self.runtime_cache) | {
+        environment = self.launch.environment | _private_cache_environment(self.runtime_cache) | {
             "AICS_CHATTERBOX_DEVICE": self.health.device, "AICS_SECTION_MODELS": str(self.model_root),
-            "AICS_SECTION_WORK": str(self.work_root), "AICS_SECTION_RUNTIME": canonical_json(self.identity)})
+            "AICS_SECTION_WORK": str(self.work_root), "AICS_SECTION_RUNTIME": canonical_json(self.identity)}
+        if self.reference_cache is not None:
+            environment["AICS_REFERENCE_AUDIO_CACHE"] = str(self.reference_cache)
+        return replace(self.launch, environment=environment)
 
-    def validated(self, job):
+    def validated(self, job, *, resolved_reference=None):
         _, expected = inputs(job)
-        actual = self.prepare(expected["selection"], expected["max_words"])
+        actual = self.prepare(expected["selection"], expected["max_words"],
+                              resolved_reference=resolved_reference)
         if canonical_json(actual) != canonical_json(expected):
             raise ValueError("Chatterbox runtime, assets or device changed since enqueue.")
         return validated_output(self.work_root, job)

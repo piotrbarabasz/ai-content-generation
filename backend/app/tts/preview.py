@@ -27,6 +27,7 @@ from .post_processing import (
     process_pcm_wav_tempo,
     validate_tempo,
 )
+from .reference_audio import ApprovedReferenceAudio
 from .selection import TTSSelectionError, map_catalog_selection
 
 
@@ -69,16 +70,6 @@ class TTSPreviewError(ValueError):
 
 class TTSPreviewNotFoundError(TTSPreviewError):
     """Raised when an opaque preview id has no valid cached audio."""
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovedReferenceAudio:
-    """Approved runtime input returned for an opaque artifact identifier."""
-
-    runtime_path: Path
-    checksum: str
-    approval_label: str = "approved"
-    approved: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +355,7 @@ class TTSPreviewService:
             raise TTSPreviewError("Approved TTS reference audio is unavailable.") from exc
         if sha256(content).hexdigest() != checksum:
             raise TTSPreviewError("Approved TTS reference audio checksum does not match.")
-        return ApprovedReferenceAudio(path, checksum, label, True)
+        return ApprovedReferenceAudio(path, checksum, label, True, artifact_id.strip())
 
     def _identity(self, native_identity: JsonDict, tempo: float) -> _PreviewIdentity:
         native_id = f"tts_native_{stable_hash(native_identity)}"

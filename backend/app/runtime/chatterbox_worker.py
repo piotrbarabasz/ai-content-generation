@@ -65,7 +65,15 @@ def handle(payload, report, canceled):
             raise
 
     runtime = json.loads(os.environ["AICS_SECTION_RUNTIME"])
-    actual, provider = prepare_voice(expected["selection"], expected["max_words"], health, runtime, model_loader=load)
+    reference_path = None
+    selection = expected["selection"]
+    if selection.get("voice") == "reference":
+        from app.tts.reference_audio import resolve_cached_reference
+        reference_path = resolve_cached_reference(
+            os.environ["AICS_REFERENCE_AUDIO_CACHE"], selection.get("reference_audio_artifact_id"),
+            selection.get("reference_audio_metadata"))
+    actual, provider = prepare_voice(selection, expected["max_words"], health, runtime,
+                                     model_loader=load, reference_path=reference_path)
     if canonical_json(actual) != canonical_json(expected):
         raise ValueError("Chatterbox worker identity differs from the frozen request.")
     import torch

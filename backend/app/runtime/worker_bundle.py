@@ -21,7 +21,7 @@ runtime/voice_http runtime/windows_job runtime/worker runtime/worker_bundle
 runtime/chatterbox_profile runtime/chatterbox_assets runtime/chatterbox_health
 runtime/chatterbox_distribution runtime/chatterbox_voice runtime/chatterbox_worker
 storage/__init__ storage/manifest storage/paths tts/__init__ tts/assembly tts/catalog
-tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/selection
+tts/chunk_synthesis tts/chunking tts/manifest tts/post_processing tts/reference_audio tts/selection
 """.split()
 
 

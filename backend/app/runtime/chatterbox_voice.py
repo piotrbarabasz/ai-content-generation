@@ -9,21 +9,30 @@ from app.tts.selection import map_catalog_selection
 from .chatterbox_profile import profile_fingerprint
 
 
-def prepare_voice(selection, max_words, health, runtime_identity, *, model_loader=None):
-    if (set(selection) - {"provider", "model", "voice", "language", "settings"}
+def prepare_voice(selection, max_words, health, runtime_identity, *, model_loader=None,
+                  reference_path=None):
+    if (set(selection) - {"provider", "model", "voice", "language", "settings",
+                          "reference_audio_artifact_id", "reference_audio_metadata"}
             or selection.get("provider") != "chatterbox_v3" or selection.get("model") != "v3"
-            or selection.get("voice") != "builtin" or selection.get("language") not in health.languages):
-        raise ValueError("Managed Chatterbox requires V3, a tested language and the builtin voice.")
+            or selection.get("voice") not in {"builtin", "reference"}
+            or selection.get("language") not in health.languages):
+        raise ValueError("Managed Chatterbox requires V3 and a tested language/voice.")
+    uses_reference = selection.get("voice") == "reference"
+    if uses_reference != (reference_path is not None):
+        raise ValueError("Managed Chatterbox reference voice requires controlled approved audio.")
     if selection.get("settings", {}).get("device") != health.device:
         raise ValueError("Select the exact health-tested CUDA device; fallback is not implicit.")
     if type(max_words) is not int or not 1 <= max_words <= 1000:
         raise ValueError("Invalid Chatterbox technical chunk size.")
     mapping = map_catalog_selection(catalog=build_tts_catalog(), **{k: selection[k] for k in
                                     ("provider", "model", "voice", "language")},
-                                    synthesis_settings=selection.get("settings"))
+                                    synthesis_settings=selection.get("settings"),
+                                    reference_audio_artifact_id=selection.get("reference_audio_artifact_id"),
+                                    reference_audio_metadata=selection.get("reference_audio_metadata"))
 
     def factory(settings):
         return ChatterboxV3Provider(device=health.device, language_id=mapping.language,
+                                   audio_prompt_path=reference_path,
                                    model_loader=model_loader, **{name: getattr(settings, name) for name in
                                    ("exaggeration", "cfg_weight", "temperature", "repetition_penalty", "min_p", "top_p")})
 
