@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import replace
+from inspect import signature
 import shutil
 
 from app.application.section_audio import OPERATION, VERSION
@@ -85,9 +86,11 @@ class ManagedSectionPreviewProvider:
     provider_type = ProviderType.TTS
     provider_name = "piper"
 
-    def __init__(self, managed, launch, prepared, *, device=None, limits=WorkerLimits()):
+    def __init__(self, managed, launch, prepared, *, device=None, limits=WorkerLimits(),
+                 resolved_reference=None):
         self.managed, self.launch, self.prepared = managed, launch, prepared
         self.device, self.limits = device, limits
+        self.resolved_reference = resolved_reference
         self.provider_name = prepared["selection"]["provider"]
 
     def capabilities(self):
@@ -117,7 +120,14 @@ class ManagedSectionPreviewProvider:
             raise RuntimeError(f"Managed preview failed: {detail}")
         directory = workspace(self.managed.work_root, job)
         try:
-            with self.managed.validated(job) as (source, _metadata):
+            validate = self.managed.validated
+            try:
+                signature(validate).bind(job, resolved_reference=self.resolved_reference)
+            except (TypeError, ValueError):
+                validated = self.managed.validated(job)
+            else:
+                validated = validate(job, resolved_reference=self.resolved_reference)
+            with validated as (source, _metadata):
                 payload = source.read()
             parameters, _ = inspect_pcm_wav(payload)
             return TTSSynthesisResult(payload, parameters.sample_rate, parameters.duration_seconds,

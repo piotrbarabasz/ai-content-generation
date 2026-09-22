@@ -51,6 +51,8 @@ def compose_installed_chatterbox_audio(session, *, paths: UserDataPaths | None =
     from app.runtime.chatterbox_audio import CandidateChatterboxAudio
     from app.runtime.chatterbox_distribution import load_approved_chatterbox_distribution
     from app.runtime.chatterbox_provisioning import ChatterboxProvisioner
+    from app.storage.local_store import LocalArtifactStore
+    from app.storage.reference_audio import ProjectReferenceAudio
 
     paths = (paths or UserDataPaths.discover()).prepare()
     distribution = load_approved_chatterbox_distribution()
@@ -58,12 +60,17 @@ def compose_installed_chatterbox_audio(session, *, paths: UserDataPaths | None =
     models = ChatterboxAssets(paths.models / "chatterbox-v3")
     if runtime is None or models.installed() is None:
         return None
+    references = ProjectReferenceAudio(
+        session.repository, LocalArtifactStore.for_project(session.repository),
+        paths.cache / "reference-audio" / session.project.id)
     managed = CandidateChatterboxAudio(
         runtime.worker_launch(), runtime.health, runtime.distribution_fingerprint,
         models.root, paths.cache / "section-audio", runtime_cache=runtime.cache_root,
+        references=references, reference_cache=references.runtime_root,
     )
     return compose_candidate_chatterbox_audio(
-        session, managed=managed, preview_root=paths.cache / "voice-previews")
+        session, managed=managed, preview_root=paths.cache / "voice-previews",
+        reference_audio=references)
 
 
 __all__ = ["compose_installed_audio", "compose_installed_chatterbox_audio"]

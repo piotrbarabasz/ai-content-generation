@@ -362,9 +362,14 @@ separate from production narration chunks. Cache reads validate both manifest an
 WAV integrity. API callers receive opaque IDs and audio URLs, never storage paths.
 
 Reference-voice previews require an injected resolver for approved opaque audio
-artifact IDs. The default API dependency does not provide such a resolver or an
-upload/approval API. Builtin selections work with configured runtimes; adding
-managed reference-audio intake and application resolver wiring is roadmap work.
+artifact IDs. The default API dependency does not provide an upload/approval API,
+while the installed desktop Chatterbox composition injects the project-owned D030
+resolver. Desktop intake validates and retains immutable WAV source artifacts;
+approval/rejection decisions form an append-only checksum-bound chain. Preview and
+production selections persist only the opaque source ID and approval metadata. A
+verified copy is materialized below private configured cache storage and its path
+exists only across the trusted runtime/worker boundary. See
+[D030 approved reference audio](../desktop/D030_APPROVED_REFERENCE_AUDIO.md).
 
 Prior installations used `.specify/runtime/tts-previews`. Cleanup does not erase
 that ignored cache. It may be regenerated; applications requiring those existing

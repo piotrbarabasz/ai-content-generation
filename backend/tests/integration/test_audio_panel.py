@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from app.desktop.audio_panel import AudioPanel
 from app.desktop.audio_services import AudioChoice, PlaybackAudio
@@ -186,3 +186,51 @@ def test_async_process_io_keeps_qt_timer_alive(panel):
     wait_until(lambda: not widget.busy)
     timer.stop()
     assert widget.status.text() == "completed" and len(ticks) > 3
+
+
+def test_reference_intake_approval_and_rejection_refresh_voice_selection(qt, tmp_path, monkeypatch):
+    class ReferenceServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.source = None
+            self.decision = None
+
+        def reference_entries(self):
+            return () if self.source is None else ((self.source, self.decision),)
+
+        def import_reference(self, path):
+            self.source = SimpleNamespace(artifact_id="reference_1", source_name="speaker.wav",
+                                          duration_seconds=1.0)
+            return self.source
+
+        def approve_reference(self, artifact_id, label):
+            assert artifact_id == "reference_1"
+            self.decision = SimpleNamespace(status="approved", label=label)
+
+        def reject_reference(self, artifact_id, label):
+            assert artifact_id == "reference_1"
+            self.decision = SimpleNamespace(status="rejected", label=label)
+
+        def choices(self, language):
+            choices = list(super().choices(language))
+            if self.decision is not None and self.decision.status == "approved":
+                choices.append(AudioChoice("Approved reference", "mock", "v3", "reference", language,
+                                           "reference_1", "a" * 64, self.decision.label))
+            return tuple(choices)
+
+    path = tmp_path / "speaker.wav"
+    path.write_bytes(_wav())
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: (str(path), "WAV audio (*.wav)"))
+    widget, service = AudioPanel(), ReferenceServices()
+    try:
+        widget.bind(service, "en")
+        widget.import_reference()
+        assert widget.references.count() == 1 and widget.voices.count() == 1
+        widget.approval_label.setText("speaker-consent")
+        widget.approve_reference()
+        assert widget.voices.count() == 2 and "approved" in widget.references.currentText()
+        widget.approval_label.setText("consent-withdrawn")
+        widget.reject_reference()
+        assert widget.voices.count() == 1 and "rejected" in widget.references.currentText()
+    finally:
+        widget.close()

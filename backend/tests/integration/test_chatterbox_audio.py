@@ -22,6 +22,8 @@ from app.runtime.chatterbox_profile import ChatterboxHealth, profile_fingerprint
 from app.runtime.resources import APPLICATION_GPU_RESOURCES
 from app.runtime.supervisor import WorkerLaunch
 from app.storage.project_repository import ProjectRepository
+from app.storage.local_store import LocalArtifactStore
+from app.storage.reference_audio import ProjectReferenceAudio
 
 
 PYTHON = Path(getattr(sys, "_base_executable", sys.executable))
@@ -135,6 +137,45 @@ def test_device_change_cannot_publish_previous_output(setup):
     managed.health = replace(managed.health, device="cuda:1")
     with pytest.raises(ValueError, match="CUDA"):
         managed.validated(services.coordinator.repository.get_job(queued.job_id))
+
+
+def test_same_approved_reference_id_drives_preview_and_production_without_path_leak(setup):
+    session, managed, services, section = setup
+    references = ProjectReferenceAudio(
+        session.repository, LocalArtifactStore.for_project(session.repository),
+        managed.work_root.parent / "reference-cache")
+    source_path = managed.work_root.parent / "private-speaker.wav"
+    with wave.open(str(source_path), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\x01\x00" * 16000)
+    source = references.import_file(source_path)
+    references.approve(source.artifact_id, "speaker-consent")
+    managed.references, managed.reference_cache = references, references.runtime_root
+    services = compose_candidate_chatterbox_audio(
+        session,
+        managed=managed,
+        preview_root=managed.work_root.parent / "reference-previews",
+        reference_audio=references,
+    )
+    choice = next(item for item in services.choices("pl") if item.voice == "reference")
+    selection = services.selection(choice)
+    assert selection["reference_audio_artifact_id"] == source.artifact_id
+    assert str(source_path) not in str(selection)
+    assert asyncio.run(services.preview(choice, "Próba głosu.")).payload.startswith(b"RIFF")
+    queued = services.production.enqueue(section, selection)
+    job = services.coordinator.repository.get_job(queued.job_id)
+    assert str(source_path) not in job.input_snapshot_json
+    result = asyncio.run(services.supervisor.run_next())
+    assert result.attempt.status == "completed"
+    manifest = next(item for item in services.store.list_artifacts()
+                    if "section_audio" in item.metadata)
+    assert manifest.metadata["section_audio"]["checksum"]
+    prepared = managed.prepare(selection, 120)
+    assert prepared["effective_identity"]["synthesis"]["voice"] == {
+        "mode": "reference", "content_checksum": source.checksum}
+    references.reject(source.artifact_id, "consent-withdrawn")
+    with pytest.raises(ValueError, match="approval|checksum"):
+        managed.prepare(selection, 120)
 
 
 def test_real_handler_loads_only_local_v3_and_preserves_chunks_on_native_oom(setup, monkeypatch):

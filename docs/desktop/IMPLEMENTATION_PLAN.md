@@ -911,7 +911,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D030 — Approved reference-audio intake
 
-- **Status:** Planned
+- **Status:** Completed — immutable intake/history and shared preview/production identity PASS (2026-09-22)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Use controlled reference audio consistently in preview and production.
@@ -921,6 +921,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/tts/selection.py, preview.py, storage/reference service and small desktop intake control; tests.
 - **Acceptance criteria:** Same approved ID works in preview and narration; changed bytes/unapproved ID fail or change identity; earlier source/approval history survives.
 - **Test strategy:** Offline resolver, tampering, approval and identity tests plus explicitly supplied reference smoke where authorized.
+- **Implementation boundary:** Project intake publishes a bounded validated PCM WAV as an immutable D004 artifact and records every approval/rejection as a checksum-bound append-only decision artifact. Desktop selections and queued jobs contain only the opaque source ID and frozen approval metadata. The current approval and retained bytes are revalidated before use; a private checksum-named cache path crosses only the trusted Chatterbox composition/worker boundary. Preview and production share the prepared effective identity, including the reference content checksum. The minimal audio-panel controls import, approve/reject and expose only approved references; Piper behavior and XTTS production restrictions are unchanged.
+- **Evidence:** [D030 approved reference audio](D030_APPROVED_REFERENCE_AUDIO.md) records intake limits, immutable source/decision history, opaque resolution, path containment, preview/production wiring and UI behavior. Offline integration uses one approved opaque ID for both managed preview and section narration and proves that the external path is absent from selection/job state. Tampering, rejection, changed import identity and project reopen are covered. No private reference recording was supplied or committed; the conditional supplied-reference smoke was therefore not run.
 
 ### D031 — Measured text-audio alignment adapter
 

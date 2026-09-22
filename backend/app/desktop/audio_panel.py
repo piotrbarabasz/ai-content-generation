@@ -4,13 +4,14 @@ import asyncio
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QVBoxLayout, QWidget)
 
 
 class AudioPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.services = self.section = None
+        self.services = self.section = self.language = None
         self.task = self.loop = None
         self.cancel_requested = False
         self.draft = False
@@ -26,6 +27,23 @@ class AudioPanel(QWidget):
         self.preview_text = QLineEdit("This is a short voice preview.")
         self.preview_text.setMaxLength(400)
         layout.addWidget(self.preview_text)
+        references = QHBoxLayout()
+        layout.addLayout(references)
+        self.references = QComboBox()
+        self.references.setToolTip("Imported reference audio; approval history is retained in the project.")
+        references.addWidget(self.references)
+        self.approval_label = QLineEdit("editor-approved")
+        self.approval_label.setMaxLength(128)
+        self.approval_label.setPlaceholderText("Approval label or rejection reason")
+        references.addWidget(self.approval_label)
+        self.reference_buttons = {}
+        for name, callback in (("Import reference WAV", self.import_reference),
+                               ("Approve reference", self.approve_reference),
+                               ("Reject reference", self.reject_reference)):
+            button = QPushButton(name)
+            button.clicked.connect(callback)
+            references.addWidget(button)
+            self.reference_buttons[name] = button
         actions = QHBoxLayout()
         layout.addLayout(actions)
         self.buttons = {}
@@ -59,23 +77,90 @@ class AudioPanel(QWidget):
         self.buttons["Generate section audio"].setEnabled(voice and self.section is not None and not self.busy and not self.draft)
         self.buttons["Play audio"].setEnabled(available and self.section is not None and not self.busy)
         self.buttons["Cancel audio"].setEnabled(self.busy and not self.cancel_requested)
+        configured = getattr(self.services, "reference_audio_available", None) if available else None
+        reference_capable = available and (
+            bool(configured()) if callable(configured) else hasattr(self.services, "reference_entries"))
+        selected_reference = reference_capable and self.references.currentData() is not None
+        self.references.setEnabled(reference_capable and not self.busy)
+        self.approval_label.setEnabled(reference_capable and not self.busy)
+        self.reference_buttons["Import reference WAV"].setEnabled(reference_capable and not self.busy)
+        self.reference_buttons["Approve reference"].setEnabled(selected_reference and not self.busy)
+        self.reference_buttons["Reject reference"].setEnabled(selected_reference and not self.busy)
 
     def bind(self, services, language):
         if self.busy:
             raise ValueError("Cancel audio and wait for worker cleanup before switching projects.")
         self.stop()
-        self.services, self.section = services, None
+        self.services, self.section, self.language = services, None, language
+        self._refresh_references()
+        self._refresh_voices()
+        self._enable()
+
+    def _refresh_voices(self):
         self.voices.clear()
-        if services:
+        if self.services:
             try:
-                for choice in services.choices(language):
+                for choice in self.services.choices(self.language):
                     self.voices.addItem(choice.label, choice)
                 self.status.setText("Ready" if self.voices.count() else "No compatible configured voices for this language.")
             except Exception as exc:
                 self.status.setText(str(exc))
         else:
             self.status.setText("Audio services are not configured.")
+
+    def _refresh_references(self):
+        self.references.clear()
+        if self.services is None or not hasattr(self.services, "reference_entries"):
+            return
+        try:
+            for source, decision in self.services.reference_entries():
+                status = "pending" if decision is None else f"{decision.status}: {decision.label}"
+                self.references.addItem(
+                    f"{source.source_name} / {source.duration_seconds:.2f}s / {status}", source.artifact_id)
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def import_reference(self):
+        if self.services is None or self.busy or not hasattr(self.services, "import_reference"):
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Import reference WAV", "", "WAV audio (*.wav)")
+        if not path:
+            return
+        try:
+            source = self.services.import_reference(path)
+            self._refresh_references()
+            index = self.references.findData(source.artifact_id)
+            if index >= 0:
+                self.references.setCurrentIndex(index)
+            self.status.setText("Reference imported; approve it before use.")
+        except Exception as exc:
+            self.status.setText(str(exc))
         self._enable()
+
+    def _decide_reference(self, approved):
+        artifact_id = self.references.currentData()
+        if self.services is None or self.busy or artifact_id is None:
+            return
+        try:
+            label = self.approval_label.text()
+            if approved:
+                self.services.approve_reference(artifact_id, label)
+            else:
+                self.services.reject_reference(artifact_id, label)
+            self._refresh_references()
+            index = self.references.findData(artifact_id)
+            if index >= 0:
+                self.references.setCurrentIndex(index)
+            self._refresh_voices()
+        except Exception as exc:
+            self.status.setText(str(exc))
+        self._enable()
+
+    def approve_reference(self):
+        self._decide_reference(True)
+
+    def reject_reference(self):
+        self._decide_reference(False)
 
     def select_section(self, section):
         self.stop()

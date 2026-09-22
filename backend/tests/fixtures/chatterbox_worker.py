@@ -38,8 +38,16 @@ def handle(payload, report, canceled):
                 wav.writeframes(b"\x01\x00" * 2400)
             return buffer.getvalue()
 
+    reference_path = None
+    if expected["selection"].get("voice") == "reference":
+        from app.tts.reference_audio import resolve_cached_reference
+        reference_path = resolve_cached_reference(
+            os.environ["AICS_REFERENCE_AUDIO_CACHE"],
+            expected["selection"]["reference_audio_artifact_id"],
+            expected["selection"]["reference_audio_metadata"])
     actual, provider = prepare_voice(expected["selection"], expected["max_words"], health,
-                                     json.loads(os.environ["AICS_SECTION_RUNTIME"]), model_loader=lambda device: Backend())
+                                     json.loads(os.environ["AICS_SECTION_RUNTIME"]),
+                                     model_loader=lambda device: Backend(), reference_path=reference_path)
     if actual != expected:
         raise ValueError("Fixture request identity mismatch")
     return generate(job, provider, os.environ["AICS_SECTION_WORK"], report, canceled.is_set)

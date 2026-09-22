@@ -23,9 +23,17 @@ class AudioChoice:
     model: str
     voice: str
     language: str
+    reference_audio_artifact_id: str | None = None
+    reference_checksum: str | None = None
+    approval_label: str | None = None
 
     def selection(self):
-        return {key: getattr(self, key) for key in ("provider", "model", "voice", "language")}
+        value = {key: getattr(self, key) for key in ("provider", "model", "voice", "language")}
+        if self.reference_audio_artifact_id is not None:
+            value["reference_audio_artifact_id"] = self.reference_audio_artifact_id
+            value["reference_audio_metadata"] = {
+                "checksum": self.reference_checksum, "approval_label": self.approval_label, "approved": True}
+        return value
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,7 @@ class AudioServices:
         self.index, self.store = index, store
         self.preview_root, self.preview_builder = preview_root, preview_builder
         self.providers, self.settings = tuple(providers), deepcopy(settings or {})
+        self.reference_audio = None
         self._prepared_identities = {}
         self.attempt = None
         self.canceled = False
@@ -61,12 +70,21 @@ class AudioServices:
                 continue
             for model in provider.models:
                 for voice in model.voices:
-                    if voice.voice_mode == "reference" or not voice.preview_supported:
+                    if not voice.preview_supported:
                         continue
-                    choice = AudioChoice(f"{provider.display_name} / {model.display_name} / {voice.display_name}",
-                                         provider.id, model.id, voice.id, language)
-                    self.selection(choice)  # Canonical compatibility and policy validation.
-                    result.append(choice)
+                    references = (self.reference_audio.approved() if voice.voice_mode == "reference"
+                                  and self.reference_audio is not None else ())
+                    candidates = references if voice.voice_mode == "reference" else (None,)
+                    for reference in candidates:
+                        suffix = "" if reference is None else f" / {reference.source_name} ({reference.approval_label})"
+                        choice = AudioChoice(
+                            f"{provider.display_name} / {model.display_name} / {voice.display_name}{suffix}",
+                            provider.id, model.id, voice.id, language,
+                            None if reference is None else reference.artifact_id,
+                            None if reference is None else reference.checksum,
+                            None if reference is None else reference.approval_label)
+                        self.selection(choice)  # Canonical compatibility and policy validation.
+                        result.append(choice)
         return tuple(result)
 
     def selection(self, choice):
@@ -75,8 +93,62 @@ class AudioServices:
         map_catalog_selection(catalog=self.catalog, **selection, synthesis_settings=settings)
         return selection | {"settings": settings}
 
-    def _preview(self, selection, text):
-        prepared = self.production.voices.prepare(selection, 120)
+    def configure_reference_audio(self, service):
+        self.reference_audio = service
+        return self
+
+    def reference_audio_available(self):
+        return self.reference_audio is not None
+
+    def reference_sources(self):
+        return () if self.reference_audio is None else self.reference_audio.sources()
+
+    def reference_entries(self):
+        if self.reference_audio is None:
+            return ()
+        return tuple((source, self.reference_audio.decision(source.artifact_id))
+                     for source in self.reference_audio.sources())
+
+    def import_reference(self, path):
+        if self.reference_audio is None:
+            raise ValueError("Reference-audio intake is not configured.")
+        return self.reference_audio.import_file(path)
+
+    def approve_reference(self, artifact_id, label):
+        if self.reference_audio is None:
+            raise ValueError("Reference-audio intake is not configured.")
+        return self.reference_audio.approve(artifact_id, label)
+
+    def reject_reference(self, artifact_id, label):
+        if self.reference_audio is None:
+            raise ValueError("Reference-audio intake is not configured.")
+        return self.reference_audio.reject(artifact_id, label)
+
+    def _resolved_reference(self, selection):
+        artifact_id = selection.get("reference_audio_artifact_id")
+        if artifact_id is None:
+            return None
+        if self.reference_audio is None:
+            raise ValueError("Approved reference-audio storage is not configured.")
+        resolved = self.reference_audio.resolve(artifact_id)
+        if resolved is None:
+            raise ValueError("Reference audio is not approved.")
+        return resolved
+
+    def _prepare_voice(self, selection, max_words, reference):
+        prepare = self.production.voices.prepare
+        if reference is not None:
+            try:
+                signature(prepare).bind(
+                    selection, max_words, resolved_reference=reference)
+            except (TypeError, ValueError):
+                pass
+            else:
+                return prepare(selection, max_words, resolved_reference=reference)
+        return prepare(selection, max_words)
+
+    def _preview(self, selection, text, resolved_reference=None):
+        prepared = self._prepare_voice(selection, 120, resolved_reference)
         self._prepared_identities[canonical_json(selection)] = deepcopy(prepared["effective_identity"])
         expected = prepared["effective_identity"]["synthesis"]
         build = self.preview_builder
@@ -86,36 +158,54 @@ class AudioServices:
                 self.wrapped = wrapped
 
             def effective_synthesis_identity(self, config):
-                identity = self.wrapped.effective_synthesis_identity(config)
+                identity = self.wrapped.effective_synthesis_identity(prepared.get("voice_config", config))
                 if identity != expected:
                     raise ValueError("Preview and production synthesis identities differ.")
                 return identity
+
+            def synthesize(self, text, config):
+                return self.wrapped.synthesize(text, prepared.get("voice_config", config))
 
             def __getattr__(self, name):
                 return getattr(self.wrapped, name)
 
         def provider(config):
             try:
-                signature(build).bind(config, prepared)
+                signature(build).bind(config, prepared, resolved_reference)
             except (TypeError, ValueError):
-                wrapped = build(config)
+                try:
+                    signature(build).bind(config, prepared)
+                except (TypeError, ValueError):
+                    wrapped = build(config)
+                else:
+                    wrapped = build(config, prepared)
             else:
-                wrapped = build(config, prepared)
+                wrapped = build(config, prepared, resolved_reference)
             return CheckedProvider(wrapped)
 
+        reference_id = selection.get("reference_audio_artifact_id")
+        resolver = None
+        if resolved_reference is not None:
+            resolver = lambda artifact_id: (
+                resolved_reference if artifact_id == reference_id else None)
         preview = TTSPreviewService(catalog=self.catalog, preview_root=self.preview_root,
-                                    provider_builder=provider)
+                                    provider_builder=provider,
+                                    reference_artifact_resolver=resolver)
         result = preview.synthesize_preview(
             **{key: selection[key] for key in ("provider", "model", "voice", "language")},
+            reference_audio_artifact_id=selection.get("reference_audio_artifact_id"),
             synthesis_settings=selection["settings"], tempo=1.0, text=text)
         return PlaybackAudio(preview.read_audio(result.preview_id), False, "Voice preview")
 
     async def preview(self, choice, text):
-        return await asyncio.to_thread(self._preview, self.selection(choice), text)
+        selection = self.selection(choice)
+        reference = self._resolved_reference(selection)
+        return await asyncio.to_thread(self._preview, selection, text, reference)
 
     async def generate(self, section, choice):
         selection = self.selection(choice)
-        prepared = await asyncio.to_thread(self.production.voices.prepare, selection, 120)
+        reference = self._resolved_reference(selection)
+        prepared = await asyncio.to_thread(self._prepare_voice, selection, 120, reference)
         self._prepared_identities[canonical_json(selection)] = deepcopy(prepared["effective_identity"])
         if self.canceled:
             return "Canceled before enqueue"
