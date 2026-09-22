@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, field
 import math
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +15,7 @@ from app.jobs.coordinator import JobCoordinator
 from .protocol import (
     MAX_FRAME_BYTES, ProtocolError, check_identity, encode_frame, message, read_message_async,
 )
+from .resources import APPLICATION_GPU_RESOURCES, DeviceDecision
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class WorkerRunResult:
     pid: int | None
     returncode: int | None
     stderr_tail: str
+    device_identity: dict = field(default_factory=dict)
 
 
 class WorkerSupervisor:
@@ -75,7 +78,8 @@ class WorkerSupervisor:
     """
 
     def __init__(self, coordinator: JobCoordinator, launch: WorkerLaunch, *, limits=WorkerLimits(),
-                 completion_handler: Callable[[JobAttempt, tuple[str, ...]], object] | None = None):
+                 completion_handler: Callable[[JobAttempt, tuple[str, ...]], object] | None = None,
+                 device: DeviceDecision | None = None, resources=None):
         self.coordinator = coordinator
         self.launch = launch
         self.limits = limits
@@ -87,6 +91,42 @@ class WorkerSupervisor:
         self.process = None
         self._started = None
         self._process_job = None
+        self.device = device
+        self.resources = APPLICATION_GPU_RESOURCES if resources is None else resources
+        self._resource_lease = None
+        self._unresolved_claim = None
+
+    def retry_oom(self, result: WorkerRunResult):
+        """Explicit one-retry policy; never mutate a job or substitute devices."""
+        if self.device is None or self.device.effective == "cpu" or self._resource_lease is not None:
+            raise ValueError("OOM recovery requires a cleaned-up managed GPU worker.")
+        previous = self.coordinator.repository.get_attempt(result.attempt.id)
+        job = self.coordinator.repository.get_job(previous.job_id)
+        self.device.validate(job.request)
+        attempts = self.coordinator.repository.attempts(job.id)
+        if (previous != result.attempt or previous != attempts[-1]
+                or previous.status != AttemptStatus.FAILED or not previous.error.startswith("gpu_oom:")
+                or result.returncode is None or result.device_identity != self.device.to_payload()
+                or sum(a.error.startswith("gpu_oom:") for a in attempts) != 1):
+            raise ValueError("Only the first confirmed GPU OOM permits one explicit retry.")
+        return self.coordinator.retry(job.id)
+
+    async def unload(self):
+        """Unload through process exit; also retry previously uncertain cleanup."""
+        await self.close()
+        if self._resource_lease is not None:
+            await self._cleanup([], None)
+            self.resources.release(self._resource_lease)
+            self._resource_lease = None
+        if self._unresolved_claim is not None:
+            claim = self._unresolved_claim
+            current = self.coordinator.repository.get_attempt(claim.id)
+            if current.status == AttemptStatus.RUNNING:
+                if current.cancel_requested:
+                    self.coordinator.acknowledge_cancel(claim)
+                else:
+                    self.coordinator.fail(claim, "worker_cleanup: recovered after uncertain process cleanup")
+            self._unresolved_claim = None
 
     def request_cancel(self):
         if self._claim is not None:
@@ -192,9 +232,25 @@ class WorkerSupervisor:
     async def run_next(self, owner="local-worker") -> WorkerRunResult | None:
         if self._task is not None:
             raise RuntimeError("This supervisor already owns an attempt.")
+        if self._resource_lease is not None:
+            raise RuntimeError("GPU cleanup is unresolved; unload the previous worker first.")
+        if self.device is not None and self.device.effective != "cpu":
+            lease = self.resources.acquire(owner, self.device.effective)
+            if lease is None:
+                return None  # Contention must leave durable work queued.
+            self._resource_lease = lease
         self.process = None
-        claim = self.coordinator.claim_next(owner)
+        try:
+            claim = self.coordinator.claim_next(owner)
+        except BaseException:
+            if self._resource_lease is not None:
+                self.resources.release(self._resource_lease)
+                self._resource_lease = None
+            raise
         if claim is None:
+            if self._resource_lease is not None:
+                self.resources.release(self._resource_lease)
+                self._resource_lease = None
             return None
         self._task, self._claim = asyncio.current_task(), claim
         self._started = asyncio.Event()
@@ -203,6 +259,10 @@ class WorkerSupervisor:
         logs = None
         try:
             job = self.coordinator.repository.get_job(claim.job_id)
+            if self.device is not None:
+                self.device.validate(job.request)
+            elif "runtime_device" in json.loads(job.request.effective_identity_json):
+                raise ValueError("A device-bound job requires explicit managed worker composition.")
             environment = {key: value for key, value in os.environ.items()
                            if not key.upper().startswith("PYTHON") and key.upper() != "VIRTUAL_ENV"}
             environment.update(self.launch.environment)
@@ -212,6 +272,8 @@ class WorkerSupervisor:
                 limit=MAX_FRAME_BYTES + 4,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+            if self._resource_lease is not None:
+                self.resources.attach(self._resource_lease, self.process)
             if os.name == "nt":
                 from .windows_job import WindowsJob
                 self._process_job = WindowsJob(self.process.pid)
@@ -246,12 +308,18 @@ class WorkerSupervisor:
                 while True:
                     try:
                         await asyncio.shield(cleanup)
+                        if self._resource_lease is not None:
+                            self.resources.release(self._resource_lease)
+                            self._resource_lease = None
                         break
                     except asyncio.CancelledError:
                         # Repeated shutdown requests cannot abandon pipe/process cleanup.
                         external_cancel, canceled = True, True
                         self.request_cancel()
             finally:
+                if self._resource_lease is not None:
+                    self.resources.quarantine(self._resource_lease)
+                    self._unresolved_claim = claim
                 self._task, self._claim = None, None
         current = self.coordinator.repository.get_attempt(claim.id)
         canceled = canceled or current.cancel_requested
@@ -284,4 +352,5 @@ class WorkerSupervisor:
             raise asyncio.CancelledError
         return WorkerRunResult(outcome, self.process.pid if self.process else None,
                                self.process.returncode if self.process else None,
-                               bytes(tail).decode("utf-8", errors="replace"))
+                               bytes(tail).decode("utf-8", errors="replace"),
+                               self.device.to_payload() if self.device is not None else {})

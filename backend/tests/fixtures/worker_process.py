@@ -74,6 +74,8 @@ elif case in ("cancel", "late-complete"):
     send("canceled" if case == "cancel" else "completed", None if case == "cancel" else {"artifact_ids": ["late_result"]})
 elif case == "failure":
     send("failed", {"code": "fixture_failure", "message": "offline failure"})
+elif case == "gpu-oom":
+    send("failed", {"code": "gpu_oom", "message": "Device memory exhausted"})
 elif case == "regression":
     send("progress", {"phase": "work", "completed": 0, "total": 2})
 elif case == "unsolicited-cancel":
@@ -84,7 +86,7 @@ else:
     if case == "stderr-flood":
         sys.stderr.write("x" * 300000 + "LOG-END")
         sys.stderr.flush()
-    send("completed", {"artifact_ids": ["reported_artifact"]})
+    send("completed", {"artifact_ids": [] if case == "preview-success" else ["reported_artifact"]})
     if case == "extra":
         send("completed", {"artifact_ids": []})
     elif case == "terminal-hang":

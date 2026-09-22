@@ -879,7 +879,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D028 — Application-wide GPU resource lease
 
-- **Status:** Planned
+- **Status:** Completed — shared GPU ownership and offline recovery acceptance PASS (2026-09-22); measured real-profile smoke belongs to D029
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Prevent concurrent model operations from exhausting one device.
@@ -889,6 +889,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/runtime/ resource manager, coordinator lease integration; tests.
 - **Acceptance criteria:** Two jobs never own the same GPU simultaneously; crash/OOM releases ownership; device changes are recorded in the request/result identity.
 - **Test strategy:** Deterministic fake-device/process contention, OOM and restart tests; measured hardware smoke is attached when D029 provides a real profile.
+- **Implementation boundary:** One process-wide, thread-safe manager is shared by all managed GPU job and preview supervisors in the desktop application. A lease is acquired before a queue claim and held until D007 confirms worker cleanup; uncertain cleanup quarantines ownership. A device decision pins the tested profile, requested/effective device and explicit fallback approval in request/result identity. OOM retry is explicit and limited to one new attempt of the unchanged job after process exit. D029 supplies concrete GPU profiles and hardware measurements; no existing CPU or remote provider is moved onto a GPU. Work proceeds under the previously accepted exception for D025's pending release gates.
+- **Evidence:** [D028 GPU resource lease](D028_GPU_RESOURCE_LEASE.md) records shared project/preview ownership, lightweight availability, process-exit unloading, cleanup quarantine, explicit bounded OOM recovery and capability-tested device identity. Offline tests include concurrent threads, real diagnostic child processes and Windows parent-crash recovery; no GPU model is loaded.
+- **Validation:** Focused resource-manager, GPU-worker and D007 lifecycle tests: 58 passed in 20.59 s. Full `python -m pytest backend/tests`: 1595 passed, 11 existing optional tests skipped in 617.37 s (Windows, isolated Python 3.11.9). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS. D025 release gates remain open; D029 owns concrete GPU profile/selection and hardware measurements.
 
 ### D029 — Managed Chatterbox profile
 

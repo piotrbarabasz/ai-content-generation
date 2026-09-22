@@ -15,7 +15,7 @@ providers/interfaces providers/image_generation providers/mock_tts providers/pip
 providers/registry providers/tts_capabilities providers/tts_catalog providers/tts_factory
 providers/tts_result providers/tts_settings providers/xtts_v2 runtime/__init__
 runtime/model_index runtime/native_piper runtime/piper_health runtime/piper_worker
-runtime/profile_catalog runtime/profiles runtime/protocol runtime/provisioning
+runtime/profile_catalog runtime/profiles runtime/protocol runtime/provisioning runtime/resources
 runtime/section_synthesis runtime/section_voice runtime/section_worker runtime/supervisor
 runtime/voice_http runtime/windows_job runtime/worker runtime/worker_bundle
 storage/__init__ storage/manifest storage/paths tts/__init__ tts/assembly tts/catalog

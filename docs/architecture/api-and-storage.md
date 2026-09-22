@@ -171,6 +171,16 @@ version-bound observations from the fixed D008 probe; its construction
 does not execute that probe. Voice files remain external requirements referencing
 the existing curated Piper catalog. See [D045 profile contract and evidence](../desktop/D045_RUNTIME_PROFILES.md).
 
+## GPU worker ownership (D028)
+
+D028 adds a shared, thread-safe GPU lease to the D007 supervisor. Explicitly
+device-bound work reserves ownership before queue claim and releases it only after
+process cleanup; uncertain cleanup quarantines the lease. Projects and private
+preview coordinators use the same manager. Device/profile/fallback decisions are
+pinned in request and result identity, and a typed OOM failure permits one explicit
+retry after exit. This is scheduling within one application process; D029 provides
+the real GPU profile. See [D028 ownership and recovery](../desktop/D028_GPU_RESOURCE_LEASE.md).
+
 ## Private Piper runtime provisioning (D008)
 
 `runtime.provisioning.PiperProvisioner` installs the approved profile from an

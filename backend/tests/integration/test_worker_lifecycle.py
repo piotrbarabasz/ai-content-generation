@@ -194,10 +194,14 @@ def test_windows_job_reaps_inherited_child_process(setup):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows kill-on-parent-exit containment")
-def test_parent_process_crash_kills_worker_and_queue_recovers_interrupted(tmp_path):
+@pytest.mark.parametrize("managed_gpu", [False, True])
+def test_parent_process_crash_kills_worker_and_queue_recovers_interrupted(tmp_path, managed_gpu):
+    from app.runtime.resources import DeviceDecision
+    decision = DeviceDecision("fake-profile", "cuda:0", "cuda:0", ("cuda:0",))
     with ProjectSession.create(tmp_path, repository_factory=ProjectRepository, name="Parent crash") as session:
         coordinator = JobCoordinator(JobRepository(session.repository))
-        queued = coordinator.enqueue("B:raw", RequestFingerprint.create("diagnostic.echo", "1"), {"text": "B1"})
+        request = RequestFingerprint.create("diagnostic.echo", "1")
+        queued = coordinator.enqueue("B:raw", decision.bind(request) if managed_gpu else request, {"text": "B1"})
     code = """
 import asyncio, os, sys
 from pathlib import Path
@@ -206,20 +210,25 @@ from app.application.projects import ProjectSession
 from app.jobs.coordinator import JobCoordinator
 from app.jobs.repository import JobRepository
 from app.runtime.supervisor import WorkerLaunch, WorkerSupervisor
+from app.runtime.resources import DeviceDecision, APPLICATION_GPU_RESOURCES
 from app.storage.project_repository import ProjectRepository
 with ProjectSession.open(sys.argv[2], repository_factory=ProjectRepository) as session:
     repository = JobRepository(session.repository)
-    worker = WorkerSupervisor(JobCoordinator(repository), WorkerLaunch(Path(sys.executable), Path(sys.argv[3]), {'WORKER_CASE': 'hang'}))
+    decision = DeviceDecision('fake-profile', 'cuda:0', 'cuda:0', ('cuda:0',)) if sys.argv[5] == 'gpu' else None
+    worker = WorkerSupervisor(JobCoordinator(repository), WorkerLaunch(Path(sys.executable), Path(sys.argv[3]), {'WORKER_CASE': 'hang'}), device=decision)
     async def run():
         task = asyncio.create_task(worker.run_next())
         while repository.get_attempt(sys.argv[4]).progress is None:
             assert not task.done()
             await asyncio.sleep(0.01)
         print(worker.process.pid, flush=True)
+        if decision is not None:
+            assert not APPLICATION_GPU_RESOURCES.availability().available
         os._exit(23)
     asyncio.run(run())
 """
-    result = subprocess.run([str(PYTHON), "-I", "-c", code, str(BACKEND), str(tmp_path), str(FIXTURE), queued.id],
+    result = subprocess.run([str(PYTHON), "-I", "-c", code, str(BACKEND), str(tmp_path), str(FIXTURE), queued.id,
+                             "gpu" if managed_gpu else "cpu"],
                             capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
     assert result.returncode == 23, result.stderr
     pid = int(result.stdout.strip())
@@ -239,3 +248,9 @@ with ProjectSession.open(sys.argv[2], repository_factory=ProjectRepository) as s
             api.CloseHandle(handle)
     with ProjectSession.open(tmp_path, repository_factory=ProjectRepository) as session:
         assert JobRepository(session.repository).get_attempt(queued.id).status == AttemptStatus.INTERRUPTED
+        if managed_gpu:
+            coordinator = JobCoordinator(JobRepository(session.repository))
+            coordinator.retry(queued.job_id)
+            restarted = WorkerSupervisor(coordinator, WorkerLaunch(PYTHON, FIXTURE, {"WORKER_CASE": "success"}),
+                                         device=decision)
+            assert asyncio.run(restarted.run_next()).attempt.status == AttemptStatus.COMPLETED
