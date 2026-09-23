@@ -10,6 +10,7 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 
 from app.application.timeline import TimelineCompiler, TimelineSceneInput
+from app.domain.caption_track import PublishedCaptionTrack
 from app.domain.dependencies import artifact_fingerprint
 from app.domain.publication import PUBLICATION_KEY, PublicationConflictError
 from app.domain.render_result import OPERATION, RenderedVideo, render_request
@@ -40,7 +41,10 @@ class RenderResultIndex(ResultArtifactIndex):
         if request.operation != OPERATION:
             return super()._artifact_inputs_match(connection, request, visiting)
         timeline = TimelineRevision.from_payload(json.loads(request.settings_json)["timeline"])
-        expected = render_request(timeline, json.loads(request.effective_identity_json))
+        caption_payload = json.loads(request.settings_json).get("captions")
+        captions = (PublishedCaptionTrack.from_payload(caption_payload)
+                    if caption_payload is not None else None)
+        expected = render_request(timeline, json.loads(request.effective_identity_json), captions)
         artifact_edges = tuple(e for e in request.inputs if e.artifact_id is not None)
         if (artifact_edges != expected.inputs or request.algorithm_version != expected.algorithm_version
                 or request.settings_json != expected.settings_json):
@@ -91,7 +95,7 @@ class ProjectVideoRender:
                     or clip.media.audio.end_sample not in boundaries):
                 raise ValueError("Render requires the exact currently selected timeline inputs.")
 
-    def stage(self, timeline):
+    def stage(self, timeline, *, captions=None):
         # A unique private directory per invocation retains failed bytes for
         # diagnosis and cannot overwrite a previous attempt or source artifact.
         workspace = self.index.repository.workspace
@@ -99,7 +103,24 @@ class ProjectVideoRender:
         root.mkdir(parents=True)
         for i, clip in enumerate(timeline.clips):
             self._stage_clip(root, i, clip)
+        if captions is not None:
+            self._stage_captions(root, timeline, captions)
         return root
+
+    def _stage_captions(self, root, timeline, captions):
+        if not isinstance(captions, PublishedCaptionTrack):
+            raise ValueError("Render captions must be a published caption track.")
+        from app.storage.captions import ProjectCaptionTracks
+        retained = ProjectCaptionTracks(self.index.repository, self.store).published(
+            captions.track.id)
+        if retained != captions or captions.track.timeline_id != timeline.id:
+            raise ValueError("Render captions differ from the selected timeline track.")
+        path = contained_path(root, "captions.ass")
+        with self.store.open_artifact_id(captions.ass_artifact_id) as source, path.open("xb") as target:
+            shutil.copyfileobj(source, target, 1024 * 1024)
+        with path.open("rb") as copied:
+            if file_digest(copied, "sha256").hexdigest() != captions.ass_checksum:
+                raise ValueError("Caption artifact changed while staging render inputs.")
 
     def stage_scene(self, timeline, scene_id):
         self.current(timeline)

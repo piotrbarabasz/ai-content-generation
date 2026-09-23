@@ -55,6 +55,13 @@ audio/video decoding; D040 publishes the bytes. The legacy
 `VideoRendererProvider` dictionary contract above remains unchanged. See
 [D019 composition and validation](../desktop/D019_STATIC_IMAGE_MP4.md).
 
+D032 adds no caption provider to this path. Caption export consumes retained D031
+measurements, and burn-in is enabled only by an explicit published caption
+reference in the immutable render request. Disabled requests retain D019's input
+set and do not construct or call `CaptionProvider`; enabled requests checksum-pin
+and privately stage the ASS artifact before FFmpeg/libass rendering. See
+[D032 caption composition](../desktop/D032_SYNCHRONIZED_CAPTIONS.md).
+
 ## Timeline preview (D046)
 
 `PreviewService` is UI- and provider-independent. It uses the exact active D018

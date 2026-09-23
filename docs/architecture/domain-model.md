@@ -30,7 +30,7 @@ validation failures. Internal snake_case fields map to camelCase API payloads.
 | `RenderScene` | Ordered render unit, scene-plan reference, timing hint and visual intensity |
 | `TimelineRevision` / `TimelineClip` | Frozen ordered selected media, exact audio sample spans and rational offsets, separately rounded video frame boundaries, output timebase and fit/fill policy (D018) |
 | `Voiceover` | Text reference, provider, audio storage key, duration and optional approval time |
-| `CaptionTrack` / `CaptionSegment` | Caption metadata and validated ordered subtitle segments; `serialize_srt` emits UTF-8-compatible text |
+| `CaptionTrack` / `CaptionSegment` | Legacy caption metadata plus validated ordered subtitle segments; D032's separate immutable `SynchronizedCaptionTrack` binds measured segments to one exact timeline and exports SRT/ASS |
 | `VideoRender` | Render storage key, duration, format and optional approval time |
 | `ExportBundle` | Manifest reference, required/conditional artifacts, missing optional artifacts and approval/provider summaries |
 | `ApprovalCheckpoint` / `ApprovalDecision` | Artifact-specific review state and preserved reviewer decision history |
@@ -170,6 +170,13 @@ range and sentence identity plus an aligned, low-confidence or omitted outcome.
 Timed entries use monotonic PCM frame intervals bound to the exact selected WAV;
 coverage and provider insertions are explicit. The original section text remains
 authoritative. See [D031 alignment](../desktop/D031_SPEECH_ALIGNMENT.md).
+
+D032 maps only complete D031 word measurements contained by the exact D018 audio
+sample spans. `SynchronizedCaptionTrack` keeps a content-derived identity,
+timeline/alignment IDs, language, selected-audio duration and ordered millisecond
+segments. Static SRT and ASS serializers do not add display padding or estimated
+timing; low-confidence, omitted, cut-boundary or mismatched audio inputs fail
+closed. See [D032 synchronized captions](../desktop/D032_SYNCHRONIZED_CAPTIONS.md).
 
 D013 adds `ProjectRenderScene` beside the unchanged legacy `RenderScene`, with
 project/section ownership, whole-sentence source ranges and stable visual scene

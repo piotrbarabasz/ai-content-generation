@@ -331,6 +331,14 @@ occurs before registration, so the prior alignment remains discoverable; no
 mutable timing pointer or project schema is added. See
 [D031 storage and failure behavior](../desktop/D031_SPEECH_ALIGNMENT.md).
 
+D032 publishes one immutable `desktop_caption_track` JSON artifact and separate
+UTF-8 `desktop_caption_srt` and `desktop_caption_ass` artifacts. All three carry
+the same D005 declaration over the exact timeline and selected D031 alignment
+artifacts; retrieval verifies bytes, checksums, metadata and serializer output as
+one published reference. Partial publication can leave retained, unreferenced
+exports but cannot replace an earlier track or make an incomplete set readable.
+See [D032 storage](../desktop/D032_SYNCHRONIZED_CAPTIONS.md).
+
 D013's `ProjectScenePlans` stores immutable JSON proposals, explicit acceptances
 and audio-bound timing sets in the same project artifact store/index. Histories
 are discoverable by section ID after reopen. No latest-plan fallback or automatic

@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import Protocol
 
+from app.domain.caption_track import PublishedCaptionTrack
 from app.domain.generation_job import AttemptStatus, JobProgress
 from app.domain.render_result import OPERATION, render_request
 from app.domain.timeline import TimelineRevision
@@ -11,15 +12,15 @@ from app.domain.timeline import TimelineRevision
 
 class RendererPort(Protocol):
     def identity(self): ...
-    async def render(self, timeline, root, *, canceled, progress): ...
+    async def render(self, timeline, root, *, captions=None, canceled, progress): ...
 
 
 class VideoRenderService:
     def __init__(self, publication, coordinator, artifacts, renderer: RendererPort):
         self.publication, self.coordinator, self.artifacts, self.renderer = publication, coordinator, artifacts, renderer
 
-    def enqueue(self, timeline):
-        request = render_request(timeline, self.renderer.identity())
+    def enqueue(self, timeline, *, captions=None):
+        request = render_request(timeline, self.renderer.identity(), captions)
         self.artifacts.current(timeline)
         return self.publication.enqueue("project:video_render", request,
             expected_sections={c.media.section_id: c.media.section_revision_id for c in timeline.clips})
@@ -40,12 +41,16 @@ class VideoRenderService:
 
         try:
             self.publication.repository.prepare(claim)
-            timeline = TimelineRevision.from_payload(json.loads(job.request.settings_json)["timeline"])
+            settings = json.loads(job.request.settings_json)
+            timeline = TimelineRevision.from_payload(settings["timeline"])
+            captions = (PublishedCaptionTrack.from_payload(settings["captions"])
+                        if settings.get("captions") is not None else None)
             identity = json.loads(job.request.effective_identity_json)
             if self.renderer.identity() != identity:
                 raise ValueError("Renderer executable identity changed after enqueue.")
-            root = self.artifacts.stage(timeline)
-            result = await self.renderer.render(timeline, root, canceled=canceled, progress=progress)
+            root = self.artifacts.stage(timeline, captions=captions)
+            result = await self.renderer.render(
+                timeline, root, captions=captions, canceled=canceled, progress=progress)
             if self.renderer.identity() != identity:
                 raise ValueError("Renderer executable identity changed during execution.")
             with self.artifacts.output(root, timeline, result) as (source, metadata):

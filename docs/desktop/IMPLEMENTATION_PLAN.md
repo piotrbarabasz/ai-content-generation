@@ -943,7 +943,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D032 — Synchronized optional captions
 
-- **Status:** Planned
+- **Status:** Completed — measured export and real FFmpeg/libass burn-in acceptance PASS (2026-09-23)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Export readable captions from measured timing.
@@ -953,6 +953,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/modules/captions.py, domain/caption_track.py, renderer and small caption option; tests.
 - **Acceptance criteria:** Caption intervals fit the selected audio; disabled captions require no provider; optional output is playable/exportable and text order is preserved.
 - **Test strategy:** Serialization/bounds tests and a real FFmpeg synthetic caption smoke; no AI/network dependencies.
+- **Implementation boundary:** A provider-free desktop service maps only complete D031 word measurements wholly contained by the exact D018 clip sample spans. The immutable, content-addressed track preserves authoritative text order/punctuation, alignment/timeline identity and bounded measured intervals; it publishes separately verified JSON, UTF-8 SRT and static ASS artifacts with D005 dependencies. Render burn-in is an explicit optional request value that pins/stages the published ASS artifact and adds one libass filter to the unchanged D019 validation path. Disabled rendering contains no caption dependency and constructs no provider. Low-confidence, omitted, provider-insertion, mismatched or boundary-cut input fails closed; no timing padding, karaoke or estimation is introduced. This downstream task proceeds under the user's explicit D032 request while D031's managed real-WhisperX gate remains separate and open.
+- **Evidence:** [D032 synchronized captions](D032_SYNCHRONIZED_CAPTIONS.md) records grouping/bounds, immutable exports, provider-free composition, render pinning and the actual synthetic burn-in smoke. Legacy `CaptionsModule`, `CaptionTrack` and `CaptionProvider` behavior remains compatible.
+- **Validation:** Focused D032/legacy-caption/D019 suite: 47 passed in 145.06 s. Actual FFmpeg/ffprobe 8.1.2 and libass render/probe/full-decode smoke PASS using generated image/tone/text only. Full `python -m pytest backend/tests -o addopts='' -q --tb=short`: 1678 passed, 11 existing optional tests skipped in 642.13 s (2026-09-23, Windows, isolated Python 3.11.9). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS; no AI/network/private media used.
 
 ### D033 — History and variant restoration UI
 

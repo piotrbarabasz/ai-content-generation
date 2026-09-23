@@ -35,12 +35,12 @@ class FFmpegRenderer:
         return {"provider": "ffmpeg", "adapter": "proxy-mp4-360p25-v1" if self.proxy else "static-mp4-v1",
                 "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
 
-    async def render(self, timeline, root, *, canceled, progress):
+    async def render(self, timeline, root, *, captions=None, canceled, progress):
         if self.proxy:
             if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
                 raise ValueError("MP4 proxy requires a D018 timeline at 25 FPS.")
         else:
-            render_request(timeline, self.identity())
+            render_request(timeline, self.identity(), captions)
         root = Path(root)
         command = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-n"]
         filters, videos, audios = [], [], []
@@ -62,11 +62,18 @@ class FFmpegRenderer:
             audios.append(f"[a{i}]")
         filters.append("".join(videos) + f"concat=n={len(videos)}:v=1:a=0[v]")
         filters.append("".join(audios) + f"concat=n={len(audios)}:v=0:a=1[a]")
+        video_output = "[v]"
+        if captions is not None:
+            caption_path = contained_path(root, "captions.ass")
+            if not caption_path.is_file() or checksum(caption_path) != captions.ass_checksum:
+                raise ValueError("Staged ASS captions differ from the selected caption artifact.")
+            filters.append("[v]subtitles=filename='captions.ass'[vc]")
+            video_output = "[vc]"
         script = contained_path(root, "filters.txt")
         script.write_text(";\n".join(filters), encoding="utf-8")
         output = contained_path(root, "render.mp4")
         command.extend(("-filter_complex_script", script.name, "-filter_complex_threads", "1",
-                        "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
+                        "-map", video_output, "-map", "[a]", "-c:v", "libx264",
                         "-preset", "ultrafast" if self.proxy else "veryfast", "-crf", "28" if self.proxy else "20",
                         "-threads", "2", "-pix_fmt", "yuv420p", "-r", "25", "-c:a", "aac", "-b:a", "128k",
                         "-ar", "48000", "-ac", "1", "-movflags", "+faststart", "-progress", "pipe:1", output.name))
