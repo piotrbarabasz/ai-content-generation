@@ -48,3 +48,14 @@ No private speaker sample was supplied for this task, so no new speaker-referenc
 recording or generated output was retained or committed. D029's separate real GPU
 runtime evidence remains authoritative for the Chatterbox installation; the D030
 reference-flow acceptance is deterministic and offline.
+
+Final validation on 2026-09-23 (Windows, isolated Python 3.11):
+
+- Focused reference, desktop audio, Chatterbox, preview/selection and packaging
+  checks: 98 passed in the implementation run.
+- Full `python -m pytest backend/tests -o addopts='' -q --tb=short`:
+  1650 passed, 11 existing optional tests skipped in 768.09 s; exit code 0.
+- `compileall`, `pip check` and `git diff --check`: PASS.
+
+The existing D021 manual desktop smoke remains a separate dependency gate; this
+offline D030 acceptance does not close that gate.
