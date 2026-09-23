@@ -323,6 +323,14 @@ jobs retain legacy behavior. D011 derivatives carry an explicitly approximate
 tempo map to the selected processed audio. See [D012 source/sample coverage and
 compatibility](../desktop/D012_SPEECH_BOUNDARIES.md).
 
+D031 stores validated version-1 `desktop_speech_alignment` JSON artifacts in the
+same project artifact index. Payload and index metadata bind section/revision,
+text and audio identities, provider/model identity, coverage and quality outcome.
+History is immutable and survives reopen. Provider/runtime or validation failure
+occurs before registration, so the prior alignment remains discoverable; no
+mutable timing pointer or project schema is added. See
+[D031 storage and failure behavior](../desktop/D031_SPEECH_ALIGNMENT.md).
+
 D013's `ProjectScenePlans` stores immutable JSON proposals, explicit acceptances
 and audio-bound timing sets in the same project artifact store/index. Histories
 are discoverable by section ID after reopen. No latest-plan fallback or automatic

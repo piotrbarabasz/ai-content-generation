@@ -164,6 +164,13 @@ explicitly approximate internal positions; neither map is word alignment.
 Legacy audio remains readable without invented boundaries. See [D012 contracts
 and validation](../desktop/D012_SPEECH_BOUNDARIES.md).
 
+D031 adds a separate immutable `SpeechAlignment` rather than relabeling D012's
+chunk measurements as word timing. Each entry retains an exact lexical source
+range and sentence identity plus an aligned, low-confidence or omitted outcome.
+Timed entries use monotonic PCM frame intervals bound to the exact selected WAV;
+coverage and provider insertions are explicit. The original section text remains
+authoritative. See [D031 alignment](../desktop/D031_SPEECH_ALIGNMENT.md).
+
 D013 adds `ProjectRenderScene` beside the unchanged legacy `RenderScene`, with
 project/section ownership, whole-sentence source ranges and stable visual scene
 identity. `ScenePlan` retains ordered immutable scene semantics; an explicit

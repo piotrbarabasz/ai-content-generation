@@ -927,7 +927,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D031 — Measured text-audio alignment adapter
 
-- **Status:** Planned
+- **Status:** Partial — offline adapter/artifact acceptance PASS; managed real-WhisperX smoke pending (2026-09-23)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Obtain accurate boundaries for continuous section speech.
@@ -937,6 +937,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/ alignment boundary and adapter, timing service and artifact metadata; tests.
 - **Acceptance criteria:** Known-text fixture maps to measured audio; omissions and low confidence are reported; failed alignment retains previous timing.
 - **Test strategy:** Offline timed-audio fixtures and fake runtime failure cases; explicit real aligner smoke evaluates sentence/word synchronization.
+- **Implementation boundary:** A separate immutable `SpeechAlignment` v1 artifact binds the exact current section text and retained D012 `SectionAudio` WAV. Every lexical source word keeps its original character range and sentence identity and is explicitly aligned, low-confidence or omitted; timed words require monotonic in-WAV PCM intervals. Coverage and unmatched provider-word count are retained without rewriting text. The provider-neutral protocol has one opt-in `WhisperXAlignmentAdapter` over an injected managed backend; construction imports/downloads no model. The service validates current project/audio bytes and all provider output before immutable publication, so failure leaves prior alignment history intact. This work proceeds under the user's D031 request while the separate D012 manual prosody and D025 clean-Windows gates remain open.
+- **Evidence:** [D031 measured alignment](D031_SPEECH_ALIGNMENT.md) records source/audio identity, validation, provider/runtime boundary, immutable history and the remaining real-aligner gate. Offline fixtures cover repeated words, punctuation, omission, low score, provider insertion, malformed output, monotonicity/WAV bounds, changed inputs, failed rerun preservation, opt-in composition and reopen. No private narration or model asset is committed.
+- **Validation:** Focused D031/D012/scene-timing checks: 91 passed. Full `python -m pytest backend/tests -o addopts='' -q -x --tb=short`: 1671 passed, 11 existing optional tests skipped in 685.42 s (2026-09-23, Windows, isolated Python 3.11). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS. The managed real-WhisperX synchronization smoke remains pending and keeps D031 Partial.
 
 ### D032 — Synchronized optional captions
 

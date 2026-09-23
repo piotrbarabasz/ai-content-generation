@@ -14,6 +14,7 @@ requirements for enabled modules before direct engine execution.
 | `LLMProvider` | `generate_text(prompt, context) -> str`; `generate_structured(prompt, schema) -> dict` | Deterministic mock; opt-in OpenAI Responses adapter |
 | `ImageGenerationProvider` | `capabilities()`; `generate(request) -> ImageGenerationResult` | Deterministic mock; opt-in OpenAI Images adapter |
 | `TTSProvider` | `capabilities()`; `effective_synthesis_identity(voice_config)`; `synthesize(text, voice_config) -> TTSSynthesisResult` | Mock, Chatterbox V3, Piper, evaluation-only XTTS-v2 |
+| `AlignmentProvider` | `effective_alignment_identity()`; `align(audio_bytes, known_text, language) -> ProviderAlignmentResult` | Opt-in managed WhisperX result adapter |
 | `TranscriptionProvider` | `transcribe(audio_ref) -> dict` | Mock |
 | `CaptionProvider` | `generate_captions(audio_ref, transcript_ref) -> dict` | Mock |
 | `AssetProvider` | `find_assets(query)`; `prepare_asset(asset_ref)` | Mock |
@@ -25,6 +26,12 @@ requirements for enabled modules before direct engine execution.
 `ProviderConfig`. Modules receive implementations through constructors; provider
 registration alone is not application wiring. Add adapters at this boundary,
 keeping provider-specific settings/errors out of the core execution engine.
+
+D031 keeps its optional alignment protocol in `providers/alignment.py`. The
+WhisperX adapter maps a managed backend result onto exact known-text ranges and
+does not load or download a model during construction. Omitted/low-confidence
+source words and unmatched provider words remain explicit. See
+[D031 alignment evidence](../desktop/D031_SPEECH_ALIGNMENT.md).
 
 The D026 OpenAI adapter uses strict Responses API Structured Outputs through a
 factory and an injected transport. Installed composition is opt-in through process
