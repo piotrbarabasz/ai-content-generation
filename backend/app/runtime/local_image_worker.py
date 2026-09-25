@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from time import perf_counter
 
 
 MIN_CUDA_VRAM_BYTES = 6 * 1024**3
@@ -20,6 +21,29 @@ def _require_cuda_device(cuda):
         raise RuntimeError("CUDA device 0 is unavailable; no CPU fallback is permitted.")
     if not _has_sufficient_cuda_vram(cuda.get_device_properties(0).total_memory):
         raise RuntimeError("Local image profile requires approximately 6 GiB reported CUDA VRAM.")
+
+
+def _effectively_black(image):
+    return max(high for _, high in image.convert("RGB").getextrema()) <= 2
+
+
+def _result_diagnostics(result, *, dtype, device, elapsed_seconds):
+    if len(result.images) != 1:
+        raise ValueError("Local image worker expected exactly one image.")
+    flags = result.nsfw_content_detected
+    if flags is not None and len(flags) != 1:
+        raise ValueError("Local image safety checker returned an invalid result.")
+    return {"nsfw_content_detected": bool(flags[0]) if flags is not None else None,
+            "effectively_black": _effectively_black(result.images[0]),
+            "dtype": dtype, "device": device,
+            "elapsed_inference_seconds": round(elapsed_seconds, 3)}
+
+
+def _require_usable_result(diagnostics):
+    if diagnostics["nsfw_content_detected"]:
+        raise RuntimeError("local_image_safety_blocked: Safety checker blocked this image; try another prompt or seed.")
+    if diagnostics["effectively_black"]:
+        raise RuntimeError("local_image_black_output: Inference produced an effectively black image; no image was published.")
 
 
 def main():
@@ -39,19 +63,25 @@ def main():
 
     _require_cuda_device(torch.cuda)
     pipe = StableDiffusionPipeline.from_pretrained(
-        str(model), local_files_only=True, torch_dtype=torch.float16,
+        str(model), local_files_only=True, torch_dtype=torch.float32,
         variant="fp16", use_safetensors=True,
     )
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+    pipe.enable_attention_slicing()
     pipe.to("cuda:0")
     generator = torch.Generator(device="cuda:0").manual_seed(request["seed"])
-    image = pipe(
+    start = perf_counter()
+    result = pipe(
         prompt=request["prompt"], negative_prompt=request["negative_prompt"],
         width=512, height=512, num_inference_steps=20, guidance_scale=7.5,
         generator=generator,
-    ).images[0]
+    )
+    diagnostics = _result_diagnostics(result, dtype=str(pipe.unet.dtype), device=str(pipe.device),
+                                      elapsed_seconds=perf_counter() - start)
+    print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
+    _require_usable_result(diagnostics)
     output = io.BytesIO()
-    image.save(output, format="PNG")
+    result.images[0].save(output, format="PNG")
     binary_output.write(output.getvalue())
     binary_output.close()
 

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from io import BytesIO
+import json
 import os
 from pathlib import Path
 import subprocess
 from threading import Lock
+
+from PIL import Image
 
 from app.providers.image_generation import ImageGenerationCapabilities, ImageGenerationRequest, ImageGenerationResult
 from app.runtime.local_image_runtime import LocalImageInstallation, MODEL, MODEL_REVISION, PROFILE, _python
@@ -15,6 +19,31 @@ from app.storage.image_decoder import ImageLimits, decode_image
 
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
+
+
+def _worker_diagnostics(errors):
+    for line in reversed(errors.decode("utf-8", errors="replace").splitlines()):
+        if line.startswith("local_image_diagnostics:"):
+            try:
+                value = json.loads(line.removeprefix("local_image_diagnostics:"))
+            except ValueError:
+                return {}
+            return value if isinstance(value, dict) else {}
+    return {}
+
+
+def _effectively_black_png(data):
+    with Image.open(BytesIO(data)) as image:
+        return max(high for _, high in image.convert("RGB").getextrema()) <= 2
+
+
+def _diagnostic_summary(diagnostics):
+    if not diagnostics:
+        return ""
+    return (" (nsfw_content_detected={nsfw_content_detected}, effectively_black={effectively_black}, "
+            "dtype={dtype}, device={device}, elapsed_inference_seconds={elapsed_inference_seconds})"
+            .format(**{key: diagnostics.get(key) for key in (
+                "nsfw_content_detected", "effectively_black", "dtype", "device", "elapsed_inference_seconds")}))
 
 
 class LocalImageProvider:
@@ -47,8 +76,8 @@ class LocalImageProvider:
             "local", MODEL + "@" + MODEL_REVISION, PROFILE, formats=("PNG",),
             max_dimension=512, max_pixels=512 * 512, negative_prompt=True, seeded=True,
             supported_sizes=((512, 512),),
-            settings={"installation": installed.fingerprint, "device": "cuda:0", "dtype": "float16",
-                      "scheduler": "DDIM", "steps": 20, "guidance_scale": 7.5},
+            settings={"installation": installed.fingerprint, "device": "cuda:0", "dtype": "float32",
+                      "attention_slicing": True, "scheduler": "DDIM", "steps": 20, "guidance_scale": 7.5},
         )
 
     @staticmethod
@@ -105,22 +134,32 @@ class LocalImageProvider:
                 from app.runtime.windows_job import WindowsJob
                 job = WindowsJob(process.pid)
             try:
-                output, errors = process.communicate((canonical_json(payload) + "\n").encode(), timeout=300)
+                output, errors = process.communicate((canonical_json(payload) + "\n").encode(), timeout=600)
             except subprocess.TimeoutExpired:
                 raise RuntimeError("Local image generation timed out.") from None
             if process.returncode != 0:
                 if self._cancel_requested:
                     raise RuntimeError("Local image generation canceled.")
                 error = errors.decode("utf-8", errors="replace")[-800:]
+                summary = _diagnostic_summary(_worker_diagnostics(errors))
                 if "gpu_oom:" in error:
                     raise RuntimeError("Local image CUDA memory exhausted; previous image remains selected.")
+                if "local_image_safety_blocked:" in error:
+                    raise RuntimeError("Local image safety checker blocked the result; try another prompt or seed."
+                                       + summary)
+                if "local_image_black_output:" in error:
+                    raise RuntimeError("Local image inference produced an effectively black result; no image was published."
+                                       + summary)
                 raise RuntimeError("Local image worker failed; inspect the installed runtime and model.")
             measured = decode_image(output, ImageLimits(max_bytes=MAX_IMAGE_BYTES,
                                                         max_dimension=512, max_pixels=512 * 512))
             if (measured["format"], measured["width"], measured["height"]) != ("PNG", 512, 512):
                 raise ValueError("Local image output differs from the requested PNG dimensions.")
+            if _effectively_black_png(output):
+                raise ValueError("Local image worker returned an effectively black PNG; no image was published.")
             return ImageGenerationResult(output, "PNG", 512, 512,
-                                         {"sha256": sha256(output).hexdigest(), "runtime": installed.fingerprint})
+                                         {"sha256": sha256(output).hexdigest(), "runtime": installed.fingerprint,
+                                          "diagnostics": _worker_diagnostics(errors)})
         finally:
             if process is not None and process.poll() is None:
                 process.kill()
