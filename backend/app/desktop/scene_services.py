@@ -2,6 +2,10 @@
 
 from dataclasses import dataclass
 
+from app.application.scene_planning import ScenePlanningService
+from app.storage.section_tempo import SectionTempoArtifacts
+from app.tts.scene_sources import sentence_sources
+
 
 @dataclass(frozen=True)
 class PromptVariant:
@@ -32,6 +36,22 @@ class SceneView:
     images: tuple[ImageVariant, ...]
 
 
+@dataclass(frozen=True)
+class PlanSceneView:
+    index: int
+    text: str
+    visual_description: str
+    time_label: str
+
+
+@dataclass(frozen=True)
+class ScenePlanView:
+    state: str
+    plan_id: str | None
+    acceptance_id: str | None
+    scenes: tuple[PlanSceneView, ...]
+
+
 class SceneServices:
     """Synchronous coordinator-thread commands; providers remain injected."""
 
@@ -57,6 +77,57 @@ class SceneServices:
             if timing.acceptance_id == acceptance.id:
                 values.append(timing)
         return values[-1] if values else None
+
+    def _selected_audio(self, section):
+        return SectionTempoArtifacts(self.store._index, self.store).selected(section, "original")
+
+    def plan_state(self, section):
+        proposals = tuple(plan for plan in self.plans.proposals(section.section_id)
+                          if plan.revision_id == section.id)
+        if not proposals:
+            return ScenePlanView("none", None, None, ())
+        plan = proposals[-1]
+        accepted = next((value for value in reversed(self.plans.acceptances(section.section_id))
+                         if value.plan.id == plan.id), None)
+        timing = self._timing(accepted) if accepted else None
+        measured = ({value.scene_id: value for value in timing.scenes} if timing else {})
+        scenes = []
+        for index, scene in enumerate(plan.scenes, 1):
+            value = measured.get(scene.id)
+            label = (f"{value.start_frame / timing.sample_rate:.2f}–"
+                     f"{value.end_frame / timing.sample_rate:.2f} s") if value else "Timing unavailable"
+            scenes.append(PlanSceneView(
+                index,
+                section.text[scene.source_start:scene.source_end],
+                scene.visual_description,
+                label,
+            ))
+        return ScenePlanView("accepted" if accepted else "proposal", plan.id,
+                             accepted.id if accepted else None, tuple(scenes))
+
+    def suggest_scene_plan(self, section):
+        audio = self._selected_audio(section)
+        if audio is not None and audio.speech_boundary_map is None:
+            audio = None
+        ScenePlanningService(self.plans, sentence_sources).suggest(section, audio)
+        return self.plan_state(section)
+
+    def accept_scene_plan(self, section, plan_id):
+        current = self.plan_state(section)
+        if current.state != "proposal" or current.plan_id != plan_id:
+            raise ValueError("Accept the current retained scene proposal.")
+        ScenePlanningService(self.plans, sentence_sources).accept(plan_id, reviewer_id="desktop-editor")
+        return self.plan_state(section)
+
+    def rebuild_scene_timing(self, section):
+        current = self.plan_state(section)
+        if current.state != "accepted":
+            raise ValueError("Accept the current scene proposal before rebuilding timing.")
+        audio = self._selected_audio(section)
+        if audio is None:
+            raise ValueError("Generate and select narration for this saved section before rebuilding timing.")
+        ScenePlanningService(self.plans, sentence_sources).retime(current.acceptance_id, section, audio)
+        return self.plan_state(section)
 
     def _view(self, scene, index, timing):
         prompt_choice = self.prompts.prompts.selected(scene.id)
@@ -176,4 +247,4 @@ class SceneServices:
         return self.generation.capabilities() if self.generation.provider is not None else None
 
 
-__all__ = ["ImageVariant", "PromptVariant", "SceneServices", "SceneView"]
+__all__ = ["ImageVariant", "PlanSceneView", "PromptVariant", "ScenePlanView", "SceneServices", "SceneView"]

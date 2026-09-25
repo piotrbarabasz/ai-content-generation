@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="Install the desktop extra for Qt editor tests")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDockWidget, QMessageBox
 
 from app.application.script_generation import ScriptGenerationService
 from app.desktop.__main__ import LocalProjects
@@ -258,3 +258,49 @@ def test_generation_replacement_requires_confirmation(editor, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.No)
     editor.generate()
     assert editor.worker is None and editor.snapshot.sections[0].text == "Alpha"
+
+
+def test_stage_tabs_own_existing_workflow_panels(editor):
+    assert [editor.tabs.tabText(i) for i in range(editor.tabs.count())] == [
+        "Script", "Voice", "Scenes", "Visuals", "Timeline", "Export",
+    ]
+    assert editor.script_tab.isAncestorOf(editor.sections)
+    assert editor.voice_tab.isAncestorOf(editor.audio)
+    assert editor.tabs.widget(2) is editor.scene_plans
+    assert editor.visuals_tab.isAncestorOf(editor.visuals)
+    assert editor.timeline_tab.isAncestorOf(editor.timeline)
+    assert editor.timeline_tab.isAncestorOf(editor.preview)
+    assert editor.export_tab.isAncestorOf(editor.regeneration)
+    assert editor.findChildren(QDockWidget) == []
+
+
+def test_shared_section_navigation_updates_all_stages_and_blocks_dirty_change(editor):
+    append(editor, "Opening", "First")
+    append(editor, "Body", "Second")
+    editor.section_choice.setCurrentIndex(0)
+    selected = editor.snapshot.sections[0]
+    assert editor.selected_id == selected.section_id
+    assert editor.title.text() == "Opening"
+    assert editor.audio.section == selected
+    assert editor.scene_plans.section == selected
+    assert editor.visuals.section == selected
+    assert "Opening" in editor.voice_section.text() and "Opening" in editor.visuals_section.text()
+
+    editor.text.setPlainText("Unsaved")
+    editor.section_choice.setCurrentIndex(1)
+    assert editor.selected_id == selected.section_id
+    assert editor.section_choice.currentData() == selected.section_id
+    assert editor.text.toPlainText() == "Unsaved"
+    assert "Save or discard" in editor.status.text()
+    editor.discard()
+
+
+def test_project_load_binds_one_scene_service_to_planning_and_visuals(qt, tmp_path):
+    services = object()
+    window = ProjectEditor(LocalProjects(), scene_factory=lambda session: services)
+    try:
+        window.load_project(tmp_path / "project", create=True)
+        assert window.scene_plans.services is services
+        assert window.visuals.services is services
+    finally:
+        window.close()

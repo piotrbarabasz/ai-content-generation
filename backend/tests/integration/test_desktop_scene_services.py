@@ -138,3 +138,29 @@ def test_selected_prompt_and_image_survive_reopen_in_panel(qt, tmp_path):
     finally:
         panel.close()
         reopened.close()
+
+
+def test_scene_plan_presentation_requires_explicit_review_and_retains_history(tmp_path):
+    session = ProjectSession.create(tmp_path / "project", name="Planning", repository_factory=ProjectRepository)
+    try:
+        section = ScriptGenerationService(session).append_text(
+            "First scene. Second scene.", title="Story",
+            expected_active_revision_id=session.active_script.id,
+        ).sections[0]
+        services = compose_scenes(session)
+
+        assert services.plan_state(section).state == "none"
+        proposal = services.suggest_scene_plan(section)
+        assert proposal.state == "proposal" and proposal.scenes
+        assert services.plans.acceptances(section.section_id) == ()
+
+        newer = services.suggest_scene_plan(section)
+        assert newer.state == "proposal" and newer.plan_id != proposal.plan_id
+        assert len(services.plans.proposals(section.section_id)) == 2
+        accepted = services.accept_scene_plan(section, newer.plan_id)
+        assert accepted.state == "accepted" and accepted.acceptance_id
+        assert all(scene.time_label == "Timing unavailable" for scene in accepted.scenes)
+        assert len(services.plans.proposals(section.section_id)) == 2
+        assert len(services.plans.acceptances(section.section_id)) == 1
+    finally:
+        session.close()
