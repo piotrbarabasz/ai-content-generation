@@ -1,11 +1,25 @@
 """Qt scene/prompt/image controls over an injected D022 service port."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
+
+
+class ImageGenerationThread(QThread):
+    outcome = Signal(object, object)
+
+    def __init__(self, provider, request, parent=None):
+        super().__init__(parent)
+        self.provider, self.request = provider, request
+
+    def run(self):
+        try:
+            self.outcome.emit(self.provider.generate(self.request), None)
+        except Exception as exc:
+            self.outcome.emit(None, exc)
 
 
 class ScenePanel(QWidget):
@@ -16,6 +30,7 @@ class ScenePanel(QWidget):
         self.services = self.section = self.current = None
         self.views = ()
         self.loading = self.prompt_dirty = False
+        self.image_worker = self.image_claim = None
         layout = QVBoxLayout(self)
         self.scenes = QListWidget()
         self.scenes.setMaximumHeight(150)
@@ -47,6 +62,7 @@ class ScenePanel(QWidget):
         image_actions.addWidget(self.image_variants)
         self._button(image_actions, "Import image", self.import_image)
         self._button(image_actions, "Generate image", self.generate_image)
+        self._button(image_actions, "Cancel image", self.cancel_image)
         self._button(image_actions, "Select image", self.select_image)
         settings = QFormLayout()
         self.width, self.height, self.seed = QSpinBox(), QSpinBox(), QSpinBox()
@@ -71,9 +87,11 @@ class ScenePanel(QWidget):
 
     @property
     def busy(self):
-        return False
+        return self.image_worker is not None
 
     def bind(self, services):
+        if self.busy:
+            raise ValueError("Wait for local image generation to finish before switching projects.")
         self.services, self.section, self.current = services, None, None
         self.views = ()
         self.scenes.clear()
@@ -179,13 +197,14 @@ class ScenePanel(QWidget):
                 self.status.setText(str(exc))
 
     def _enable(self):
-        ready = self.services is not None and self.current is not None
+        ready = self.services is not None and self.current is not None and not self.busy
         self.prompt.setEnabled(ready)
         self.buttons["Save prompt"].setEnabled(ready and self.prompt_dirty)
         self.buttons["Regenerate prompt"].setEnabled(ready and not self.prompt_dirty)
         self.buttons["Select prompt"].setEnabled(ready and not self.prompt_dirty and self.prompt_variants.count() > 0)
         self.buttons["Import image"].setEnabled(ready and not self.prompt_dirty)
         self.buttons["Generate image"].setEnabled(ready and not self.prompt_dirty and bool(self.current.prompt_id if ready else False))
+        self.buttons["Cancel image"].setEnabled(self.busy)
         self.buttons["Select image"].setEnabled(ready and not self.prompt_dirty and self.image_variants.count() > 0)
 
     def _replace(self, view, message):
@@ -226,9 +245,51 @@ class ScenePanel(QWidget):
 
     def generate_image(self):
         if self.current:
-            self._act(lambda: self.services.generate_image(
-                self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value()),
-                "Image generated and selected.", media_changed=True)
+            provider = getattr(self.services.generation, "provider", None) if hasattr(self.services, "generation") else None
+            if getattr(provider, "requires_background", False):
+                try:
+                    pending, cached = self.services.prepare_background_image(
+                        self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value())
+                    if cached is not None:
+                        self._replace(cached, "Cached image selected.")
+                        self.media_changed.emit()
+                        return
+                    claim, scene_id, provider, request = pending
+                    self.image_claim = claim, scene_id
+                    self.image_worker = ImageGenerationThread(provider, request, self)
+                    self.image_worker.outcome.connect(self._image_generated)
+                    self.image_worker.start()
+                    self.status.setText("Generating image in the managed CUDA worker…")
+                    self._enable()
+                except Exception as exc:
+                    self.status.setText(str(exc))
+            else:
+                self._act(lambda: self.services.generate_image(
+                    self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value()),
+                    "Image generated and selected.", media_changed=True)
+
+    def _image_generated(self, result, error):
+        claim, scene_id = self.image_claim
+        try:
+            if error is not None:
+                self.services.finish_background_image(claim, scene_id, error=error)
+            else:
+                view = self.services.finish_background_image(claim, scene_id, result=result)
+                self._replace(view, "Image generated and selected.")
+                self.media_changed.emit()
+        except Exception as exc:
+            self.status.setText(str(exc))
+        finally:
+            self.image_worker.wait()
+            self.image_worker.deleteLater()
+            self.image_worker = self.image_claim = None
+            self._enable()
+
+    def cancel_image(self):
+        if self.busy:
+            claim, _ = self.image_claim
+            self.services.cancel_background_image(claim)
+            self.status.setText("Cancel requested; waiting for local image worker cleanup.")
 
     def select_image(self):
         if self.current and self.image_variants.currentData():

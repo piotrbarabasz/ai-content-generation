@@ -2,6 +2,8 @@
 
 from dataclasses import replace
 import os
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,4 +165,45 @@ def test_editor_wires_scene_factory_and_preserves_unsaved_prompt(qt, tmp_path):
     finally:
         widget.visuals.prompt_dirty = False
         widget.dirty = False
+        widget.close()
+
+
+def test_local_image_inference_runs_off_gui_thread_and_finishes_on_owner_thread(qt):
+    class BackgroundServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.provider = SimpleNamespace(requires_background=True)
+            self.provider.generate = self.generate
+            self.generation = SimpleNamespace(provider=self.provider)
+            self.gui_thread = threading.get_ident()
+
+        def prepare_background_image(self, scene_id, **settings):
+            self.calls.append(("prepare", threading.get_ident(), settings))
+            return (SimpleNamespace(id="claim"), scene_id, self.provider, object()), None
+
+        def generate(self, request):
+            self.calls.append(("infer", threading.get_ident()))
+            return PNG
+
+        def finish_background_image(self, claim, scene_id, result=None, error=None):
+            self.calls.append(("finish", threading.get_ident()))
+            assert result == PNG and error is None
+            return self._change(scene_id, image_id="generated", image_selection_id="image-generated",
+                                images=(ImageVariant("generated", "generated: image.png (1×1)"),))
+
+    services = BackgroundServices()
+    widget = ScenePanel()
+    widget.bind(services)
+    widget.select_section(object())
+    try:
+        QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
+        for _ in range(100):
+            qt.processEvents()
+            if not widget.busy:
+                break
+            QTest.qWait(10)
+        assert not widget.busy and widget.current.image_id == "generated"
+        assert next(call[1] for call in services.calls if call[0] == "infer") != services.gui_thread
+        assert next(call[1] for call in services.calls if call[0] == "finish") == services.gui_thread
+    finally:
         widget.close()

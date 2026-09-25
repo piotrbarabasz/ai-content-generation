@@ -67,7 +67,7 @@ class ImageGenerationService:
             expected_sections={prepared["section_id"]: prepared["section_revision_id"]}, inputs={"image_generation": prepared})
         return ImageGenerationSubmission(attempt=attempt)
 
-    def run(self, claim):
+    def run(self, claim, *, generated_result=None):
         existing = self.publication.repository.result(claim)
         if existing is not None:
             return existing
@@ -81,7 +81,7 @@ class ImageGenerationService:
             if capabilities.to_payload() != json.loads(job.request.effective_identity_json):
                 raise ValueError("Image provider identity changed after enqueue.")
             capabilities.validate(request)
-            result = self.provider.generate(request)
+            result = self.provider.generate(request) if generated_result is None else generated_result
             if self._capabilities() != capabilities:
                 raise ValueError("Image provider identity changed during generation.")
             with self.artifacts.validated(job, result) as (source, metadata):

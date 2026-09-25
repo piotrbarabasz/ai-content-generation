@@ -1288,7 +1288,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D057 — One optional local image runtime
 
-- **Status:** Planned
+- **Status:** Partial — offline adapter/managed-intake tests pass; real CUDA and reviewed distribution acceptance remain open (2026-09-25)
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Offer local image generation without adding heavy dependencies to every install.
@@ -1298,6 +1298,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/providers/ local image adapter, runtime profile and image composition; contract/device tests.
 - **Acceptance criteria:** Optional install creates a real image through the shared contract; absent runtime leaves import/API paths usable; OOM preserves prior image and releases GPU.
 - **Test strategy:** Offline fake-runtime contract tests and explicit Windows/GPU download-generate-unload smoke with sizes, versions and memory evidence.
+- **Implementation evidence:** [D057 local image runtime](D057_LOCAL_IMAGE_RUNTIME.md) records the pinned SD 1.5 fp16 model files, optional private runtime intake, D028 lease use, worker isolation, cache redirection and the pending real Windows/GPU smoke. The package wheel closure and hardware memory/time evidence must be reviewed before marking this task Completed.
 
 ## Backlog provenance and deferred scope
 

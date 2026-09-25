@@ -12,4 +12,10 @@ def build_image_provider(name="mock", *, settings=None, provider_factories=None,
         from .openai_image import OpenAIImageProvider, OpenAIImageSettings
         return OpenAIImageProvider(OpenAIImageSettings.from_mapping(settings or {}),
                                    transport=transport, environment=environment)
+    if name == "local":
+        from .local_image import LocalImageProvider
+        root = (settings or {}).get("root")
+        if not isinstance(root, str) or not root.strip():
+            raise ValueError("Local image provider requires an explicit managed runtime root.")
+        return LocalImageProvider(root)
     raise ValueError("Unknown image generation provider.")

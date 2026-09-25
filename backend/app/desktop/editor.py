@@ -252,7 +252,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.prompt_dirty:
+            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -335,8 +335,8 @@ class ProjectEditor(QMainWindow):
 
     def _regeneration_ready(self):
         self._ready()
-        if self.audio.busy or self.preview.busy:
-            raise ValueError("Finish audio or preview work before regeneration.")
+        if self.audio.busy or self.preview.busy or self.visuals.busy:
+            raise ValueError("Finish audio, image, or preview work before regeneration.")
 
     def _regenerated(self):
         if self.timeline.services:
@@ -346,7 +346,7 @@ class ProjectEditor(QMainWindow):
     def _select(self, row):
         if self.loading:
             return
-        if (self.dirty or self.worker is not None or self.audio.busy or self.preview.busy
+        if (self.dirty or self.worker is not None or self.audio.busy or self.preview.busy or self.visuals.busy
                 or self.regeneration.busy or self.visuals.prompt_dirty):
             self.sections.blockSignals(True)
             ids = [s.section_id for s in self.snapshot.sections]
@@ -486,7 +486,7 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.prompt_dirty:
+        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return
