@@ -1,0 +1,251 @@
+﻿
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\d48071d726e2d1284b86f8643dc725386ece4c86ff9da946a2760b6dee1e911c\synthesis-manifest.json
+MODIFIED: 1790266135.1752088
+FINAL STATUS: failed
+GENERATED: 0
+REUSED: 0
+FAILED COUNT: 2
+FAILED IDS: ['sentence-chunk-0000-3b9ff4496a14', 'sentence-chunk-0001-cbae7480b6e1']
+
+  CHUNK: sentence-chunk-0000-3b9ff4496a14
+  INDEX: 0
+  STATUS: failed
+  ATTEMPTS: 1
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 72, 'sentence_end': 72, 'sentence_id': 'sentence-0000-3b9ff4496a14', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: None
+
+  CHUNK: sentence-chunk-0001-cbae7480b6e1
+  INDEX: 1
+  STATUS: failed
+  ATTEMPTS: 1
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 133, 'sentence_end': 133, 'sentence_id': 'sentence-0001-cbae7480b6e1', 'sentence_start': 72, 'start': 72}
+  ARTIFACT: None
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\d48071d726e2d1284b86f8643dc725386ece4c86ff9da946a2760b6dee1e911c\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\dc747a569827d368e239320b572c952aff4508863cc085bee4ad31a3bda295f2\synthesis-manifest.json
+MODIFIED: 1790266043.0821476
+FINAL STATUS: failed
+GENERATED: 0
+REUSED: 0
+FAILED COUNT: 2
+FAILED IDS: ['sentence-chunk-0000-3b9ff4496a14', 'sentence-chunk-0001-cbae7480b6e1']
+
+  CHUNK: sentence-chunk-0000-3b9ff4496a14
+  INDEX: 0
+  STATUS: failed
+  ATTEMPTS: 2
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 72, 'sentence_end': 72, 'sentence_id': 'sentence-0000-3b9ff4496a14', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: None
+
+  CHUNK: sentence-chunk-0001-cbae7480b6e1
+  INDEX: 1
+  STATUS: failed
+  ATTEMPTS: 2
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 133, 'sentence_end': 133, 'sentence_id': 'sentence-0001-cbae7480b6e1', 'sentence_start': 72, 'start': 72}
+  ARTIFACT: None
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\dc747a569827d368e239320b572c952aff4508863cc085bee4ad31a3bda295f2\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\ee7e2f8ab8b72cc831deb7a3873002b7f4c7c45fadaaa278848de8f4e6ff1edd\synthesis-manifest.json
+MODIFIED: 1790263957.4916806
+FINAL STATUS: failed
+GENERATED: 0
+REUSED: 0
+FAILED COUNT: 2
+FAILED IDS: ['sentence-chunk-0000-3b9ff4496a14', 'sentence-chunk-0001-cbae7480b6e1']
+
+  CHUNK: sentence-chunk-0000-3b9ff4496a14
+  INDEX: 0
+  STATUS: failed
+  ATTEMPTS: 1
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 72, 'sentence_end': 72, 'sentence_id': 'sentence-0000-3b9ff4496a14', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: None
+
+  CHUNK: sentence-chunk-0001-cbae7480b6e1
+  INDEX: 1
+  STATUS: failed
+  ATTEMPTS: 1
+  ERROR: 'Chatterbox V3 model loading failed.'
+  SOURCE SPAN: {'end': 133, 'sentence_end': 133, 'sentence_id': 'sentence-0001-cbae7480b6e1', 'sentence_start': 72, 'start': 72}
+  ARTIFACT: None
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_04ca89db1d3b49d8bb67336ff376c271\section-audio\ee7e2f8ab8b72cc831deb7a3873002b7f4c7c45fadaaa278848de8f4e6ff1edd\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\a2ad8f34a07a72a02cbb367f5c63d9ae9e5f98af133e0c2241a26198ba4733f9\synthesis-manifest.json
+MODIFIED: 1790250370.0093737
+FINAL STATUS: completed
+GENERATED: 1
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-8df8970610ba
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 146, 'sentence_end': 146, 'sentence_id': 'sentence-0000-8df8970610ba', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-8df8970610ba.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\a2ad8f34a07a72a02cbb367f5c63d9ae9e5f98af133e0c2241a26198ba4733f9\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\cf525f6b85f63086b0f9f4fc3ee9f3714542aa1d429bb73af37607830e7f8d3b\synthesis-manifest.json
+MODIFIED: 1790250262.657927
+FINAL STATUS: completed
+GENERATED: 4
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-2a5b149eebc8
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 45, 'sentence_end': 45, 'sentence_id': 'sentence-0000-2a5b149eebc8', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-2a5b149eebc8.wav
+
+  CHUNK: sentence-chunk-0001-cc5e8480f36d
+  INDEX: 1
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 130, 'sentence_end': 130, 'sentence_id': 'sentence-0001-cc5e8480f36d', 'sentence_start': 45, 'start': 45}
+  ARTIFACT: chunks/sentence-chunk-0001-cc5e8480f36d.wav
+
+  CHUNK: sentence-chunk-0002-9c72d0314205
+  INDEX: 2
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 195, 'sentence_end': 195, 'sentence_id': 'sentence-0002-9c72d0314205', 'sentence_start': 130, 'start': 130}
+  ARTIFACT: chunks/sentence-chunk-0002-9c72d0314205.wav
+
+  CHUNK: sentence-chunk-0003-a74a3594fffc
+  INDEX: 3
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 284, 'sentence_end': 284, 'sentence_id': 'sentence-0003-a74a3594fffc', 'sentence_start': 195, 'start': 195}
+  ARTIFACT: chunks/sentence-chunk-0003-a74a3594fffc.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\cf525f6b85f63086b0f9f4fc3ee9f3714542aa1d429bb73af37607830e7f8d3b\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\75c7888ab885947b6a20a6378f9d56ef28eef9680970686b1eeca97198efbf87\synthesis-manifest.json
+MODIFIED: 1790249464.713909
+FINAL STATUS: completed
+GENERATED: 2
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-afb69571bf74
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 123, 'sentence_end': 123, 'sentence_id': 'sentence-0000-afb69571bf74', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-afb69571bf74.wav
+
+  CHUNK: sentence-chunk-0001-4179155b228c
+  INDEX: 1
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 219, 'sentence_end': 219, 'sentence_id': 'sentence-0001-4179155b228c', 'sentence_start': 123, 'start': 123}
+  ARTIFACT: chunks/sentence-chunk-0001-4179155b228c.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\75c7888ab885947b6a20a6378f9d56ef28eef9680970686b1eeca97198efbf87\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\71557301a72098e736a2c0e2691362a85cfc35ed20a27a51c00f1392dbb6d2f8\synthesis-manifest.json
+MODIFIED: 1790249001.8362017
+FINAL STATUS: completed
+GENERATED: 2
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-4f5fc666d77d
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 92, 'sentence_end': 92, 'sentence_id': 'sentence-0000-4f5fc666d77d', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-4f5fc666d77d.wav
+
+  CHUNK: sentence-chunk-0001-ebeafb75ad64
+  INDEX: 1
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 161, 'sentence_end': 161, 'sentence_id': 'sentence-0001-ebeafb75ad64', 'sentence_start': 92, 'start': 92}
+  ARTIFACT: chunks/sentence-chunk-0001-ebeafb75ad64.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_8fd5a623511847208035e61b66b38f0d\section-audio\71557301a72098e736a2c0e2691362a85cfc35ed20a27a51c00f1392dbb6d2f8\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_254ed6a4a1a246d585d75da181ac9666\section-audio\ac3ae7362cc9f4fa7db89a1e856d584cbafd434d2c0ce6e2ddebb747013bd5c1\synthesis-manifest.json
+MODIFIED: 1790248302.4666927
+FINAL STATUS: completed
+GENERATED: 2
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-ec1ee9ac532b
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 125, 'sentence_end': 125, 'sentence_id': 'sentence-0000-ec1ee9ac532b', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-ec1ee9ac532b.wav
+
+  CHUNK: sentence-chunk-0001-e81f5084d939
+  INDEX: 1
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 235, 'sentence_end': 235, 'sentence_id': 'sentence-0001-e81f5084d939', 'sentence_start': 125, 'start': 125}
+  ARTIFACT: chunks/sentence-chunk-0001-e81f5084d939.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_254ed6a4a1a246d585d75da181ac9666\section-audio\ac3ae7362cc9f4fa7db89a1e856d584cbafd434d2c0ce6e2ddebb747013bd5c1\request.json
+
+====================================================================================================
+MANIFEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_254ed6a4a1a246d585d75da181ac9666\section-audio\28b6088a00628e5773fa5258a015ab8a1569750e10d1ec53f162ad2d950fda9d\synthesis-manifest.json
+MODIFIED: 1790248185.3807836
+FINAL STATUS: completed
+GENERATED: 2
+REUSED: 0
+FAILED COUNT: 0
+FAILED IDS: []
+
+  CHUNK: sentence-chunk-0000-ec1ee9ac532b
+  INDEX: 0
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 125, 'sentence_end': 125, 'sentence_id': 'sentence-0000-ec1ee9ac532b', 'sentence_start': 0, 'start': 0}
+  ARTIFACT: chunks/sentence-chunk-0000-ec1ee9ac532b.wav
+
+  CHUNK: sentence-chunk-0001-bde43cdb5350
+  INDEX: 1
+  STATUS: completed
+  ATTEMPTS: 1
+  ERROR: None
+  SOURCE SPAN: {'end': 234, 'sentence_end': 234, 'sentence_id': 'sentence-0001-bde43cdb5350', 'sentence_start': 125, 'start': 125}
+  ARTIFACT: chunks/sentence-chunk-0001-bde43cdb5350.wav
+
+REQUEST: D:\Projects\ai-content-generation\.runtime\desktop-chatterbox-test\project_254ed6a4a1a246d585d75da181ac9666\section-audio\28b6088a00628e5773fa5258a015ab8a1569750e10d1ec53f162ad2d950fda9d\request.json
