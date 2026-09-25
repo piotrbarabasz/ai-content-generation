@@ -40,6 +40,16 @@ class Services:
                        view(2, prompt="Manual two", prompt_id="prompt-2")]
         self.calls = []
         self.fail_prompt = False
+        self.context = SimpleNamespace(brief="", style="", brief_revision_id=None, style_revision_id=None)
+
+    def visual_context(self):
+        return self.context
+
+    def save_visual_context(self, brief, style):
+        self.calls.append(("save_visual_context", brief, style))
+        self.context = SimpleNamespace(brief=brief, style=style,
+                                       brief_revision_id="brief-1", style_revision_id="style-1")
+        return self.context
 
     def scenes(self, section):
         return tuple(self.values)
@@ -165,6 +175,28 @@ def test_editor_wires_scene_factory_and_preserves_unsaved_prompt(qt, tmp_path):
     finally:
         widget.visuals.prompt_dirty = False
         widget.dirty = False
+        widget.close()
+
+
+def test_visual_context_draft_survives_navigation_and_blocks_project_loss(qt, tmp_path):
+    services = Services()
+    widget = ProjectEditor(LocalProjects(), scene_factory=lambda session: services)
+    widget.load_project(tmp_path / "project", create=True)
+    try:
+        widget.visuals.film_brief.setPlainText("Unsaved brief")
+        assert widget.visuals.context_dirty
+        widget.tabs.setCurrentWidget(widget.script_tab)
+        widget.tabs.setCurrentWidget(widget.visuals_tab)
+        widget.visuals.scenes.setCurrentRow(1)
+        assert widget.visuals.film_brief.toPlainText() == "Unsaved brief"
+        widget.load_project(tmp_path / "other", create=True)
+        assert widget.session.project.name != "other"
+        assert not widget.close()
+        QTest.mouseClick(widget.visuals.save_context_button, Qt.LeftButton)
+        assert not widget.visuals.context_dirty
+        assert services.calls[-1] == ("save_visual_context", "Unsaved brief", "")
+    finally:
+        widget.visuals.context_dirty = False
         widget.close()
 
 

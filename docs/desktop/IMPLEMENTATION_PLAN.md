@@ -1300,11 +1300,26 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Offline fake-runtime contract tests and explicit Windows/GPU download-generate-unload smoke with sizes, versions and memory evidence.
 - **Implementation evidence:** [D057 local image runtime](D057_LOCAL_IMAGE_RUNTIME.md) records the pinned SD 1.5 fp16 model files, optional private runtime intake, D028 lease use, worker isolation, cache redirection and the pending real Windows/GPU smoke. The package wheel closure and hardware memory/time evidence must be reviewed before marking this task Completed.
 
+### D058 — Project visual context in the desktop editor
+
+- **Status:** Partial — GUI/offline behavior and GPS-project manual prompt pass; live structured-LLM generation was unavailable for manual verification (2026-09-25)
+- **Milestone:** M7
+- **Priority:** P0
+- **Goal:** Let a user save project-level Film Brief and Visual Style revisions in Visuals, then create or generate the first scene prompt through the GUI.
+- **Scope:** Present and edit the two existing D015 context families, resolve their current revision IDs in normal desktop composition, and use those IDs for first and subsequent generated prompts.
+- **Out of scope:** Image-provider/runtime changes, unversioned settings, prompt/image auto-regeneration, and broader GUI redesign.
+- **Dependencies:** D015, D022.
+- **Main code areas:** Project visual-prompt index, scene service/composition, Visuals panel and focused tests.
+- **Acceptance criteria:** Context revisions survive reopen and retain lineage; first manual/generated prompts are selected and unlock image generation; context changes do not mutate old prompts; dirty drafts are not lost on project switch or close.
+- **Test strategy:** Offline fake-prompt/provider tests, GUI behavior tests and an explicit GPS-project manual workflow check.
+- **Implementation evidence:** The Visuals panel now saves the existing project-owned `PromptContextRevision` families; normal scene composition resolves the latest retained brief/style IDs. GUI tests cover both first-prompt paths, history, freshness and draft safety. The supplied GPS project passed manual context save, first manual prompt selection, image-button enablement and reopen checks. No structured LLM environment was configured for the requested live generated-prompt click.
+
 ## Backlog provenance and deferred scope
 
-There are **57 implementation tasks**: D001-D037 preserve the 37 subjects from the
-accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D057
-retain valuable optional work and an explicit local-image extension. None is
+There are **58 implementation tasks**: D001-D037 preserve the 37 subjects from the
+accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
+retain valuable optional work, a local-image extension and the project visual-context
+GUI follow-up. None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |
