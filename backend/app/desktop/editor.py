@@ -236,8 +236,8 @@ class ProjectEditor(QMainWindow):
             raise ValueError("Create or open a project first.")
         if clean and self.dirty:
             raise ValueError("Save or discard your draft first.")
-        if self.visuals.prompt_dirty:
-            raise ValueError("Save the scene prompt draft first.")
+        if self.visuals.prompt_dirty or self.visuals.context_dirty:
+            raise ValueError("Save the scene prompt or visual context draft first.")
 
     def _run(self, action):
         try:
@@ -252,7 +252,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty:
+            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -486,7 +486,7 @@ class ProjectEditor(QMainWindow):
             self._refresh()
 
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty:
+        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return

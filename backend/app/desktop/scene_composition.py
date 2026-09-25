@@ -21,6 +21,11 @@ def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image
     artifacts = ProjectImageGeneration(index, store)
     coordinator = JobCoordinator(jobs)
     prompts = VisualPromptService(index.prompts, prompt_provider, generation_identity=prompt_identity)
+    if context_resolver is None:
+        def context_resolver(_scene_id):
+            brief = index.prompts.current_context("film_brief")
+            style = index.prompts.current_context("visual_style")
+            return brief.id if brief else None, style.id if style else None
     generation = ImageGenerationService(ResultPublicationService(index, store), coordinator,
                                         artifacts, image_provider)
     return SceneServices(plans=ProjectScenePlans(session.repository, store), prompts=prompts,

@@ -22,6 +22,14 @@ class ImageVariant:
 
 
 @dataclass(frozen=True)
+class VisualContextView:
+    brief: str
+    brief_revision_id: str | None
+    style: str
+    style_revision_id: str | None
+
+
+@dataclass(frozen=True)
 class SceneView:
     id: str
     acceptance_id: str
@@ -168,12 +176,33 @@ class SceneServices:
             raise ValueError("Select a section first.")
         return next(view for view in self.scenes(self.section) if view.id == scene_id)
 
+    def visual_context(self):
+        brief = self.prompts.prompts.current_context("film_brief")
+        style = self.prompts.prompts.current_context("visual_style")
+        return VisualContextView(brief.text if brief else "", brief.id if brief else None,
+                                 style.text if style else "", style.id if style else None)
+
+    def save_visual_context(self, brief_text, style_text):
+        current = self.visual_context()
+        if ((current.brief_revision_id is not None and not brief_text.strip())
+                or (current.style_revision_id is not None and not style_text.strip())):
+            raise ValueError("Visual context cannot be cleared; enter replacement text.")
+        for kind, text, old_text, parent in (
+            ("film_brief", brief_text, current.brief, current.brief_revision_id),
+            ("visual_style", style_text, current.style, current.style_revision_id),
+        ):
+            if text != old_text:
+                if not text.strip():
+                    continue
+                self.prompts.pin_context(kind, text, parent_revision_id=parent)
+        return self.visual_context()
+
     def _context_ids(self, scene_id):
         if self.context_resolver is None:
-            raise ValueError("Select an existing prompt or configure explicit film brief/style revisions first.")
+            raise ValueError("Save Film Brief and Visual Style before creating the first visual prompt.")
         values = self.context_resolver(scene_id)
-        if not isinstance(values, (tuple, list)) or len(values) != 2:
-            raise ValueError("Prompt context resolver must return brief and style revision IDs.")
+        if not isinstance(values, (tuple, list)) or len(values) != 2 or not all(values):
+            raise ValueError("Save Film Brief and Visual Style before creating the first visual prompt.")
         return tuple(values)
 
     def save_prompt(self, scene_id, text):
@@ -189,12 +218,7 @@ class SceneServices:
 
     def regenerate_prompt(self, scene_id):
         chosen = self.prompts.prompts.selected(scene_id)
-        if chosen is None:
-            ids = self._context_ids(scene_id)
-        else:
-            current = self.prompts.prompts.revision(chosen.revision_id)
-            ids = current.inputs.brief_revision_id, current.inputs.style_revision_id
-        revision = self.prompts.generate(self.acceptance.id, scene_id, *ids)
+        revision = self.prompts.generate(self.acceptance.id, scene_id, *self._context_ids(scene_id))
         self.prompts.select(revision.id, expected_selection_id=chosen.id if chosen else None)
         return self.scene(scene_id)
 
@@ -292,4 +316,5 @@ class SceneServices:
         return self.generation.capabilities() if self.generation.provider is not None else None
 
 
-__all__ = ["ImageVariant", "PlanSceneView", "PromptVariant", "ScenePlanView", "SceneServices", "SceneView"]
+__all__ = ["ImageVariant", "PlanSceneView", "PromptVariant", "ScenePlanView", "SceneServices", "SceneView",
+           "VisualContextView"]

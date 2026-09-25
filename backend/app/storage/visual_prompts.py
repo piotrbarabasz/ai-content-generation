@@ -61,6 +61,18 @@ class ProjectVisualPrompts:
     def context(self, revision_id):
         return self._read("prompt_context", revision_id, PromptContextRevision)
 
+    def context_history(self, kind):
+        if kind not in ("film_brief", "visual_style"):
+            raise ValueError("Unknown visual context kind.")
+        manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
+        revisions = (self.context(m.metadata["value_id"]) for m in manifests
+                     if m.artifact_type == "prompt_context" and m.metadata.get("project_id") == self.project_id)
+        return tuple(revision for revision in revisions if revision.kind == kind)
+
+    def current_context(self, kind):
+        history = self.context_history(kind)
+        return history[-1] if history else None
+
     def save_context(self, revision):
         if revision.project_id != self.project_id:
             raise ValueError("Context belongs to a different project.")

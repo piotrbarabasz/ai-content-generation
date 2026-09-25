@@ -8,8 +8,11 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 from app.application.projects import ProjectSession
+from app.application.invalidation import Freshness
 from app.application.scene_planning import ScenePlanningService
 from app.application.script_generation import ScriptGenerationService
 from app.desktop.scene_composition import compose_scenes
@@ -65,6 +68,96 @@ def setup_project(path):
         prompt = services.prompts.create_manual(accepted.id, scene.id, brief.id, style.id, f"Manual {index}")
         services.prompts.select(prompt.id, expected_selection_id=None)
     return session, section, services, prompt_provider, image_provider
+
+
+def test_project_visual_context_unlocks_first_prompts_and_retains_lineage(qt, tmp_path):
+    root = tmp_path / "project"
+    session = ProjectSession.create(root, name="Visual context", repository_factory=ProjectRepository)
+    prompt_provider, image_provider = PromptProvider(), ImageProvider()
+    try:
+        section = ScriptGenerationService(session).append_text(
+            "A satellite orbits Earth.\n\nA receiver calculates its position.", title="Story",
+            expected_active_revision_id=session.active_script.id).sections[0]
+        services = compose_scenes(session, prompt_provider=prompt_provider,
+                                  prompt_identity={"provider": "fixture", "model": "v1"},
+                                  image_provider=image_provider)
+        planning = ScenePlanningService(services.plans, sentence_sources)
+        planning.accept(planning.suggest(section).id, reviewer_id="editor")
+        first, second = services.scenes(section)
+        panel = ScenePanel()
+        panel.bind(services)
+        panel.select_section(section)
+        assert not panel.buttons["Generate image"].isEnabled()
+        assert panel.buttons["Regenerate prompt"].text() == "Generate prompt"
+        assert services.visual_context().brief_revision_id is None
+        with pytest.raises(ValueError, match="Save Film Brief and Visual Style"):
+            services.save_prompt(first.id, "Manual satellite")
+        with pytest.raises(ValueError, match="Save Film Brief and Visual Style"):
+            services.regenerate_prompt(second.id)
+
+        panel.film_brief.setPlainText("Educational GPS film")
+        QTest.mouseClick(panel.save_context_button, Qt.LeftButton)
+        brief_only = services.visual_context()
+        assert brief_only.brief_revision_id and brief_only.style_revision_id is None
+        with pytest.raises(ValueError, match="Save Film Brief and Visual Style"):
+            services.save_prompt(first.id, "Manual satellite")
+        panel.visual_style.setPlainText("Cinematic blue space")
+        QTest.mouseClick(panel.save_context_button, Qt.LeftButton)
+        initial = services.visual_context()
+        assert initial.style_revision_id and initial.brief_revision_id == brief_only.brief_revision_id
+        assert services._context_ids(first.id) == (initial.brief_revision_id, initial.style_revision_id)
+
+        panel.prompt.setPlainText("Manual satellite")
+        QTest.mouseClick(panel.buttons["Save prompt"], Qt.LeftButton)
+        manual = services.scene(first.id)
+        assert manual.prompt == "Manual satellite" and manual.prompt_id
+        assert panel.buttons["Generate image"].isEnabled()
+        assert len(manual.prompts) == 1 and services.prompts.selected(first.id).id == manual.prompt_id
+        panel.scenes.setCurrentRow(1)
+        QTest.mouseClick(panel.buttons["Regenerate prompt"], Qt.LeftButton)
+        generated = services.scene(second.id)
+        assert generated.prompt == "Generated visual" and generated.prompt_id
+        assert panel.buttons["Generate image"].isEnabled()
+        inputs = services.prompts.selected(second.id).inputs
+        assert (inputs.brief_revision_id, inputs.style_revision_id) == (
+            initial.brief_revision_id, initial.style_revision_id)
+        assert len(prompt_provider.calls) == 1 and image_provider.calls == []
+
+        changed = services.save_visual_context("Updated GPS film", "Updated cinematic blue")
+        brief_history = services.prompts.prompts.context_history("film_brief")
+        style_history = services.prompts.prompts.context_history("visual_style")
+        assert len(brief_history) == len(style_history) == 2
+        assert brief_history[-1].parent_revision_id == initial.brief_revision_id
+        assert style_history[-1].parent_revision_id == initial.style_revision_id
+        assert services.prompts.selected(first.id).id == manual.prompt_id
+        assert services.prompts.selected(second.id).inputs == inputs
+        assert services.prompts.freshness(first.acceptance_id, first.id, changed.brief_revision_id,
+                                         changed.style_revision_id).state == Freshness.STALE
+        assert services.prompts.freshness(second.acceptance_id, second.id, initial.brief_revision_id,
+                                         initial.style_revision_id).state == Freshness.FRESH
+        newer = services.regenerate_prompt(second.id)
+        assert newer.prompt_id != generated.prompt_id
+        newer_inputs = services.prompts.selected(second.id).inputs
+        assert (newer_inputs.brief_revision_id, newer_inputs.style_revision_id) == (
+            changed.brief_revision_id, changed.style_revision_id)
+        assert services.prompts.prompts.revision(generated.prompt_id).inputs == inputs
+        assert len(newer.prompts) == 2 and len(prompt_provider.calls) == 2
+        assert image_provider.calls == []
+        panel.close()
+    finally:
+        session.close()
+
+    reopened = ProjectSession.open(root, repository_factory=ProjectRepository)
+    try:
+        restored = compose_scenes(reopened, prompt_provider=PromptProvider(),
+                                  prompt_identity={"provider": "fixture", "model": "v1"},
+                                  image_provider=ImageProvider())
+        current = restored.visual_context()
+        assert (current.brief, current.style) == ("Updated GPS film", "Updated cinematic blue")
+        assert restored._context_ids(first.id) == (changed.brief_revision_id, changed.style_revision_id)
+        assert restored.prompts.prompts.revision(generated.prompt_id).inputs == inputs
+    finally:
+        reopened.close()
 
 
 def test_scene_local_prompt_and_image_changes_preserve_other_scene_and_audio(tmp_path):

@@ -29,9 +29,22 @@ class ScenePanel(QWidget):
         super().__init__(parent)
         self.services = self.section = self.current = None
         self.views = ()
-        self.loading = self.prompt_dirty = False
+        self.loading = self.prompt_dirty = self.context_dirty = False
+        self.context_saved = ("", "")
         self.image_worker = self.image_claim = None
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("VISUAL CONTEXT"))
+        context_form = QFormLayout()
+        self.film_brief, self.visual_style = QPlainTextEdit(), QPlainTextEdit()
+        for field in (self.film_brief, self.visual_style):
+            field.setMaximumHeight(80)
+            field.textChanged.connect(self._context_changed)
+        context_form.addRow("Film brief", self.film_brief)
+        context_form.addRow("Visual style", self.visual_style)
+        layout.addLayout(context_form)
+        self.save_context_button = QPushButton("Save visual context")
+        self.save_context_button.clicked.connect(self.save_visual_context)
+        layout.addWidget(self.save_context_button)
         self.scenes = QListWidget()
         self.scenes.setMaximumHeight(150)
         self.scenes.currentRowChanged.connect(self._select_row)
@@ -92,8 +105,18 @@ class ScenePanel(QWidget):
     def bind(self, services):
         if self.busy:
             raise ValueError("Wait for local image generation to finish before switching projects.")
+        if self.context_dirty:
+            raise ValueError("Save the visual context draft before switching projects.")
         self.services, self.section, self.current = services, None, None
         self.views = ()
+        context_reader = getattr(services, "visual_context", None)
+        context = context_reader() if callable(context_reader) else None
+        self.loading = True
+        self.film_brief.setPlainText(context.brief if context else "")
+        self.visual_style.setPlainText(context.style if context else "")
+        self.loading = False
+        self.context_saved = (self.film_brief.toPlainText(), self.visual_style.toPlainText())
+        self.context_dirty = False
         self.scenes.clear()
         self._show(None)
         if services:
@@ -157,6 +180,24 @@ class ScenePanel(QWidget):
             self.prompt_dirty = self.prompt.toPlainText() != self.current.prompt
             self._enable()
 
+    def _context_changed(self):
+        if not self.loading:
+            self.context_dirty = (self.film_brief.toPlainText(), self.visual_style.toPlainText()) != self.context_saved
+            self._enable()
+
+    def save_visual_context(self):
+        if self.services is None or not self.context_dirty:
+            return
+        try:
+            saved = self.services.save_visual_context(self.film_brief.toPlainText(),
+                                                      self.visual_style.toPlainText())
+            self.context_saved = saved.brief, saved.style
+            self.context_dirty = False
+            self.status.setText("Visual context saved.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+        self._enable()
+
     def _show(self, view):
         self.current = view
         self.loading = True
@@ -198,9 +239,15 @@ class ScenePanel(QWidget):
 
     def _enable(self):
         ready = self.services is not None and self.current is not None and not self.busy
+        context_available = self.services is not None and hasattr(self.services, "save_visual_context")
+        self.film_brief.setEnabled(context_available and not self.busy)
+        self.visual_style.setEnabled(context_available and not self.busy)
+        self.save_context_button.setEnabled(context_available and self.context_dirty and not self.busy)
         self.prompt.setEnabled(ready)
-        self.buttons["Save prompt"].setEnabled(ready and self.prompt_dirty)
-        self.buttons["Regenerate prompt"].setEnabled(ready and not self.prompt_dirty)
+        self.buttons["Save prompt"].setEnabled(ready and self.prompt_dirty and not self.context_dirty)
+        self.buttons["Regenerate prompt"].setEnabled(ready and not self.prompt_dirty and not self.context_dirty)
+        self.buttons["Regenerate prompt"].setText("Regenerate prompt" if ready and self.current.prompt_id else
+                                                  "Generate prompt")
         self.buttons["Select prompt"].setEnabled(ready and not self.prompt_dirty and self.prompt_variants.count() > 0)
         self.buttons["Import image"].setEnabled(ready and not self.prompt_dirty)
         self.buttons["Generate image"].setEnabled(ready and not self.prompt_dirty and bool(self.current.prompt_id if ready else False))
@@ -227,7 +274,7 @@ class ScenePanel(QWidget):
             self._act(lambda: self.services.save_prompt(self.current.id, text), "Prompt saved and selected.")
 
     def regenerate_prompt(self):
-        if self.current and not self.prompt_dirty:
+        if self.current and not self.prompt_dirty and not self.context_dirty:
             self._act(lambda: self.services.regenerate_prompt(self.current.id), "Prompt regenerated and selected.")
 
     def select_prompt(self):
