@@ -117,6 +117,18 @@ def test_cache_force_and_old_variant_selection_preserve_audio_and_bytes(project)
     assert p.index.selected()[p.key] == two.artifact_id
 
 
+def test_precomputed_background_result_still_uses_shared_publication(project):
+    p = project
+    submission = enqueue(p)
+    claim = p.coordinator.claim_next("background-image")
+    from app.providers.image_generation import ImageGenerationRequest
+    result = MockImageProvider().generate(ImageGenerationRequest(p.prompt.prompt, 32, 24))
+    published = p.service.run(claim, generated_result=result)
+    assert published.artifact_id and p.provider.calls == []
+    assert p.adapter.images.selected(p.scene_id) is None
+    assert p.jobs.get_attempt(submission.attempt.id).status == AttemptStatus.COMPLETED
+
+
 @pytest.mark.parametrize("settings", [{"seed": 2}, {"width": 16}, {"height": 16}, {"negative_prompt": "blur"}])
 def test_settings_change_bypasses_cache(project, settings):
     one, first = run(project)

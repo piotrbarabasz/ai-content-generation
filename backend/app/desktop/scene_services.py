@@ -1,8 +1,10 @@
 """D022 presentation adapter over the D013/D015/D016/D017 services."""
 
 from dataclasses import dataclass
+import json
 
 from app.application.scene_planning import ScenePlanningService
+from app.providers.image_generation import ImageGenerationRequest
 from app.storage.section_tempo import SectionTempoArtifacts
 from app.tts.scene_sources import sentence_sources
 
@@ -229,6 +231,49 @@ class SceneServices:
         chosen = self.images.selected(scene_id)
         self.generation.select(artifact_id, expected_selection_id=chosen.id if chosen else None)
         return self.scene(scene_id)
+
+    def prepare_background_image(self, scene_id, *, width, height, seed):
+        """Keep job and project state on the GUI thread; return pure inference inputs."""
+        if not getattr(self.generation.provider, "requires_background", False):
+            raise ValueError("Background generation requires the managed local image provider.")
+        prompt = self.prompts.selected(scene_id)
+        if prompt is None:
+            raise ValueError("Select a visual prompt before generating an image.")
+        jobs = self.coordinator.repository
+        if jobs.paused or any(a.status in ("queued", "running")
+                              for job in jobs.jobs() for a in jobs.attempts(job.id)):
+            raise ValueError("Resolve pending image jobs before generating another image.")
+        submission = self.generation.enqueue(prompt.id, width=width, height=height, seed=seed)
+        if submission.cached_artifact_id is not None:
+            chosen = self.images.selected(scene_id)
+            self.generation.select(submission.cached_artifact_id,
+                                   expected_selection_id=chosen.id if chosen else None)
+            return None, self.scene(scene_id)
+        claim = self.coordinator.claim_next("desktop-scene-image")
+        if claim is None or claim.id != submission.attempt.id:
+            raise ValueError("Image job could not claim its reserved attempt.")
+        job = jobs.get_job(claim.job_id)
+        request = ImageGenerationRequest(**json.loads(job.request.settings_json)["request"])
+        return (claim, scene_id, self.generation.provider, request), None
+
+    def finish_background_image(self, claim, scene_id, result=None, error=None):
+        actual = self.coordinator.repository.get_attempt(claim.id)
+        if actual.cancel_requested:
+            if actual.status == "running":
+                self.coordinator.acknowledge_cancel(claim)
+            raise RuntimeError("Local image generation canceled.")
+        if error is not None:
+            if actual.status == "running":
+                self.coordinator.fail(claim, f"image_generation: {type(error).__name__}: {str(error)[:1024]}")
+            raise error
+        artifact_id = self.generation.run(claim, generated_result=result).artifact_id
+        chosen = self.images.selected(scene_id)
+        self.generation.select(artifact_id, expected_selection_id=chosen.id if chosen else None)
+        return self.scene(scene_id)
+
+    def cancel_background_image(self, claim):
+        self.coordinator.cancel(claim.id)
+        self.generation.provider.cancel()
 
     def select_image(self, scene_id, artifact_id):
         image = self.images.image(artifact_id)

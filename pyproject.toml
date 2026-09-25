@@ -49,7 +49,7 @@ package-dir = {"" = "backend"}
 where = ["backend"]
 
 [tool.setuptools.package-data]
-"app.runtime" = ["piper_cpu_windows_x64.json", "chatterbox_gpu_windows_x64.json"]
+"app.runtime" = ["piper_cpu_windows_x64.json", "chatterbox_gpu_windows_x64.json", "local_image_worker.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
