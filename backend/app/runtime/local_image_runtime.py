@@ -19,7 +19,7 @@ from app.domain.dependencies import canonical_json
 from app.runtime.provisioning import _install_lock
 
 
-PROFILE = "sd15-cu124-fp16-v1"
+PROFILE = "sd15-cu124-fp32-inference-v1"
 MODEL = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 MODEL_REVISION = "f03de327dd89b501a01da37fc5240cf4fdba85a1"
 PACKAGE_PINS = {

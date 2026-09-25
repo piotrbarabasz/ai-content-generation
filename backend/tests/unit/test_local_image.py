@@ -1,12 +1,14 @@
 """D057 offline runtime, provider and GPU ownership contract tests."""
 
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 import threading
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from app.desktop.image_composition import compose_installed_image
 from app.providers.image_factory import build_image_provider
@@ -16,6 +18,31 @@ from app.providers.mock_image import MockImageProvider
 from app.runtime import local_image_runtime as managed
 from app.runtime import local_image_worker as worker
 from app.runtime.resources import GPUResourceManager
+
+
+def test_worker_reports_safety_block_before_black_pixels():
+    result = SimpleNamespace(images=[Image.new("RGB", (512, 512), "black")], nsfw_content_detected=[True])
+    diagnostics = worker._result_diagnostics(result, dtype="torch.float32", device="cuda:0",
+                                             elapsed_seconds=12.3456)
+    assert diagnostics == {"nsfw_content_detected": True, "effectively_black": True,
+                           "dtype": "torch.float32", "device": "cuda:0",
+                           "elapsed_inference_seconds": 12.346}
+    with pytest.raises(RuntimeError, match="local_image_safety_blocked"):
+        worker._require_usable_result(diagnostics)
+
+
+def test_worker_rejects_black_without_safety_flag_and_accepts_nonblack():
+    black = SimpleNamespace(images=[Image.new("RGB", (512, 512), (2, 2, 2))],
+                            nsfw_content_detected=[False])
+    diagnostics = worker._result_diagnostics(black, dtype="torch.float32", device="cuda:0",
+                                             elapsed_seconds=1)
+    assert diagnostics["nsfw_content_detected"] is False and diagnostics["effectively_black"]
+    with pytest.raises(RuntimeError, match="local_image_black_output"):
+        worker._require_usable_result(diagnostics)
+    good = SimpleNamespace(images=[Image.new("RGB", (512, 512), (10, 20, 30))],
+                           nsfw_content_detected=[False])
+    worker._require_usable_result(worker._result_diagnostics(
+        good, dtype="torch.float32", device="cuda:0", elapsed_seconds=1))
 
 
 @pytest.mark.parametrize("reported_bytes", (
@@ -100,7 +127,9 @@ def test_factory_and_composition_keep_openai_and_absent_local_independent(tmp_pa
 def test_profile_capabilities_identity_seed_negative_prompt_and_output(tmp_path, monkeypatch):
     installed = _installed(tmp_path)
     payload = MockImageProvider().generate(ImageGenerationRequest("fixture", 512, 512)).image_bytes
-    process = Process(payload)
+    diagnostics = {"nsfw_content_detected": False, "effectively_black": False,
+                   "dtype": "torch.float32", "device": "cuda:0", "elapsed_inference_seconds": 2.5}
+    process = Process(payload, errors=("local_image_diagnostics:" + json.dumps(diagnostics) + "\n").encode())
     resources = GPUResourceManager()
     provider = LocalImageProvider(tmp_path, resources=resources, process_factory=lambda *a, **k: process)
     monkeypatch.setattr(provider.installation, "active", lambda: installed)
@@ -109,9 +138,11 @@ def test_profile_capabilities_identity_seed_negative_prompt_and_output(tmp_path,
     assert capabilities.provider == "local" and capabilities.seeded and capabilities.negative_prompt
     assert capabilities.supported_sizes == ((512, 512),) and capabilities.formats == ("PNG",)
     assert capabilities.settings["installation"] == installed.fingerprint
+    assert capabilities.settings["dtype"] == "float32" and capabilities.settings["attention_slicing"]
     request = ImageGenerationRequest("a satellite", 512, 512, seed=43, negative_prompt="letters")
     result = provider.generate(request)
     assert result.image_bytes == payload and result.format == "PNG"
+    assert result.metadata["diagnostics"] == diagnostics
     assert process.input == request.to_payload() | {"version": 1}
     assert resources.availability().available
     assert (installed.cache / "hf").is_dir()
@@ -138,6 +169,35 @@ def test_gpu_contention_oom_failure_and_invalid_output_release(tmp_path, monkeyp
         with pytest.raises((RuntimeError, ValueError), match=expected):
             provider.generate(request)
         assert resources.availability().available
+
+
+def test_safety_block_and_black_output_never_publish(tmp_path, monkeypatch):
+    installed = _installed(tmp_path)
+    resources = GPUResourceManager()
+    provider = LocalImageProvider(tmp_path, resources=resources)
+    monkeypatch.setattr(provider.installation, "active", lambda: installed)
+    monkeypatch.setattr("app.runtime.windows_job.WindowsJob", lambda pid: SimpleNamespace(close=lambda: None))
+    request = ImageGenerationRequest("satellite", 512, 512)
+    diagnostic = (b'local_image_diagnostics:{"nsfw_content_detected":true,"effectively_black":true,'
+                  b'"dtype":"torch.float32","device":"cuda:0","elapsed_inference_seconds":3.5}\n')
+    provider.process_factory = lambda *a, **k: Process(
+        b"", returncode=1, errors=diagnostic + b"local_image_safety_blocked: blocked\n")
+    with pytest.raises(RuntimeError, match="safety checker blocked.*nsfw_content_detected=True"):
+        provider.generate(request)
+    assert resources.availability().available
+
+    provider.process_factory = lambda *a, **k: Process(
+        b"", returncode=1, errors=b"local_image_black_output: non-finite output\n")
+    with pytest.raises(RuntimeError, match="effectively black"):
+        provider.generate(request)
+    assert resources.availability().available
+
+    output = BytesIO()
+    Image.new("RGB", (512, 512), "black").save(output, format="PNG")
+    provider.process_factory = lambda *a, **k: Process(output.getvalue())
+    with pytest.raises(ValueError, match="effectively black PNG"):
+        provider.generate(request)
+    assert resources.availability().available
 
 
 def test_cancel_terminates_worker_and_releases_gpu(tmp_path, monkeypatch):
