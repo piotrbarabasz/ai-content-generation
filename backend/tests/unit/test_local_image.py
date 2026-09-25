@@ -14,7 +14,40 @@ from app.providers.image_generation import ImageGenerationRequest
 from app.providers.local_image import LocalImageProvider
 from app.providers.mock_image import MockImageProvider
 from app.runtime import local_image_runtime as managed
+from app.runtime import local_image_worker as worker
 from app.runtime.resources import GPUResourceManager
+
+
+@pytest.mark.parametrize("reported_bytes", (
+    worker.MIN_CUDA_VRAM_BYTES,
+    6_442_123_264,  # GTX 1660 SUPER: 6143.6875 MiB.
+    worker.MIN_CUDA_VRAM_BYTES - worker.CUDA_VRAM_REPORTING_TOLERANCE_BYTES,
+))
+def test_cuda_vram_preflight_accepts_six_gib_class_reporting(reported_bytes):
+    assert worker._has_sufficient_cuda_vram(reported_bytes)
+    cuda = SimpleNamespace(is_available=lambda: True, device_count=lambda: 1,
+                           get_device_properties=lambda index: SimpleNamespace(total_memory=reported_bytes))
+    worker._require_cuda_device(cuda)
+
+
+def test_cuda_vram_preflight_rejects_below_reporting_tolerance():
+    assert worker.MIN_CUDA_VRAM_BYTES == 6 * 1024**3
+    assert worker.CUDA_VRAM_REPORTING_TOLERANCE_BYTES == 1024**2
+    reported = worker.MIN_CUDA_VRAM_BYTES - worker.CUDA_VRAM_REPORTING_TOLERANCE_BYTES - 1
+    assert not worker._has_sufficient_cuda_vram(reported)
+    assert not worker._has_sufficient_cuda_vram(5 * 1024**3)
+    cuda = SimpleNamespace(is_available=lambda: True, device_count=lambda: 1,
+                           get_device_properties=lambda index: SimpleNamespace(total_memory=reported))
+    with pytest.raises(RuntimeError, match="approximately 6 GiB reported CUDA VRAM"):
+        worker._require_cuda_device(cuda)
+
+
+@pytest.mark.parametrize("available,count", ((False, 1), (True, 0)))
+def test_cuda_unavailable_still_has_no_cpu_fallback(available, count):
+    cuda = SimpleNamespace(is_available=lambda: available, device_count=lambda: count,
+                           get_device_properties=lambda index: pytest.fail("No unavailable device may be queried"))
+    with pytest.raises(RuntimeError, match="CUDA device 0 is unavailable; no CPU fallback"):
+        worker._require_cuda_device(cuda)
 
 
 def _installed(tmp_path):

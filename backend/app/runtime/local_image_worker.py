@@ -7,6 +7,21 @@ from pathlib import Path
 import sys
 
 
+MIN_CUDA_VRAM_BYTES = 6 * 1024**3
+CUDA_VRAM_REPORTING_TOLERANCE_BYTES = 1 * 1024**2
+
+
+def _has_sufficient_cuda_vram(reported_bytes):
+    return reported_bytes >= MIN_CUDA_VRAM_BYTES - CUDA_VRAM_REPORTING_TOLERANCE_BYTES
+
+
+def _require_cuda_device(cuda):
+    if not cuda.is_available() or cuda.device_count() < 1:
+        raise RuntimeError("CUDA device 0 is unavailable; no CPU fallback is permitted.")
+    if not _has_sufficient_cuda_vram(cuda.get_device_properties(0).total_memory):
+        raise RuntimeError("Local image profile requires approximately 6 GiB reported CUDA VRAM.")
+
+
 def main():
     binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
@@ -22,10 +37,7 @@ def main():
     import torch
     from diffusers import StableDiffusionPipeline, DDIMScheduler
 
-    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
-        raise RuntimeError("CUDA device 0 is unavailable; no CPU fallback is permitted.")
-    if torch.cuda.get_device_properties(0).total_memory < 6 * 1024**3:
-        raise RuntimeError("Local image profile requires at least 6 GiB CUDA VRAM.")
+    _require_cuda_device(torch.cuda)
     pipe = StableDiffusionPipeline.from_pretrained(
         str(model), local_files_only=True, torch_dtype=torch.float16,
         variant="fp16", use_safetensors=True,
