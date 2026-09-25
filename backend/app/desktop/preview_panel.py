@@ -4,13 +4,14 @@ import asyncio
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QPixmap
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class PreviewPanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, player_factory=QMediaPlayer,
+                 audio_factory=QAudioOutput, media_devices=QMediaDevices):
         super().__init__(parent)
         self.services = self.edit = None
         self.task = self.loop = None
@@ -18,6 +19,11 @@ class PreviewPanel(QWidget):
         layout = QVBoxLayout(self)
         self.scene_choice = QComboBox()
         layout.addWidget(self.scene_choice)
+        audio_controls = QHBoxLayout()
+        audio_controls.addWidget(QLabel("Audio output"))
+        self.audio_choice = QComboBox()
+        audio_controls.addWidget(self.audio_choice, 1)
+        layout.addLayout(audio_controls)
         self.image = QLabel("Select a saved timeline to preview.")
         self.image.setAlignment(Qt.AlignCenter)
         self.image.setMinimumHeight(180)
@@ -39,11 +45,22 @@ class PreviewPanel(QWidget):
         self.status = QLabel("Preview services are not configured.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        self.player = QMediaPlayer(self)
-        self.audio = QAudioOutput(self)
+        self.player = player_factory(self)
+        self.audio = audio_factory(self)
+        self._media_devices_api = media_devices
+        self.media_devices = media_devices(self)
+        self.audio.setMuted(False)
+        self.audio.setVolume(1.0)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video)
-        self.player.errorOccurred.connect(lambda *_: self.status.setText(self.player.errorString()))
+        self._follow_default_audio = True
+        self.audio_choice.currentIndexChanged.connect(self._select_audio_output)
+        self.media_devices.audioOutputsChanged.connect(self._refresh_audio_outputs)
+        self.player.mediaStatusChanged.connect(self._media_status_changed)
+        self.player.playbackStateChanged.connect(self._playback_state_changed)
+        self.player.errorOccurred.connect(self._playback_error)
+        self._playback_message = ""
+        self._refresh_audio_outputs()
         self.timer = QTimer(self)
         self.timer.setInterval(15)
         self.timer.timeout.connect(self._tick)
@@ -59,6 +76,78 @@ class PreviewPanel(QWidget):
         self.buttons["Render/play film proxy"].setEnabled(ready and not self.busy)
         self.buttons["Cancel render"].setEnabled(self.busy)
         self.scene_choice.setEnabled(ready and not self.busy)
+
+    @staticmethod
+    def _device_id(device):
+        return bytes(device.id()) if device is not None and not device.isNull() else b""
+
+    def _refresh_audio_outputs(self):
+        devices = list(self._media_devices_api.audioOutputs())
+        default = self._media_devices_api.defaultAudioOutput()
+        selected_id = (self._device_id(default) if self._follow_default_audio
+                       else self._device_id(self.audio_choice.currentData()))
+        self.audio_choice.blockSignals(True)
+        self.audio_choice.clear()
+        for device in sorted(devices, key=lambda item: not item.isDefault()):
+            label = device.description() + (" (system default)" if device.isDefault() else "")
+            self.audio_choice.addItem(label, device)
+        index = next(
+            (i for i in range(self.audio_choice.count())
+             if self._device_id(self.audio_choice.itemData(i)) == selected_id),
+            0 if devices else -1,
+        )
+        if index >= 0:
+            self.audio_choice.setCurrentIndex(index)
+        else:
+            self.audio_choice.addItem("No audio output devices available", None)
+        self.audio_choice.setEnabled(bool(devices))
+        self.audio_choice.blockSignals(False)
+        self._select_audio_output()
+
+    def _select_audio_output(self, *_):
+        if _:
+            self._follow_default_audio = False
+        device = self.audio_choice.currentData()
+        if device is not None and not device.isNull():
+            self.audio.setDevice(device)
+
+    def _prepare_audio(self):
+        device = self.audio_choice.currentData()
+        if device is None or device.isNull():
+            raise RuntimeError("No audio output device is available. Connect or enable a Windows playback device.")
+        # Reassert the complete route before every source. Qt keeps this attachment
+        # across setSource(), but doing so also repairs a backend/device reset.
+        self.audio.setDevice(device)
+        self.audio.setMuted(False)
+        self.audio.setVolume(1.0)
+        self.player.setAudioOutput(self.audio)
+
+    def _play(self, path, message):
+        self._prepare_audio()
+        self._playback_message = f"{message} Output: {self.audio.device().description()}."
+        self.player.setSource(QUrl.fromLocalFile(str(path)))
+        self.status.setText(self._playback_message)
+        self.player.play()
+
+    def _media_status_changed(self, status):
+        if status == QMediaPlayer.MediaStatus.InvalidMedia:
+            self.status.setText("Media failed to load or uses an unsupported audio/video format.")
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia and self._playback_message:
+            self.status.setText(self._playback_message + " Playback finished.")
+
+    def _playback_state_changed(self, state):
+        if state == QMediaPlayer.PlaybackState.PlayingState and self._playback_message:
+            self.status.setText(self._playback_message)
+
+    def _playback_error(self, error, message=""):
+        detail = message or self.player.errorString() or "unknown playback error"
+        if error == QMediaPlayer.Error.FormatError:
+            prefix = "Unsupported media/audio format"
+        elif error == QMediaPlayer.Error.ResourceError:
+            prefix = "Media failed to load"
+        else:
+            prefix = "Qt multimedia playback error"
+        self.status.setText(f"{prefix}: {detail}")
 
     def bind(self, services):
         if self.busy:
@@ -96,9 +185,10 @@ class PreviewPanel(QWidget):
             self.video.hide()
             self.image.show()
             self.image.setPixmap(pixmap.scaled(self.image.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.player.setSource(QUrl.fromLocalFile(str(result.audio_path)))
-            self.player.play()
-            self.status.setText(f"Playing exact scene range: {result.frame_count} samples at {result.sample_rate} Hz.")
+            self._play(
+                result.audio_path,
+                f"Playing exact scene range: {result.frame_count} samples at {result.sample_rate} Hz.",
+            )
         except Exception as exc:
             self.status.setText(str(exc))
 
@@ -131,10 +221,8 @@ class PreviewPanel(QWidget):
             else:
                 self.image.hide()
                 self.video.show()
-                self.player.setSource(QUrl.fromLocalFile(str(result.path)))
-                self.player.play()
                 source = "cache" if result.cached else "new render"
-                self.status.setText(f"Playing current film proxy ({source}) for {result.timeline_id}.")
+                self._play(result.path, f"Playing current film proxy ({source}) for {result.timeline_id}.")
         except Exception as exc:
             self.status.setText("Canceled" if "cancel" in str(exc).lower() else str(exc))
         finally:
@@ -150,10 +238,13 @@ class PreviewPanel(QWidget):
 
     def stop(self):
         self.player.stop()
+        if not self.player.source().isEmpty():
+            self.status.setText("Playback stopped.")
 
     def clear(self):
         self.player.stop()
         self.player.setSource(QUrl())
+        self._playback_message = ""
         self.video.hide()
         self.image.show()
         self.image.setPixmap(QPixmap())
