@@ -66,11 +66,12 @@ class SceneServices:
     """Synchronous coordinator-thread commands; providers remain injected."""
 
     def __init__(self, *, plans, prompts, intake, generation, images, store, coordinator,
-                 context_resolver=None):
+                 context_resolver=None, upscale=None):
         self.plans, self.prompts = plans, prompts
         self.intake, self.generation, self.images = intake, generation, images
         self.store, self.coordinator = store, coordinator
         self.context_resolver = context_resolver
+        self.upscale = upscale
         self.section = self.acceptance = None
 
     def _current_acceptance(self, section):
@@ -158,7 +159,9 @@ class SceneServices:
             tuple(PromptVariant(value.id, f"{value.provenance}: {value.prompt[:60]}") for value in prompt_history),
             image_choice.artifact_id if image_choice else None, image_choice.id if image_choice else None,
             tuple(ImageVariant(value.artifact_id,
-                               f"{value.provenance}: {value.source_name} ({value.width}×{value.height})")
+                               (f"upscaled: Real-ESRGAN ×{value.scale} · {value.width}×{value.height}"
+                                if value.provenance == "upscaled" else
+                                f"{value.provenance}: {value.source_name} ({value.width}×{value.height})"))
                   for value in image_history),
         )
 
@@ -314,6 +317,27 @@ class SceneServices:
 
     def image_capabilities(self):
         return self.generation.capabilities() if self.generation.provider is not None else None
+
+    def upscale_capabilities(self):
+        return self.upscale.capabilities() if self.upscale else None
+
+    def image_dimensions(self, artifact_id):
+        image = self.images.image(artifact_id)
+        return image.width, image.height
+
+    def prepare_upscale(self, artifact_id, factor):
+        return self.upscale.prepare(artifact_id, factor)
+
+    def cached_upscale(self, prepared):
+        return self.upscale.cached(prepared[0], prepared[3])
+
+    def finish_upscale(self, prepared, result):
+        artifact_id = self.upscale.publish(prepared, result)
+        return self.scene(prepared[0].scene_id)
+
+    def select_cached_upscale(self, prepared, artifact_id):
+        self.upscale.intake.select(artifact_id, expected_selection_id=prepared[1])
+        return self.scene(prepared[0].scene_id)
 
 
 __all__ = ["ImageVariant", "PlanSceneView", "PromptVariant", "ScenePlanView", "SceneServices", "SceneView",

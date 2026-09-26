@@ -22,6 +22,20 @@ class ImageGenerationThread(QThread):
             self.outcome.emit(None, exc)
 
 
+class ImageUpscaleThread(QThread):
+    outcome = Signal(object, object)
+
+    def __init__(self, provider, request, parent=None):
+        super().__init__(parent)
+        self.provider, self.request = provider, request
+
+    def run(self):
+        try:
+            self.outcome.emit(self.provider.upscale(self.request), None)
+        except Exception as exc:
+            self.outcome.emit(None, exc)
+
+
 class ScenePanel(QWidget):
     media_changed = Signal()
 
@@ -32,6 +46,8 @@ class ScenePanel(QWidget):
         self.loading = self.prompt_dirty = self.context_dirty = False
         self.context_saved = ("", "")
         self.image_worker = self.image_claim = None
+        self.upscale_worker = self.upscale_prepared = None
+        self.upscale_cancel_requested = False
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("VISUAL CONTEXT"))
         context_form = QFormLayout()
@@ -82,11 +98,24 @@ class ScenePanel(QWidget):
         for field in (self.width, self.height):
             field.setRange(1, 8192)
             field.setValue(512)
+            field.valueChanged.connect(self._update_upscaled_size)
         self.seed.setRange(0, 2**31 - 1)
         settings.addRow("Width", self.width)
         settings.addRow("Height", self.height)
         settings.addRow("Seed", self.seed)
         layout.addLayout(settings)
+        layout.addWidget(QLabel("UPSCALE"))
+        upscale_settings = QFormLayout()
+        self.upscale_choice = QComboBox()
+        for label, factor in (("Off", 0), ("2×", 2), ("4×", 4)):
+            self.upscale_choice.addItem(label, factor)
+        self.upscale_choice.currentIndexChanged.connect(self._update_upscaled_size)
+        self.upscaled_size = QLabel("Upscaled size: —")
+        upscale_settings.addRow("Upscale", self.upscale_choice)
+        upscale_settings.addRow(self.upscaled_size)
+        layout.addLayout(upscale_settings)
+        self._button(layout, "Upscale selected image", self.upscale_selected_image)
+        self._button(layout, "Cancel upscale", self.cancel_upscale)
         self.status = QLabel("Scene services are not configured.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -100,11 +129,11 @@ class ScenePanel(QWidget):
 
     @property
     def busy(self):
-        return self.image_worker is not None
+        return self.image_worker is not None or self.upscale_worker is not None
 
     def bind(self, services):
         if self.busy:
-            raise ValueError("Wait for local image generation to finish before switching projects.")
+            raise ValueError("Wait for local image work to finish before switching projects.")
         if self.context_dirty:
             raise ValueError("Save the visual context draft before switching projects.")
         self.services, self.section, self.current = services, None, None
@@ -216,7 +245,22 @@ class ScenePanel(QWidget):
         self.loading = False
         self.prompt_dirty = False
         self._load_image(view.image_id if view else None)
+        self._update_upscaled_size()
         self._enable()
+
+    def _update_upscaled_size(self):
+        factor = self.upscale_choice.currentData()
+        if self.current and self.current.image_id and self.services:
+            try:
+                width, height = self.services.image_dimensions(self.current.image_id)
+            except Exception:
+                width, height = self.width.value(), self.height.value()
+        else:
+            width, height = self.width.value(), self.height.value()
+        if factor in (2, 4):
+            width, height = width * factor, height * factor
+        label = " (4K UHD)" if (width, height) == (3840, 2160) else ""
+        self.upscaled_size.setText(f"Upscaled size: {width} × {height}{label}")
 
     @staticmethod
     def _select_combo(combo, value):
@@ -239,6 +283,7 @@ class ScenePanel(QWidget):
 
     def _enable(self):
         ready = self.services is not None and self.current is not None and not self.busy
+        self.scenes.setEnabled(not self.busy)
         context_available = self.services is not None and hasattr(self.services, "save_visual_context")
         self.film_brief.setEnabled(context_available and not self.busy)
         self.visual_style.setEnabled(context_available and not self.busy)
@@ -251,8 +296,14 @@ class ScenePanel(QWidget):
         self.buttons["Select prompt"].setEnabled(ready and not self.prompt_dirty and self.prompt_variants.count() > 0)
         self.buttons["Import image"].setEnabled(ready and not self.prompt_dirty)
         self.buttons["Generate image"].setEnabled(ready and not self.prompt_dirty and bool(self.current.prompt_id if ready else False))
-        self.buttons["Cancel image"].setEnabled(self.busy)
+        self.buttons["Cancel image"].setEnabled(self.image_worker is not None)
         self.buttons["Select image"].setEnabled(ready and not self.prompt_dirty and self.image_variants.count() > 0)
+        configured = bool(self.services and getattr(self.services, "upscale", None)
+                          and self.services.upscale.provider is not None)
+        self.upscale_choice.setEnabled(configured and not self.busy)
+        self.buttons["Upscale selected image"].setEnabled(ready and configured and bool(self.current.image_id)
+                                                           and self.upscale_choice.currentData() in (2, 4))
+        self.buttons["Cancel upscale"].setEnabled(self.upscale_worker is not None)
 
     def _replace(self, view, message):
         self.views = tuple(view if item.id == view.id else item for item in self.views)
@@ -264,9 +315,11 @@ class ScenePanel(QWidget):
             self._replace(callback(), message)
             if media_changed:
                 self.media_changed.emit()
+            return True
         except Exception as exc:
             self.status.setText(str(exc))
             self._enable()
+            return False
 
     def save_prompt(self):
         if self.current:
@@ -300,6 +353,7 @@ class ScenePanel(QWidget):
                     if cached is not None:
                         self._replace(cached, "Cached image selected.")
                         self.media_changed.emit()
+                        self._auto_upscale()
                         return
                     claim, scene_id, provider, request = pending
                     self.image_claim = claim, scene_id
@@ -311,12 +365,15 @@ class ScenePanel(QWidget):
                 except Exception as exc:
                     self.status.setText(str(exc))
             else:
-                self._act(lambda: self.services.generate_image(
+                succeeded = self._act(lambda: self.services.generate_image(
                     self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value()),
                     "Image generated and selected.", media_changed=True)
+                if succeeded:
+                    self._auto_upscale()
 
     def _image_generated(self, result, error):
         claim, scene_id = self.image_claim
+        succeeded = False
         try:
             if error is not None:
                 self.services.finish_background_image(claim, scene_id, error=error)
@@ -324,6 +381,7 @@ class ScenePanel(QWidget):
                 view = self.services.finish_background_image(claim, scene_id, result=result)
                 self._replace(view, "Image generated and selected.")
                 self.media_changed.emit()
+                succeeded = True
         except Exception as exc:
             self.status.setText(str(exc))
         finally:
@@ -331,6 +389,63 @@ class ScenePanel(QWidget):
             self.image_worker.deleteLater()
             self.image_worker = self.image_claim = None
             self._enable()
+            if succeeded:
+                self._auto_upscale()
+
+    def _auto_upscale(self):
+        if self.current and self.current.image_id and self.upscale_choice.currentData() in (2, 4):
+            self._start_upscale(self.current.image_id)
+
+    def upscale_selected_image(self):
+        if self.current and self.current.image_id:
+            self._start_upscale(self.current.image_id)
+
+    def _start_upscale(self, artifact_id):
+        if self.busy or self.upscale_choice.currentData() not in (2, 4):
+            return
+        try:
+            prepared = self.services.prepare_upscale(artifact_id, self.upscale_choice.currentData())
+            cached = self.services.cached_upscale(prepared)
+            if cached is not None:
+                self._replace(self.services.select_cached_upscale(prepared, cached), "Cached upscale selected.")
+                self.media_changed.emit()
+                return
+            self.upscale_prepared = prepared
+            self.upscale_cancel_requested = False
+            reset_cancel = getattr(self.services.upscale.provider, "reset_cancel", None)
+            if callable(reset_cancel):
+                reset_cancel()
+            self.upscale_worker = ImageUpscaleThread(self.services.upscale.provider, prepared[2], self)
+            self.upscale_worker.outcome.connect(self._upscale_finished)
+            self.upscale_worker.start()
+            self.status.setText("Upscaling selected image in the managed CUDA worker…")
+            self._enable()
+        except Exception as exc:
+            self.status.setText(str(exc))
+            self._enable()
+
+    def _upscale_finished(self, result, error):
+        try:
+            if self.upscale_cancel_requested:
+                raise RuntimeError("Local upscaling canceled.")
+            if error is not None:
+                raise error
+            self._replace(self.services.finish_upscale(self.upscale_prepared, result), "Upscaled variant selected.")
+            self.media_changed.emit()
+        except Exception as exc:
+            self.status.setText(str(exc))
+        finally:
+            self.upscale_worker.wait()
+            self.upscale_worker.deleteLater()
+            self.upscale_worker = self.upscale_prepared = None
+            self.upscale_cancel_requested = False
+            self._enable()
+
+    def cancel_upscale(self):
+        if self.upscale_worker is not None:
+            self.upscale_cancel_requested = True
+            self.services.upscale.provider.cancel()
+            self.status.setText("Cancel requested; waiting for upscale worker cleanup.")
 
     def cancel_image(self):
         if self.busy:

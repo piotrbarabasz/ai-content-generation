@@ -83,10 +83,15 @@ class ProjectSceneImages:
         scene = self._scene(image.acceptance_id, image.scene_id, current=False)
         if image.project_id != self.project_id or image.section_revision_id != scene.revision_id:
             raise ValueError("Image belongs to a different project scene revision.")
+        limit = 64 * 1024 * 1024 if image.provenance == "upscaled" else self.limits.max_bytes
         with self.store.open_artifact_id(artifact_id) as stream:
-            payload = stream.read(self.limits.max_bytes + 1)
-        if len(payload) != image.size_bytes or len(payload) > self.limits.max_bytes or sha256(payload).hexdigest() != image.checksum:
+            payload = stream.read(limit + 1)
+        if len(payload) != image.size_bytes or len(payload) > limit or sha256(payload).hexdigest() != image.checksum:
             raise ValueError("Image bytes differ from retained measurements.")
+        if image.provenance == "upscaled":
+            source = self.image(image.source_artifact_id)
+            if (source.checksum, source.width, source.height) != (image.source_checksum, image.source_width, image.source_height):
+                raise ValueError("Upscaled source lineage differs from the retained source.")
         return image
 
     def history(self, scene_id):

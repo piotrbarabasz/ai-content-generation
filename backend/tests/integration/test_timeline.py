@@ -6,6 +6,8 @@ import json
 import pytest
 
 from app.application.image_intake import ImageIntakeService
+from app.application.image_upscale import ImageUpscaleService
+from app.providers.image_upscale import ImageUpscaleCapabilities, ImageUpscaleResult
 from app.application.projects import ProjectSession
 from app.application.scene_planning import ScenePlanningService
 from app.application.section_tempo import SectionTempoService
@@ -91,6 +93,30 @@ def test_new_selection_keeps_old_snapshot_and_explicit_subset_uses_exact_source_
     assert subset.clips[0].media.audio.start_sample == timing.scenes[1].start_frame > 0
     assert snapshot(setup[3]) == before
     assert TimelineRevision.from_payload(old.to_payload()) == old
+
+
+def test_timeline_uses_selected_upscaled_derivative(setup, prepared):
+    _, _, _, _, _, _, _, _, images, compiler, inputs = prepared
+    from io import BytesIO
+    from PIL import Image
+
+    class Upscaler:
+        def capabilities(self):
+            return ImageUpscaleCapabilities("fake", "realesr-general-x4v3", "v1", "runtime")
+
+        def upscale(self, request):
+            output = BytesIO()
+            Image.new("RGB", (request.width * request.factor, request.height * request.factor)).save(output, format="PNG")
+            return ImageUpscaleResult(output.getvalue(), "PNG", request.width * request.factor,
+                                      request.height * request.factor)
+
+    source = images[0][0]
+    service = ImageUpscaleService(ProjectSceneImages(setup[0].repository, setup[3]), setup[3], Upscaler())
+    derivative_id = service.upscale_selected(source.scene_id, 2)
+    compiled = compiler.compile(setup[0].project.id, inputs)
+    assert compiled.clips[0].media.image.artifact_id == derivative_id
+    assert compiled.clips[0].media.image.provenance == "upscaled"
+    assert compiled.clips[0].media.image.source_artifact_id == source.artifact_id
 
 
 def test_missing_image_is_not_replaced_by_an_unselected_candidate(setup, prepared):
