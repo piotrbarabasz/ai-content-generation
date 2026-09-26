@@ -1314,6 +1314,20 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Offline fake-prompt/provider tests, GUI behavior tests and an explicit GPS-project manual workflow check.
 - **Implementation evidence:** The Visuals panel now saves the existing project-owned `PromptContextRevision` families; normal scene composition resolves the latest retained brief/style IDs. GUI tests cover both first-prompt paths, history, freshness and draft safety. The supplied GPS project passed manual context save, first manual prompt selection, image-button enablement and reopen checks. No structured LLM environment was configured for the requested live generated-prompt click.
 
+### D059 — Local image upscaling
+
+- **Status:** Partial — provider, runtime, retained derivative path and offline tests implemented; real GPU and GUI acceptance are being measured (2026-09-26).
+- **Milestone:** M10
+- **Priority:** P1
+- **Goal:** Create retained local Real-ESRGAN derivatives of generated or imported scene images, with optional automatic upscale after generation.
+- **Scope:** Separate upscaling provider and managed runtime, D028 GPU lease, immutable variant publication and lineage, caching, cancellation, and Visuals controls for Off, 2× and 4×.
+- **Out of scope:** Face restoration, multiple models, cloud or video upscale, chained passes, 8K presets, and changes to D057.
+- **Dependencies:** D016, D017, D028, D040, D057.
+- **Main code areas:** Image provider/runtime, scene-image application/storage, desktop Visuals composition and panel, offline tests.
+- **Acceptance criteria:** Originals remain retained; successful derivatives can be selected for preview/render; failures and cancellation preserve selection; real GTX 1660 SUPER x2, x4 and 960×540-to-3840×2160 checks pass with restart verification.
+- **Test strategy:** Deterministic offline contract, lineage, cache, GPU, cancellation and GUI tests; explicit real-hardware measurements.
+- **Implementation evidence:** [D059 local image upscaling](D059_LOCAL_IMAGE_UPSCALING.md) records the pinned official model, separate runtime, tile profile, tests and real-hardware acceptance.
+
 ## Backlog provenance and deferred scope
 
 There are **58 implementation tasks**: D001-D037 preserve the 37 subjects from the

@@ -2,6 +2,7 @@
 
 from app.application.image_generation import ImageGenerationService
 from app.application.image_intake import ImageIntakeService
+from app.application.image_upscale import ImageUpscaleService
 from app.application.result_publication import ResultPublicationService
 from app.application.visual_prompts import VisualPromptService
 from app.desktop.scene_services import SceneServices
@@ -12,7 +13,7 @@ from app.storage.local_store import LocalArtifactStore
 from app.storage.scene_plans import ProjectScenePlans
 
 
-def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image_provider=None,
+def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image_provider=None, upscale_provider=None,
                    context_resolver=None):
     jobs = JobRepository(session.repository)
     index = ImageResultIndex(session.repository, jobs)
@@ -31,7 +32,8 @@ def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image
     return SceneServices(plans=ProjectScenePlans(session.repository, store), prompts=prompts,
                          intake=ImageIntakeService(artifacts.images), generation=generation,
                          images=artifacts.images, store=store, coordinator=coordinator,
-                         context_resolver=context_resolver)
+                         context_resolver=context_resolver,
+                         upscale=ImageUpscaleService(artifacts.images, store, upscale_provider))
 
 
 __all__ = ["compose_scenes"]

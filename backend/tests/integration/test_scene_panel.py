@@ -25,6 +25,22 @@ PNG = bytes.fromhex(
 )
 
 
+def test_upscale_controls_show_exact_dimensions_and_standard_label(qt):
+    panel = ScenePanel()
+    assert [panel.upscale_choice.itemText(i) for i in range(3)] == ["Off", "2×", "4×"]
+    panel.width.setValue(512)
+    panel.height.setValue(512)
+    panel.upscale_choice.setCurrentIndex(2)
+    assert panel.upscaled_size.text() == "Upscaled size: 2048 × 2048"
+    panel.upscale_choice.setCurrentIndex(1)
+    assert panel.upscaled_size.text() == "Upscaled size: 1024 × 1024"
+    panel.width.setValue(1920)
+    panel.height.setValue(1080)
+    assert panel.upscaled_size.text() == "Upscaled size: 3840 × 2160 (4K UHD)"
+    panel.upscale_choice.setCurrentIndex(0)
+    assert panel.upscaled_size.text() == "Upscaled size: 1920 × 1080"
+
+
 def view(number, *, prompt="", prompt_id=None, image_id=None):
     return SceneView(f"scene-{number}", "acceptance", number, f"Scene text {number}",
                      f"Visual {number}", f"{number}.00–{number + 1}.00 s", prompt, prompt_id,

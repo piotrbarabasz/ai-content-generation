@@ -24,6 +24,12 @@ class SceneImage:
     mode: str
     orientation: int = 1
     provenance: str = "imported"
+    source_artifact_id: str | None = None
+    source_checksum: str | None = None
+    source_width: int | None = None
+    source_height: int | None = None
+    scale: int | None = None
+    upscaler: dict | None = None
 
     def __post_init__(self):
         for value in (self.artifact_id, self.project_id, self.acceptance_id, self.scene_id,
@@ -31,12 +37,19 @@ class SceneImage:
             _text(value)
         if any(c in self.source_name for c in "/\\:"):
             raise ValueError("Image source name must not expose a path.")
-        if (self.format not in ("PNG", "JPEG") or self.provenance not in ("imported", "generated")
+        if (self.format not in ("PNG", "JPEG") or self.provenance not in ("imported", "generated", "upscaled")
                 or any(type(n) is not int or n <= 0 for n in (self.size_bytes, self.width, self.height))
                 or type(self.orientation) is not int or self.orientation not in range(1, 9)
                 or type(self.checksum) is not str or len(self.checksum) != 64
                 or any(c not in "0123456789abcdef" for c in self.checksum)):
             raise ValueError("Invalid scene image measurements.")
+        if self.provenance == "upscaled":
+            if (not self.source_artifact_id or not self.source_checksum or len(self.source_checksum) != 64
+                    or type(self.source_width) is not int or type(self.source_height) is not int
+                    or self.scale not in (2, 4) or not isinstance(self.upscaler, dict)
+                    or self.width != self.source_width * self.scale
+                    or self.height != self.source_height * self.scale):
+                raise ValueError("Invalid upscaled image lineage.")
 
     def to_payload(self):
         return {"version": 1, **asdict(self)}

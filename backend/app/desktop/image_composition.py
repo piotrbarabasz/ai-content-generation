@@ -44,3 +44,22 @@ def compose_installed_image(*, environment: Mapping[str, str] | None = None, tra
 
 
 __all__ = ["compose_installed_image"]
+
+
+def compose_installed_upscale(*, environment: Mapping[str, str] | None = None):
+    environment = os.environ if environment is None else environment
+    selected = str(environment.get("AICS_UPSCALE_PROVIDER", "")).strip().lower()
+    if not selected:
+        return None
+    if selected != "local":
+        raise ValueError(f"Unsupported installed upscale provider: {selected}.")
+    root = environment.get("AICS_LOCAL_UPSCALE_ROOT", "")
+    if not root:
+        raise ValueError("Local upscaler requires AICS_LOCAL_UPSCALE_ROOT.")
+    from app.providers.local_upscale import LocalUpscaleProvider
+    provider = LocalUpscaleProvider(root)
+    try:
+        provider.capabilities()  # Verify before the Qt window opens; later clicks use the verified profile.
+    except ValueError:
+        pass  # An absent optional installation is reported when the user requests upscale.
+    return provider
