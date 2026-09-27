@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QSpinBox
 
 from app.desktop.scene_panel import ScenePanel
 from app.desktop.scene_services import ImageVariant, PromptVariant, SceneView
@@ -25,21 +25,34 @@ PNG = bytes.fromhex(
 )
 
 
-def test_upscale_controls_show_exact_dimensions_and_standard_label(qt):
+def test_orientation_and_final_resolution_presets_update_exact_sizes(qt):
     panel = ScenePanel()
-    assert [panel.upscale_choice.itemText(i) for i in range(3)] == ["Off", "2×", "4×"]
-    panel.width.setValue(512)
-    panel.height.setValue(512)
-    panel.upscale_choice.setCurrentIndex(2)
-    assert panel.upscaled_size.text() == "Upscaled size: 2048 × 2048"
-    panel.upscale_choice.setCurrentIndex(1)
-    assert panel.upscaled_size.text() == "Upscaled size: 1024 × 1024"
-    panel.width.setValue(1920)
-    panel.height.setValue(1080)
-    assert panel.upscaled_size.text() == "Upscaled size: 3840 × 2160 (4K UHD)"
-    panel.upscale_choice.setCurrentIndex(0)
-    assert panel.upscaled_size.text() == "Upscaled size: 1920 × 1080"
+    assert [panel.orientation.itemText(i) for i in range(2)] == ["Landscape (16:9)", "Portrait (9:16)"]
+    assert [panel.resolution.itemText(i) for i in range(4)] == ["Draft / Source", "Full HD", "QHD / 1440p", "4K UHD"]
+    assert panel.orientation.currentData() == "landscape" and panel.resolution.currentData() == "fhd"
+    assert panel.generation_size.text() == "640 × 360" and panel.final_size.text() == "1920 × 1080"
+    assert len(panel.findChildren(QSpinBox)) == 1  # Seed only.
+    panel.resolution.setCurrentIndex(0)
+    assert panel.final_size.text() == "640 × 360"
+    panel.resolution.setCurrentIndex(2)
+    assert panel.final_size.text() == "2560 × 1440"
+    panel.resolution.setCurrentIndex(3)
+    assert panel.final_size.text() == "3840 × 2160"
+    panel.orientation.setCurrentIndex(1)
+    assert panel.generation_size.text() == "360 × 640"
+    assert panel.final_size.text() == "2160 × 3840"
+    panel.resolution.setCurrentIndex(2)
+    assert panel.final_size.text() == "1440 × 2560"
+    panel.resolution.setCurrentIndex(1)
+    assert panel.final_size.text() == "1080 × 1920"
+    panel.close()
 
+
+def test_generate_passes_selected_orientation_dimensions(panel):
+    widget, services = panel
+    widget.orientation.setCurrentIndex(1)
+    QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
+    assert services.calls[-1] == ("generate_image", "scene-1", {"width": 360, "height": 640, "seed": 0})
 
 def view(number, *, prompt="", prompt_id=None, image_id=None):
     return SceneView(f"scene-{number}", "acceptance", number, f"Scene text {number}",
@@ -163,11 +176,9 @@ def test_import_generation_and_variant_selection_are_scene_local(panel, monkeypa
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: ("chosen.png", ""))
     QTest.mouseClick(widget.buttons["Import image"], Qt.LeftButton)
     assert services.calls[-1] == ("import_image", "scene-1", "chosen.png")
-    widget.width.setValue(64)
-    widget.height.setValue(48)
     widget.seed.setValue(7)
     QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
-    assert services.calls[-1] == ("generate_image", "scene-1", {"width": 64, "height": 48, "seed": 7})
+    assert services.calls[-1] == ("generate_image", "scene-1", {"width": 640, "height": 360, "seed": 7})
     QTest.mouseClick(widget.buttons["Select image"], Qt.LeftButton)
     assert services.calls[-1][0:2] == ("select_image", "scene-1")
     assert services.values[1] == other

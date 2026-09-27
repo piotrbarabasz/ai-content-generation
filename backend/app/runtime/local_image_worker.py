@@ -27,16 +27,19 @@ def _effectively_black(image):
     return max(high for _, high in image.convert("RGB").getextrema()) <= 2
 
 
-def _result_diagnostics(result, *, dtype, device, elapsed_seconds):
+def _result_diagnostics(result, *, dtype, device, elapsed_seconds, peak_vram_bytes=None):
     if len(result.images) != 1:
         raise ValueError("Local image worker expected exactly one image.")
     flags = result.nsfw_content_detected
     if flags is not None and len(flags) != 1:
         raise ValueError("Local image safety checker returned an invalid result.")
-    return {"nsfw_content_detected": bool(flags[0]) if flags is not None else None,
-            "effectively_black": _effectively_black(result.images[0]),
-            "dtype": dtype, "device": device,
-            "elapsed_inference_seconds": round(elapsed_seconds, 3)}
+    diagnostics = {"nsfw_content_detected": bool(flags[0]) if flags is not None else None,
+                   "effectively_black": _effectively_black(result.images[0]),
+                   "dtype": dtype, "device": device,
+                   "elapsed_inference_seconds": round(elapsed_seconds, 3)}
+    if peak_vram_bytes is not None:
+        diagnostics["peak_vram_bytes"] = peak_vram_bytes
+    return diagnostics
 
 
 def _require_usable_result(diagnostics):
@@ -46,17 +49,25 @@ def _require_usable_result(diagnostics):
         raise RuntimeError("local_image_black_output: Inference produced an effectively black image; no image was published.")
 
 
-def main():
-    binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
-    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    request = json.loads(sys.stdin.buffer.readline(16384))
-    if (set(request) != {"version", "prompt", "negative_prompt", "width", "height", "seed", "format"}
-            or request["version"] != 1 or request["format"] != "PNG"
-            or (request["width"], request["height"]) != (512, 512)
+def validate_request(request):
+    size = (request.get("width"), request.get("height")) if type(request) is dict else None
+    if (type(request) is not dict
+            or set(request) != {"version", "prompt", "negative_prompt", "width", "height", "seed", "format"}
+            or request["version"] != 2 or request["format"] != "PNG"
+            or size not in ((512, 512), (640, 360), (360, 640))
+            or any(type(value) is not int or value % 8 for value in size)
             or type(request["seed"]) is not int or not 0 <= request["seed"] < 2**32
             or type(request["prompt"]) is not str or not request["prompt"].strip()
             or type(request["negative_prompt"]) is not str):
         raise ValueError("Invalid local image worker request.")
+    return request
+
+
+def main():
+    binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    request = json.loads(sys.stdin.buffer.readline(16384))
+    request = validate_request(request)
     model = Path(os.environ["AICS_LOCAL_IMAGE_MODEL"]).resolve(strict=True)
     import torch
     from diffusers import StableDiffusionPipeline, DDIMScheduler
@@ -70,14 +81,16 @@ def main():
     pipe.enable_attention_slicing()
     pipe.to("cuda:0")
     generator = torch.Generator(device="cuda:0").manual_seed(request["seed"])
+    torch.cuda.reset_peak_memory_stats(0)
     start = perf_counter()
     result = pipe(
         prompt=request["prompt"], negative_prompt=request["negative_prompt"],
-        width=512, height=512, num_inference_steps=20, guidance_scale=7.5,
+        width=request["width"], height=request["height"], num_inference_steps=20, guidance_scale=7.5,
         generator=generator,
     )
     diagnostics = _result_diagnostics(result, dtype=str(pipe.unet.dtype), device=str(pipe.device),
-                                      elapsed_seconds=perf_counter() - start)
+                                      elapsed_seconds=perf_counter() - start,
+                                      peak_vram_bytes=torch.cuda.max_memory_allocated(0))
     print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
     _require_usable_result(diagnostics)
     output = io.BytesIO()

@@ -1328,12 +1328,26 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Deterministic offline contract, lineage, cache, GPU, cancellation and GUI tests; explicit real-hardware measurements.
 - **Implementation evidence:** [D059 local image upscaling](D059_LOCAL_IMAGE_UPSCALING.md) records the pinned official model, separate runtime, tile profile, tests and real-hardware acceptance.
 
+### D060 — Orientation and final-resolution presets
+
+- **Status:** Partial — selected for `feat/d060-image-resolution-presets`; implementation and required GTX 1660 SUPER acceptance are pending.
+- **Milestone:** M10
+- **Priority:** P1
+- **Goal:** Let users choose Landscape/Portrait and Draft, Full HD, QHD or 4K while the application selects the source generation dimensions and exact final derivative pipeline.
+- **Scope:** Bounded 640×360 and 360×640 local generation, orientation/resolution GUI presets, one native Real-ESRGAN x4 pass plus explicit Lanczos final resize where needed, versioned final-image lineage, cache reuse and selected-image timeline integration.
+- **Out of scope:** Arbitrary dimensions/aspect ratios, crop/pad/reframe, multiple or chained upscalers, 8K, video upscale and unrelated Visuals redesign.
+- **Dependencies:** D057, D059, D022, D040.
+- **Main code areas:** Local image runtime/provider, image-upscale provider/application/storage, Visuals panel and scene services, focused tests and evidence document.
+- **Acceptance criteria:** Exact landscape/portrait output presets are selectable; low-resolution source generation is reusable across final resolutions; final derivatives retain lineage and old D059 artifacts load unchanged; selected final image drives Timeline/Preview; both orientation generation smokes and FHD/QHD/4K GPU checks pass on GTX 1660 SUPER 6 GB.
+- **Test strategy:** Offline provider/runtime compatibility, preset mapping, cache, exact dimensions, legacy lineage, failure/cancellation, GUI and timeline tests; explicit real GPU and interactive project acceptance.
+- **Implementation evidence:** [D060 image resolution presets](D060_IMAGE_RESOLUTION_PRESETS.md) will record runtime profiles, measured results and remaining acceptance gaps.
+
 ## Backlog provenance and deferred scope
 
-There are **58 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **60 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
-GUI follow-up. None is
+GUI follow-up; D059-D060 extend the optional local image workflow. None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |

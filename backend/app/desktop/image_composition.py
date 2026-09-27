@@ -15,7 +15,12 @@ def compose_installed_image(*, environment: Mapping[str, str] | None = None, tra
         return None
     if selected == "local":
         root = environment.get("AICS_LOCAL_IMAGE_ROOT", "")
-        return build_image_provider("local", settings={"root": root})
+        provider = build_image_provider("local", settings={"root": root})
+        try:
+            provider.capabilities()  # Verify before the Visuals panel is shown.
+        except ValueError:
+            pass  # An absent or outdated optional runtime leaves import usable.
+        return provider
     if selected != "openai":
         raise ValueError(f"Unsupported installed image provider: {selected}.")
     settings = {

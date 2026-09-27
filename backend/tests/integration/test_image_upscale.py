@@ -37,8 +37,8 @@ class FakeUpscaler:
         self.calls += 1
         if self.fail:
             raise RuntimeError("GPU OOM")
-        return ImageUpscaleResult(png((request.width * request.factor, request.height * request.factor)),
-                                  "PNG", request.width * request.factor, request.height * request.factor,
+        return ImageUpscaleResult(png((request.target_width, request.target_height)),
+                                  "PNG", request.target_width, request.target_height,
                                   {"diagnostics": {"tile": 128}})
 
 
@@ -139,11 +139,11 @@ def _write_other(directory, payload):
 
 
 def test_contract_rejects_invalid_scale_and_capabilities():
-    request = ImageUpscaleRequest(png((12, 8)), "PNG", 12, 8, 2)
+    request = ImageUpscaleRequest(png((12, 8)), "PNG", 12, 8, target_width=24, target_height=16)
     caps = ImageUpscaleCapabilities("fake", "model", "v1", "runtime")
     caps.validate(request)
-    assert caps.factors == (2, 4)
     with pytest.raises(ValueError, match="Invalid image upscale request"):
-        ImageUpscaleRequest(request.image_bytes, "PNG", 12, 8, 8)
+        ImageUpscaleRequest(request.image_bytes, "PNG", 12, 8, target_width=0, target_height=16)
     with pytest.raises(ValueError, match="supported dimensions"):
-        caps.validate(ImageUpscaleRequest(request.image_bytes, "PNG", 8192, 8, 2))
+        caps.validate(ImageUpscaleRequest(request.image_bytes, "PNG", 2049, 8,
+                                          target_width=4098, target_height=16))

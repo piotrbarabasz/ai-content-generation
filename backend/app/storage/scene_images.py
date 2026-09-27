@@ -88,7 +88,7 @@ class ProjectSceneImages:
             payload = stream.read(limit + 1)
         if len(payload) != image.size_bytes or len(payload) > limit or sha256(payload).hexdigest() != image.checksum:
             raise ValueError("Image bytes differ from retained measurements.")
-        if image.provenance == "upscaled":
+        if image.provenance in ("upscaled", "final"):
             source = self.image(image.source_artifact_id)
             if (source.checksum, source.width, source.height) != (image.source_checksum, image.source_width, image.source_height):
                 raise ValueError("Upscaled source lineage differs from the retained source.")

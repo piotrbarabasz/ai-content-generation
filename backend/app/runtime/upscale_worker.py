@@ -14,8 +14,7 @@ def main():
     binary = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     request = json.loads(sys.stdin.buffer.readline(64 * 1024 * 1024 + 4096))
-    if set(request) != {"version", "image", "factor"} or request["version"] != 1 or request["factor"] not in (2, 4):
-        raise ValueError("Invalid upscale worker request.")
+    validate_request(request)
     from PIL import Image
     import numpy as np
     import torch
@@ -51,6 +50,11 @@ def main():
     image.load()
     image = image.convert("RGB")
     width, height = image.size
+    if width * 4 > 8192 or height * 4 > 8192 or width * height * 16 > 64_000_000:
+        raise ValueError("Native x4 intermediate exceeds the bounded worker limits.")
+    target_width, target_height = request["target_width"], request["target_height"]
+    if abs(width * target_height - height * target_width) > target_height:
+        raise ValueError("Requested final dimensions do not preserve the source aspect ratio.")
     source = np.asarray(image, dtype=np.float32) / 255.0
     output = np.empty((height * 4, width * 4, 3), dtype=np.uint8)
     torch.cuda.reset_peak_memory_stats(0)
@@ -68,18 +72,33 @@ def main():
                          .byte().cpu().numpy())
                 output[y * 4:y * 4 + patch.shape[0], x * 4:x * 4 + patch.shape[1]] = patch
                 del tile, pred
-    if request["factor"] == 2:
-        output = np.asarray(Image.fromarray(output, "RGB").resize((width * 2, height * 2), Image.Resampling.LANCZOS))
+    native_width, native_height = width * 4, height * 4
+    resized = (target_width, target_height) != (native_width, native_height)
+    if resized:
+        output = np.asarray(Image.fromarray(output, "RGB").resize((target_width, target_height), Image.Resampling.LANCZOS))
     elapsed = perf_counter() - start
     diagnostics = {"device": torch.cuda.get_device_name(0), "dtype": "float32", "tile": 128,
                    "tile_pad": 10, "pre_pad": 0, "elapsed_inference_seconds": round(elapsed, 3),
                    "peak_vram_bytes": torch.cuda.max_memory_allocated(0),
-                   "final_resize": "Pillow Lanczos after native x4" if request["factor"] == 2 else None}
+                   "native_model_scale": 4, "native_width": native_width, "native_height": native_height,
+                   "final_width": target_width, "final_height": target_height,
+                   "final_resize_occurred": resized, "final_resize_method": "Lanczos" if resized else None}
     print("upscale_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
     encoded = io.BytesIO()
     Image.fromarray(output, "RGB").save(encoded, format="PNG")
     binary.write(encoded.getvalue())
     binary.close()
+
+
+def validate_request(request):
+    if (type(request) is not dict
+            or set(request) != {"version", "image", "target_width", "target_height"}
+            or request["version"] != 2 or type(request["image"]) is not str
+            or type(request["target_width"]) is not int or type(request["target_height"]) is not int
+            or not 0 < request["target_width"] <= 8192 or not 0 < request["target_height"] <= 8192
+            or request["target_width"] * request["target_height"] > 32_000_000):
+        raise ValueError("Invalid upscale worker request.")
+    return request
 
 
 if __name__ == "__main__":

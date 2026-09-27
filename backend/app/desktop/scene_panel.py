@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
+from app.application.image_presets import ORIENTATIONS, RESOLUTIONS, final_dimensions, generation_dimensions
 
 
 class ImageGenerationThread(QThread):
@@ -94,28 +95,29 @@ class ScenePanel(QWidget):
         self._button(image_actions, "Cancel image", self.cancel_image)
         self._button(image_actions, "Select image", self.select_image)
         settings = QFormLayout()
-        self.width, self.height, self.seed = QSpinBox(), QSpinBox(), QSpinBox()
-        for field in (self.width, self.height):
-            field.setRange(1, 8192)
-            field.setValue(512)
-            field.valueChanged.connect(self._update_upscaled_size)
+        self.orientation = QComboBox()
+        for key, value in ORIENTATIONS.items():
+            self.orientation.addItem(value["label"], key)
+        self.orientation.setCurrentIndex(0)
+        self.orientation.currentIndexChanged.connect(self._update_preset_sizes)
+        self.resolution = QComboBox()
+        for key, label in RESOLUTIONS.items():
+            self.resolution.addItem(label, key)
+        self.resolution.setCurrentIndex(1)
+        self.resolution.currentIndexChanged.connect(self._update_preset_sizes)
+        self.generation_size = QLabel()
+        self.final_size = QLabel()
+        self.seed = QSpinBox()
         self.seed.setRange(0, 2**31 - 1)
-        settings.addRow("Width", self.width)
-        settings.addRow("Height", self.height)
+        settings.addRow("Orientation", self.orientation)
+        settings.addRow("Generation size", self.generation_size)
+        settings.addRow("Final resolution", self.resolution)
+        settings.addRow("Final size", self.final_size)
         settings.addRow("Seed", self.seed)
         layout.addLayout(settings)
-        layout.addWidget(QLabel("UPSCALE"))
-        upscale_settings = QFormLayout()
-        self.upscale_choice = QComboBox()
-        for label, factor in (("Off", 0), ("2×", 2), ("4×", 4)):
-            self.upscale_choice.addItem(label, factor)
-        self.upscale_choice.currentIndexChanged.connect(self._update_upscaled_size)
-        self.upscaled_size = QLabel("Upscaled size: —")
-        upscale_settings.addRow("Upscale", self.upscale_choice)
-        upscale_settings.addRow(self.upscaled_size)
-        layout.addLayout(upscale_settings)
-        self._button(layout, "Upscale selected image", self.upscale_selected_image)
+        self._button(layout, "Create final image", self.create_final_image)
         self._button(layout, "Cancel upscale", self.cancel_upscale)
+        self._update_preset_sizes()
         self.status = QLabel("Scene services are not configured.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -153,12 +155,6 @@ class ScenePanel(QWidget):
                 capability_reader = getattr(services, "image_capabilities", None)
                 capabilities = capability_reader() if callable(capability_reader) else None
                 if capabilities is not None:
-                    self.width.setMaximum(capabilities.max_dimension)
-                    self.height.setMaximum(capabilities.max_dimension)
-                    if capabilities.supported_sizes:
-                        width, height = capabilities.supported_sizes[0]
-                        self.width.setValue(width)
-                        self.height.setValue(height)
                     self.seed.setEnabled(capabilities.seeded)
                     if not capabilities.seeded:
                         self.seed.setValue(0)
@@ -245,22 +241,16 @@ class ScenePanel(QWidget):
         self.loading = False
         self.prompt_dirty = False
         self._load_image(view.image_id if view else None)
-        self._update_upscaled_size()
+        self._update_preset_sizes()
         self._enable()
 
-    def _update_upscaled_size(self):
-        factor = self.upscale_choice.currentData()
-        if self.current and self.current.image_id and self.services:
-            try:
-                width, height = self.services.image_dimensions(self.current.image_id)
-            except Exception:
-                width, height = self.width.value(), self.height.value()
-        else:
-            width, height = self.width.value(), self.height.value()
-        if factor in (2, 4):
-            width, height = width * factor, height * factor
-        label = " (4K UHD)" if (width, height) == (3840, 2160) else ""
-        self.upscaled_size.setText(f"Upscaled size: {width} × {height}{label}")
+    def _update_preset_sizes(self):
+        orientation = self.orientation.currentData()
+        resolution = self.resolution.currentData()
+        gen_width, gen_height = generation_dimensions(orientation)
+        final_width, final_height = final_dimensions(orientation, resolution)
+        self.generation_size.setText(f"{gen_width} × {gen_height}")
+        self.final_size.setText(f"{final_width} × {final_height}")
 
     @staticmethod
     def _select_combo(combo, value):
@@ -300,9 +290,10 @@ class ScenePanel(QWidget):
         self.buttons["Select image"].setEnabled(ready and not self.prompt_dirty and self.image_variants.count() > 0)
         configured = bool(self.services and getattr(self.services, "upscale", None)
                           and self.services.upscale.provider is not None)
-        self.upscale_choice.setEnabled(configured and not self.busy)
-        self.buttons["Upscale selected image"].setEnabled(ready and configured and bool(self.current.image_id)
-                                                           and self.upscale_choice.currentData() in (2, 4))
+        self.orientation.setEnabled(not self.busy)
+        self.resolution.setEnabled(not self.busy)
+        self.buttons["Create final image"].setEnabled(ready and configured and bool(self.current.image_id)
+                                                     and self.resolution.currentData() != "draft")
         self.buttons["Cancel upscale"].setEnabled(self.upscale_worker is not None)
 
     def _replace(self, view, message):
@@ -345,11 +336,12 @@ class ScenePanel(QWidget):
 
     def generate_image(self):
         if self.current:
+            width, height = generation_dimensions(self.orientation.currentData())
             provider = getattr(self.services.generation, "provider", None) if hasattr(self.services, "generation") else None
             if getattr(provider, "requires_background", False):
                 try:
                     pending, cached = self.services.prepare_background_image(
-                        self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value())
+                        self.current.id, width=width, height=height, seed=self.seed.value())
                     if cached is not None:
                         self._replace(cached, "Cached image selected.")
                         self.media_changed.emit()
@@ -366,7 +358,7 @@ class ScenePanel(QWidget):
                     self.status.setText(str(exc))
             else:
                 succeeded = self._act(lambda: self.services.generate_image(
-                    self.current.id, width=self.width.value(), height=self.height.value(), seed=self.seed.value()),
+                    self.current.id, width=width, height=height, seed=self.seed.value()),
                     "Image generated and selected.", media_changed=True)
                 if succeeded:
                     self._auto_upscale()
@@ -393,21 +385,22 @@ class ScenePanel(QWidget):
                 self._auto_upscale()
 
     def _auto_upscale(self):
-        if self.current and self.current.image_id and self.upscale_choice.currentData() in (2, 4):
-            self._start_upscale(self.current.image_id)
+        if self.current and self.current.image_id and self.resolution.currentData() != "draft":
+            self._start_final_image(self.current.image_id)
 
-    def upscale_selected_image(self):
+    def create_final_image(self):
         if self.current and self.current.image_id:
-            self._start_upscale(self.current.image_id)
+            self._start_final_image(self.current.image_id)
 
-    def _start_upscale(self, artifact_id):
-        if self.busy or self.upscale_choice.currentData() not in (2, 4):
+    def _start_final_image(self, artifact_id):
+        if self.busy or self.resolution.currentData() == "draft":
             return
         try:
-            prepared = self.services.prepare_upscale(artifact_id, self.upscale_choice.currentData())
-            cached = self.services.cached_upscale(prepared)
+            prepared = self.services.prepare_final_image(artifact_id, self.orientation.currentData(),
+                                                         self.resolution.currentData())
+            cached = self.services.cached_final_image(prepared)
             if cached is not None:
-                self._replace(self.services.select_cached_upscale(prepared, cached), "Cached upscale selected.")
+                self._replace(self.services.select_cached_final_image(prepared, cached), "Cached final image selected.")
                 self.media_changed.emit()
                 return
             self.upscale_prepared = prepared
@@ -430,7 +423,7 @@ class ScenePanel(QWidget):
                 raise RuntimeError("Local upscaling canceled.")
             if error is not None:
                 raise error
-            self._replace(self.services.finish_upscale(self.upscale_prepared, result), "Upscaled variant selected.")
+            self._replace(self.services.finish_final_image(self.upscale_prepared, result), "Final image selected.")
             self.media_changed.emit()
         except Exception as exc:
             self.status.setText(str(exc))
