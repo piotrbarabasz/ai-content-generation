@@ -1,6 +1,7 @@
 """D022 Qt behavior: scene-local edits, variants and failure preservation."""
 
 from dataclasses import replace
+from io import BytesIO
 import os
 import threading
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QSpinBox
+from PIL import Image
 
 from app.desktop.scene_panel import ScenePanel
 from app.desktop.scene_services import ImageVariant, PromptVariant, SceneView
@@ -23,6 +25,12 @@ PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de"
     "0000000c4944415408d763f8ffff3f0005fe02fe0def46b80000000049454e44ae426082"
 )
+
+
+def sized_png(size):
+    output = BytesIO()
+    Image.new("RGB", size, (80, 100, 120)).save(output, format="PNG")
+    return output.getvalue()
 
 
 def test_orientation_and_final_resolution_presets_update_exact_sizes(qt):
@@ -54,6 +62,63 @@ def test_generate_passes_selected_orientation_dimensions(panel):
     QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
     assert services.calls[-1] == ("generate_image", "scene-1", {"width": 360, "height": 640, "seed": 0})
 
+
+@pytest.mark.parametrize("orientation,label", [(0, "Landscape (16:9)"), (1, "Portrait (9:16)")])
+def test_square_history_is_explicitly_incompatible_without_selection_mutation(panel, orientation, label):
+    widget, services = panel
+    services.image_payloads["legacy-square"] = sized_png((2048, 2048))
+    services.values[0] = replace(services.values[0], image_id="legacy-square",
+                                 image_selection_id="persisted-square-selection",
+                                 images=(ImageVariant("legacy-square", "upscaled: Real-ESRGAN ×4 · 2048×2048"),))
+    widget.select_section(object())
+    before_calls = tuple(services.calls)
+    widget.orientation.setCurrentIndex(orientation)
+    assert f"Not compatible with {label}" in widget.image.text()
+    assert "Selected image: 2048 × 2048 (1:1)" in widget.image.text()
+    assert widget.current.image_id == "legacy-square"
+    assert widget.current.image_selection_id == "persisted-square-selection"
+    assert widget.image_variants.count() == 1
+    assert tuple(services.calls) == before_calls
+
+
+@pytest.mark.parametrize("orientation,size", [(0, (640, 360)), (1, (360, 640))])
+def test_successful_orientation_generation_replaces_preview_with_exact_aspect(panel, orientation, size):
+    widget, services = panel
+    widget.orientation.setCurrentIndex(orientation)
+    QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
+    assert (services.calls[-1][2]["width"], services.calls[-1][2]["height"]) == size
+    assert widget.current.image_id == "generated"
+    assert widget.image_variants.currentText() == f"generated: generated-image.png ({size[0]} × {size[1]})"
+    assert not widget.image.pixmap().isNull()
+
+
+def test_generation_timeout_keeps_the_prior_selection_and_reports_failure(panel):
+    widget, services = panel
+    services.image_payloads["legacy-square"] = sized_png((2048, 2048))
+    services.values[0] = replace(services.values[0], image_id="legacy-square",
+                                 image_selection_id="persisted-square-selection")
+    widget.select_section(object())
+
+    def timeout(*args, **kwargs):
+        raise RuntimeError("Local image generation timed out after 600 s; last worker phase: inference_started.")
+
+    services.generate_image = timeout
+    QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
+    assert "timed out after 600 s" in widget.status.text()
+    assert widget.current.image_id == "legacy-square"
+    assert widget.current.image_selection_id == "persisted-square-selection"
+    assert "Not compatible with Landscape (16:9)" in widget.image.text()
+
+
+def test_draft_source_does_not_start_the_final_image_provider(panel):
+    widget, services = panel
+    calls = []
+    services.upscale = SimpleNamespace(provider=SimpleNamespace(upscale=lambda request: calls.append(request)))
+    widget.resolution.setCurrentIndex(widget.resolution.findData("draft"))
+    widget.generate_image()
+    assert services.calls[-1][0] == "generate_image"
+    assert calls == []
+
 def view(number, *, prompt="", prompt_id=None, image_id=None):
     return SceneView(f"scene-{number}", "acceptance", number, f"Scene text {number}",
                      f"Visual {number}", f"{number}.00–{number + 1}.00 s", prompt, prompt_id,
@@ -69,6 +134,7 @@ class Services:
                        view(2, prompt="Manual two", prompt_id="prompt-2")]
         self.calls = []
         self.fail_prompt = False
+        self.image_payloads = {}
         self.context = SimpleNamespace(brief="", style="", brief_revision_id=None, style_revision_id=None)
 
     def visual_context(self):
@@ -113,15 +179,17 @@ class Services:
 
     def generate_image(self, scene_id, **settings):
         self.calls.append(("generate_image", scene_id, settings))
+        width, height = settings["width"], settings["height"]
+        self.image_payloads["generated"] = sized_png((width, height))
         return self._change(scene_id, image_id="generated", image_selection_id="image-generated",
-                            images=(ImageVariant("generated", "generated: image.png (1×1)"),))
+                            images=(ImageVariant("generated", f"generated: generated-image.png ({width} × {height})"),))
 
     def select_image(self, scene_id, artifact_id):
         self.calls.append(("select_image", scene_id, artifact_id))
         return self._change(scene_id, image_id=artifact_id)
 
     def image_bytes(self, artifact_id):
-        return PNG
+        return self.image_payloads.get(artifact_id, PNG)
 
 
 @pytest.fixture(scope="module")

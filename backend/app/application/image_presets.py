@@ -1,5 +1,7 @@
 """Fixed orientation and final-resolution choices for the desktop Visuals flow."""
 
+from math import gcd
+
 ORIENTATIONS = {
     "landscape": {"label": "Landscape (16:9)", "generation": (640, 360)},
     "portrait": {"label": "Portrait (9:16)", "generation": (360, 640)},
@@ -41,3 +43,13 @@ def final_dimensions(orientation, resolution):
 def compatible_aspect(width, height, target_width, target_height):
     # Permit at most one source-pixel rounding from an exact target ratio.
     return abs(width * target_height - height * target_width) <= target_height
+
+
+def orientation_compatible(width, height, orientation):
+    target_width, target_height = generation_dimensions(orientation)
+    return compatible_aspect(width, height, target_width, target_height)
+
+
+def aspect_label(width, height):
+    divisor = gcd(width, height)
+    return f"{width // divisor}:{height // divisor}"

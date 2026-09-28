@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
-from app.application.image_presets import ORIENTATIONS, RESOLUTIONS, final_dimensions, generation_dimensions
+from app.application.image_presets import (ORIENTATIONS, RESOLUTIONS, final_dimensions,
+                                           aspect_label, generation_dimensions, orientation_compatible)
 
 
 class ImageGenerationThread(QThread):
@@ -99,7 +100,7 @@ class ScenePanel(QWidget):
         for key, value in ORIENTATIONS.items():
             self.orientation.addItem(value["label"], key)
         self.orientation.setCurrentIndex(0)
-        self.orientation.currentIndexChanged.connect(self._update_preset_sizes)
+        self.orientation.currentIndexChanged.connect(self._orientation_changed)
         self.resolution = QComboBox()
         for key, label in RESOLUTIONS.items():
             self.resolution.addItem(label, key)
@@ -251,6 +252,11 @@ class ScenePanel(QWidget):
         final_width, final_height = final_dimensions(orientation, resolution)
         self.generation_size.setText(f"{gen_width} × {gen_height}")
         self.final_size.setText(f"{final_width} × {final_height}")
+        if self.current is not None:
+            self._load_image(self.current.image_id)
+
+    def _orientation_changed(self):
+        self._update_preset_sizes()
 
     @staticmethod
     def _select_combo(combo, value):
@@ -266,6 +272,15 @@ class ScenePanel(QWidget):
                 pixmap = QPixmap()
                 if not pixmap.loadFromData(self.services.image_bytes(artifact_id)):
                     raise ValueError("Selected image cannot be decoded for display.")
+                width, height = pixmap.width(), pixmap.height()
+                orientation = self.orientation.currentData()
+                if not orientation_compatible(width, height, orientation):
+                    self.image.setText(
+                        f"Selected image: {width} × {height} ({aspect_label(width, height)})\n"
+                        f"Not compatible with {ORIENTATIONS[orientation]['label']}.\n"
+                        "Generate or select an image with this orientation."
+                    )
+                    return
                 self.image.setText("")
                 self.image.setPixmap(pixmap.scaled(320, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             except Exception as exc:

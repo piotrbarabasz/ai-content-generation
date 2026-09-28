@@ -1330,7 +1330,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D060 — Orientation and final-resolution presets
 
-- **Status:** Partial — selected for `feat/d060-image-resolution-presets`; implementation and required GTX 1660 SUPER acceptance are pending.
+- **Status:** Partial — exact orientation generation, final-resolution GPU pipeline, project selection/reopen, and Timeline resolution passed on the GTX 1660 SUPER; native on-screen visual review remains.
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Let users choose Landscape/Portrait and Draft, Full HD, QHD or 4K while the application selects the source generation dimensions and exact final derivative pipeline.
@@ -1340,7 +1340,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** Local image runtime/provider, image-upscale provider/application/storage, Visuals panel and scene services, focused tests and evidence document.
 - **Acceptance criteria:** Exact landscape/portrait output presets are selectable; low-resolution source generation is reusable across final resolutions; final derivatives retain lineage and old D059 artifacts load unchanged; selected final image drives Timeline/Preview; both orientation generation smokes and FHD/QHD/4K GPU checks pass on GTX 1660 SUPER 6 GB.
 - **Test strategy:** Offline provider/runtime compatibility, preset mapping, cache, exact dimensions, legacy lineage, failure/cancellation, GUI and timeline tests; explicit real GPU and interactive project acceptance.
-- **Implementation evidence:** [D060 image resolution presets](D060_IMAGE_RESOLUTION_PRESETS.md) will record runtime profiles, measured results and remaining acceptance gaps.
+- **Implementation evidence:** [D060 image resolution presets](D060_IMAGE_RESOLUTION_PRESETS.md) records runtime profiles, measured GPU results and the remaining on-screen visual review gap.
 
 ## Backlog provenance and deferred scope
 

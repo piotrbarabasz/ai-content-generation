@@ -49,6 +49,13 @@ def _require_usable_result(diagnostics):
         raise RuntimeError("local_image_black_output: Inference produced an effectively black image; no image was published.")
 
 
+def _phase(name, status, seconds=None):
+    value = {"phase": name, "status": status}
+    if seconds is not None:
+        value["elapsed_seconds"] = round(seconds, 3)
+    print("local_image_phase:" + json.dumps(value, sort_keys=True), file=sys.stderr, flush=True)
+
+
 def validate_request(request):
     size = (request.get("width"), request.get("height")) if type(request) is dict else None
     if (type(request) is not dict
@@ -64,15 +71,23 @@ def validate_request(request):
 
 
 def main():
+    worker_started = perf_counter()
+    _phase("worker_started", "complete", 0)
     binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     request = json.loads(sys.stdin.buffer.readline(16384))
     request = validate_request(request)
     model = Path(os.environ["AICS_LOCAL_IMAGE_MODEL"]).resolve(strict=True)
+    phase_started = perf_counter()
+    _phase("imports", "started")
     import torch
     from diffusers import StableDiffusionPipeline, DDIMScheduler
+    imports_seconds = perf_counter() - phase_started
+    _phase("imports", "complete", imports_seconds)
 
     _require_cuda_device(torch.cuda)
+    phase_started = perf_counter()
+    _phase("model_loading", "started")
     pipe = StableDiffusionPipeline.from_pretrained(
         str(model), local_files_only=True, torch_dtype=torch.float32,
         variant="fp16", use_safetensors=True,
@@ -80,22 +95,43 @@ def main():
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     pipe.enable_attention_slicing()
     pipe.to("cuda:0")
+    model_load_seconds = perf_counter() - phase_started
+    _phase("model_loaded_cuda", "complete", model_load_seconds)
     generator = torch.Generator(device="cuda:0").manual_seed(request["seed"])
     torch.cuda.reset_peak_memory_stats(0)
-    start = perf_counter()
+    inference_started = perf_counter()
+    _phase("inference", "started")
     result = pipe(
         prompt=request["prompt"], negative_prompt=request["negative_prompt"],
         width=request["width"], height=request["height"], num_inference_steps=20, guidance_scale=7.5,
         generator=generator,
     )
+    inference_seconds = perf_counter() - inference_started
+    _phase("inference", "complete", inference_seconds)
     diagnostics = _result_diagnostics(result, dtype=str(pipe.unet.dtype), device=str(pipe.device),
-                                      elapsed_seconds=perf_counter() - start,
+                                      elapsed_seconds=inference_seconds,
                                       peak_vram_bytes=torch.cuda.max_memory_allocated(0))
-    print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
+    diagnostics["cuda_device_name"] = torch.cuda.get_device_name(0)
+    phase_started = perf_counter()
+    _phase("safety_output_validation", "started")
     _require_usable_result(diagnostics)
+    safety_seconds = perf_counter() - phase_started
+    _phase("safety_output_validation", "complete", safety_seconds)
+    phase_started = perf_counter()
+    _phase("png_encoding", "started")
     output = io.BytesIO()
     result.images[0].save(output, format="PNG")
-    binary_output.write(output.getvalue())
+    png_bytes = output.getvalue()
+    png_encoding_seconds = perf_counter() - phase_started
+    _phase("png_encoding", "complete", png_encoding_seconds)
+    diagnostics.update(imports_seconds=round(imports_seconds, 3),
+                       model_load_seconds=round(model_load_seconds, 3),
+                       safety_output_validation_seconds=round(safety_seconds, 3),
+                       png_encoding_seconds=round(png_encoding_seconds, 3),
+                       worker_elapsed_seconds=round(perf_counter() - worker_started, 3),
+                       png_bytes=len(png_bytes))
+    print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
+    binary_output.write(png_bytes)
     binary_output.close()
 
 

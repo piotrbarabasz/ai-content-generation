@@ -19,6 +19,7 @@ from app.storage.image_decoder import ImageLimits, decode_image
 
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
+LOCAL_IMAGE_TIMEOUT_SECONDS = 600
 LOCAL_IMAGE_SIZES = ((512, 512), (640, 360), (360, 640))
 
 
@@ -31,6 +32,24 @@ def _worker_diagnostics(errors):
                 return {}
             return value if isinstance(value, dict) else {}
     return {}
+
+
+def _last_worker_phase(errors):
+    if isinstance(errors, str):
+        lines = errors.splitlines()[-512:]
+    else:
+        lines = errors[-128 * 1024:].decode("utf-8", errors="replace").splitlines()[-512:]
+    phase = None
+    for line in lines:
+        if not line.startswith("local_image_phase:"):
+            continue
+        try:
+            value = json.loads(line.removeprefix("local_image_phase:"))
+        except ValueError:
+            continue
+        if isinstance(value, dict) and isinstance(value.get("phase"), str):
+            phase = value["phase"] + ("_started" if value.get("status") == "started" else "")
+    return phase or "process_started"
 
 
 def _effectively_black_png(data):
@@ -139,9 +158,15 @@ class LocalImageProvider:
                 from app.runtime.windows_job import WindowsJob
                 job = WindowsJob(process.pid)
             try:
-                output, errors = process.communicate((canonical_json(payload) + "\n").encode(), timeout=600)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Local image generation timed out.") from None
+                output, errors = process.communicate((canonical_json(payload) + "\n").encode(),
+                                                    timeout=LOCAL_IMAGE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as exc:
+                errors = exc.stderr or b""
+                phase = _last_worker_phase(errors)
+                raise RuntimeError(
+                    f"Local image generation timed out after {LOCAL_IMAGE_TIMEOUT_SECONDS} s; "
+                    f"last worker phase: {phase}."
+                ) from None
             if process.returncode != 0:
                 if self._cancel_requested:
                     raise RuntimeError("Local image generation canceled.")

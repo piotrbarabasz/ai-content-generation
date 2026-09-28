@@ -81,6 +81,30 @@ def run(p, **kwargs):
     return p.service.run(claim), claim
 
 
+def test_orientation_dimensions_are_distinct_cache_and_publication_inputs(project):
+    p = project
+    square, _ = run(p, width=512, height=512, seed=60)
+    landscape_request = p.service.prepare_request(p.prompt.id, width=640, height=360, seed=60)[1]
+    portrait_request = p.service.prepare_request(p.prompt.id, width=360, height=640, seed=61)[1]
+    assert landscape_request != portrait_request
+    landscape_submission = enqueue(p, width=640, height=360, seed=60)
+    assert landscape_submission.attempt is not None and landscape_submission.cached_artifact_id is None
+    landscape_claim = p.coordinator.claim_next("fixture")
+    assert landscape_claim.job_id == landscape_submission.attempt.job_id
+    landscape = p.service.run(landscape_claim)
+    portrait_submission = enqueue(p, width=360, height=640, seed=61)
+    assert portrait_submission.attempt is not None and portrait_submission.cached_artifact_id is None
+    portrait_claim = p.coordinator.claim_next("fixture")
+    assert portrait_claim.job_id == portrait_submission.attempt.job_id
+    portrait = p.service.run(portrait_claim)
+    assert (p.adapter.images.image(square.artifact_id).width,
+            p.adapter.images.image(square.artifact_id).height) == (512, 512)
+    assert (p.adapter.images.image(landscape.artifact_id).width,
+            p.adapter.images.image(landscape.artifact_id).height) == (640, 360)
+    assert (p.adapter.images.image(portrait.artifact_id).width,
+            p.adapter.images.image(portrait.artifact_id).height) == (360, 640)
+
+
 def change_prompt(p):
     revision = p.prompts.edit_manual(p.prompt.id, "A blue tree.")
     chosen = p.index.prompts.selected(p.scene_id)

@@ -6,7 +6,7 @@ from PIL import Image
 import pytest
 
 from app.application.image_intake import ImageIntakeService
-from app.application.image_presets import final_dimensions, generation_dimensions
+from app.application.image_presets import final_dimensions, generation_dimensions, orientation_compatible
 from app.application.image_upscale import ImageUpscaleService
 from app.application.projects import ProjectSession
 from app.application.scene_planning import ScenePlanningService
@@ -70,6 +70,22 @@ def project(tmp_path):
 ])
 def test_orientation_maps_to_bounded_generation_dimensions(orientation, generation):
     assert generation_dimensions(orientation) == generation
+
+
+@pytest.mark.parametrize("orientation,size", [
+    ("landscape", (640, 360)), ("landscape", (1280, 720)), ("landscape", (1920, 1080)),
+    ("landscape", (2560, 1440)), ("landscape", (3840, 2160)),
+    ("portrait", (360, 640)), ("portrait", (720, 1280)), ("portrait", (1080, 1920)),
+    ("portrait", (1440, 2560)), ("portrait", (2160, 3840)),
+])
+def test_orientation_compatibility_accepts_matching_aspect_targets(orientation, size):
+    assert orientation_compatible(*size, orientation)
+
+
+@pytest.mark.parametrize("orientation", ["landscape", "portrait"])
+@pytest.mark.parametrize("size", [(512, 512), (1024, 1024), (2048, 2048)])
+def test_orientation_compatibility_rejects_square_history(orientation, size):
+    assert not orientation_compatible(*size, orientation)
 
 
 @pytest.mark.parametrize("orientation,profile,size", [
