@@ -1,7 +1,9 @@
 """D018 consumes actual retained selections; synthetic media and no external process."""
 
 from dataclasses import replace
+from hashlib import sha256
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +16,7 @@ from app.application.section_tempo import SectionTempoService
 from app.application.timeline import TimelineCompiler, TimelineSceneInput
 from app.domain.section_audio import SectionAudio
 from app.domain.timeline import TimelineRevision
+from app.domain.dependencies import content_fingerprint
 from app.jobs.coordinator import JobCoordinator
 from app.jobs.repository import JobRepository
 from app.runtime.section_synthesis import generate
@@ -151,6 +154,93 @@ def test_timeline_diagnostics_report_current_valid_candidates(setup, prepared):
     candidates = timeline.current_candidate_diagnostics()
     assert candidates
     assert all(item.accepted and item.reason is None and item.media is not None for item in candidates)
+
+
+def test_legacy_timeline_edit_loads_and_accepts_a_current_format_child(setup, prepared):
+    from app.desktop.timeline_composition import compose_timeline
+    from tests.unit.test_timeline import legacy_timeline_payload
+
+    session, _, _, store, _, _ = setup
+    legacy = legacy_timeline_payload()
+    project_id = session.project.id
+    legacy["project_id"] = project_id
+    legacy["clips"][0]["media"]["project_id"] = project_id
+    legacy["clips"][0]["media"]["image"]["project_id"] = project_id
+    legacy["id"] = "timeline_" + content_fingerprint({key: value for key, value in legacy.items()
+                                                        if key != "id"})
+    old_event_id = "timeline_edit_legacy"
+    payload = json.dumps({"version": 1, "id": old_event_id, "parent": None, "timeline": legacy})
+    store.save_artifact("timeline-edit.json", payload, {
+        "artifact_type": "desktop_timeline_edit", "project_id": project_id,
+        "value_id": old_event_id, "module_name": "desktop_timeline",
+    })
+
+    timeline = compose_timeline(session)
+    old = timeline.current()
+    assert old.id == old_event_id and old.timeline.id == legacy["id"]
+    candidates = timeline.current_candidate_diagnostics()
+    assert len(candidates) == 2 and all(item.accepted for item in candidates)
+    child = timeline.rebuild_from_sources(
+        [item.source for item in candidates], expected=old.id)
+    assert child.timeline.id != legacy["id"]
+    assert "lineage_version" in child.timeline.to_payload()["clips"][0]["media"]["image"]
+
+    reopened = compose_timeline(session)
+    restored = reopened.current()
+    assert restored == child
+    assert TimelineRevision.from_payload(restored.timeline.to_payload()) == restored.timeline
+    events = [item for item in store.list_artifacts() if item.artifact_type == "desktop_timeline_edit"]
+    assert len(events) == 2
+
+
+@pytest.mark.parametrize("corruption", ["branch", "duplicate", "missing_parent", "checksum", "foreign_project"])
+def test_timeline_history_integrity_checks_still_reject_corruption(setup, corruption):
+    from app.storage.timeline_edits import ProjectTimelineEdits
+    from tests.unit.test_timeline import legacy_timeline_payload
+
+    repository = setup[0].repository
+    project_id = repository.project().id
+    timeline = legacy_timeline_payload()
+    timeline["project_id"] = project_id
+    timeline["clips"][0]["media"]["project_id"] = project_id
+    timeline["clips"][0]["media"]["image"]["project_id"] = project_id
+    if corruption == "foreign_project":
+        timeline["project_id"] = timeline["clips"][0]["media"]["project_id"] = "foreign"
+        timeline["clips"][0]["media"]["image"]["project_id"] = "foreign"
+    timeline["id"] = "timeline_" + content_fingerprint({key: value for key, value in timeline.items()
+                                                        if key != "id"})
+
+    specs = [("event-a", None)]
+    if corruption == "branch":
+        specs.append(("event-b", None))
+    elif corruption == "duplicate":
+        specs.append(("event-a", "event-a"))
+    elif corruption == "missing_parent":
+        specs = [("event-a", "missing-event")]
+    manifests, values = [], {}
+    for index, (event_id, parent) in enumerate(specs):
+        body = json.dumps({"version": 1, "id": event_id, "parent": parent, "timeline": timeline}).encode()
+        storage_key = f"{event_id}-{index}.json"
+        checksum = sha256(body).hexdigest()
+        if corruption == "checksum":
+            checksum = "0" * 64
+        manifests.append(SimpleNamespace(
+            artifact_type="desktop_timeline_edit", storage_key=storage_key, checksum=checksum,
+            metadata={"project_id": project_id, "value_id": event_id},
+        ))
+        values[storage_key] = body
+
+    class ReadOnlyStore:
+        def __init__(self):
+            self._index = SimpleNamespace(repository=repository)
+        def list_artifacts(self): return tuple(manifests)
+        def read_artifact(self, key): return values[key]
+
+    edits = ProjectTimelineEdits(repository, ReadOnlyStore())
+    message = "checksum mismatch" if corruption == "checksum" else (
+        "Incomplete timeline history" if corruption == "missing_parent" else "Invalid or branching timeline history")
+    with pytest.raises(ValueError, match=message):
+        edits.current()
 
 
 @pytest.mark.parametrize("kind", ["timing", "scene", "variant", "project", "section_edit"])

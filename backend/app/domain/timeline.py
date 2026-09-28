@@ -1,10 +1,12 @@
 """Immutable, path-free render snapshots; audio samples are not video frames."""
 
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from fractions import Fraction
+import json
 from math import gcd
 
-from .dependencies import content_fingerprint
+from .dependencies import canonical_json, content_fingerprint
 from .scene_image import SceneImage
 
 
@@ -162,6 +164,8 @@ class TimelineRevision:
     timebase: OutputTimebase
     fit_policy: str
     clips: tuple[TimelineClip, ...]
+    _persisted_payload: str | None = field(default=None, repr=False, compare=False)
+    _normalized_fingerprint: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         _text(self.project_id)
@@ -199,21 +203,47 @@ class TimelineRevision:
 
     @property
     def id(self):
-        return "timeline_" + content_fingerprint(self._content())
+        current = self._content()
+        if (self._persisted_payload is not None
+                and content_fingerprint(current) == self._normalized_fingerprint):
+            return json.loads(self._persisted_payload)["id"]
+        return "timeline_" + content_fingerprint(current)
 
     def to_payload(self):
+        if (self._persisted_payload is not None
+                and content_fingerprint(self._content()) == self._normalized_fingerprint):
+            return json.loads(self._persisted_payload)
         return {"id": self.id, **self._content()}
 
     @classmethod
     def from_payload(cls, value):
-        data = dict(value)
-        identity = data.pop("id")
-        version = data.pop("version")
-        if type(version) is not int or version != 1 or data.pop("rounding") != "cumulative_nearest_ties_up":
+        if not isinstance(value, dict):
+            raise ValueError("Expected a serialized timeline object.")
+        raw = deepcopy(value)
+        required = {"id", "version", "project_id", "timebase", "fit_policy", "rounding", "clips"}
+        if set(raw) != required:
+            raise ValueError("Unsupported timeline serialization fields.")
+        identity = raw["id"]
+        if (type(identity) is not str or len(identity) != 73 or not identity.startswith("timeline_")
+                or any(char not in "0123456789abcdef" for char in identity[len("timeline_"):])):
+            raise ValueError("Invalid timeline identity.")
+        version = raw["version"]
+        if type(version) is not int or version != 1 or raw["rounding"] != "cumulative_nearest_ties_up":
             raise ValueError("Unsupported timeline version or rounding policy.")
+        raw_content = {key: raw[key] for key in required if key != "id"}
+        if "timeline_" + content_fingerprint(raw_content) != identity:
+            raise ValueError("Timeline content differs from its immutable identity.")
+
+        # D018 fingerprinted the exact _content() representation, whose nested
+        # image dictionaries came from that revision's SceneImage fields. Verify
+        # those bytes before current SceneImage defaults normalize old snapshots.
+        data = {key: raw[key] for key in raw_content if key != "version"}
+        data.pop("rounding")
         data["timebase"] = OutputTimebase(**data["timebase"])
         data["clips"] = tuple(TimelineClip.from_payload(clip) for clip in data["clips"])
         timeline = cls(**data)
-        if timeline.id != identity:
-            raise ValueError("Timeline content differs from its immutable identity.")
+        normalized_fingerprint = content_fingerprint(timeline._content())
+        if normalized_fingerprint != content_fingerprint(raw_content):
+            object.__setattr__(timeline, "_persisted_payload", canonical_json(raw))
+            object.__setattr__(timeline, "_normalized_fingerprint", normalized_fingerprint)
         return timeline
