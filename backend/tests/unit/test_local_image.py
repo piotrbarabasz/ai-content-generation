@@ -13,7 +13,7 @@ from PIL import Image
 from app.desktop.image_composition import compose_installed_image
 from app.providers.image_factory import build_image_provider
 from app.providers.image_generation import ImageGenerationRequest
-from app.providers.local_image import LocalImageProvider
+from app.providers.local_image import LOCAL_IMAGE_TIMEOUT_SECONDS, LocalImageProvider, _last_worker_phase
 from app.providers.mock_image import MockImageProvider
 from app.runtime import local_image_runtime as managed
 from app.runtime import local_image_worker as worker
@@ -110,6 +110,30 @@ class Process:
         return self.returncode
 
 
+def test_timeout_phase_parser_uses_only_bounded_structured_worker_records():
+    errors = (b"noise\nlocal_image_phase:{\"phase\":\"imports\",\"status\":\"complete\"}\n"
+              b"local_image_phase:{\"phase\":\"model_loading\",\"status\":\"started\"}\n")
+    assert _last_worker_phase(errors) == "model_loading_started"
+    assert _last_worker_phase(b"unstructured traceback") == "process_started"
+    assert LOCAL_IMAGE_TIMEOUT_SECONDS == 600
+
+
+def test_provider_timeout_reports_last_worker_phase(tmp_path, monkeypatch):
+    installed = _installed(tmp_path)
+    class TimedOutProcess(Process):
+        def communicate(self, data, timeout):
+            assert timeout == LOCAL_IMAGE_TIMEOUT_SECONDS
+            raise __import__("subprocess").TimeoutExpired(
+                "worker", timeout, stderr=b'local_image_phase:{"phase":"inference","status":"started"}\n')
+    process = TimedOutProcess(b"")
+    provider = LocalImageProvider(tmp_path, resources=GPUResourceManager(),
+                                  process_factory=lambda *a, **k: process)
+    monkeypatch.setattr(provider.installation, "active", lambda: installed)
+    monkeypatch.setattr("app.runtime.windows_job.WindowsJob", lambda pid: SimpleNamespace(close=lambda: None))
+    with pytest.raises(RuntimeError, match="timed out after 600 s; last worker phase: inference_started"):
+        provider.generate(ImageGenerationRequest("satellite", 640, 360))
+
+
 def test_factory_and_composition_keep_openai_and_absent_local_independent(tmp_path):
     assert compose_installed_image(environment={}) is None
     assert compose_installed_image(environment={
@@ -136,18 +160,46 @@ def test_profile_capabilities_identity_seed_negative_prompt_and_output(tmp_path,
     monkeypatch.setattr("app.runtime.windows_job.WindowsJob", lambda pid: SimpleNamespace(close=lambda: None))
     capabilities = provider.capabilities()
     assert capabilities.provider == "local" and capabilities.seeded and capabilities.negative_prompt
-    assert capabilities.supported_sizes == ((512, 512),) and capabilities.formats == ("PNG",)
+    assert managed.PROFILE == "sd15-cu124-fp32-inference-v3-phased-diagnostics"
+    assert capabilities.version == managed.PROFILE
+    assert capabilities.supported_sizes == ((512, 512), (640, 360), (360, 640)) and capabilities.formats == ("PNG",)
     assert capabilities.settings["installation"] == installed.fingerprint
     assert capabilities.settings["dtype"] == "float32" and capabilities.settings["attention_slicing"]
     request = ImageGenerationRequest("a satellite", 512, 512, seed=43, negative_prompt="letters")
     result = provider.generate(request)
     assert result.image_bytes == payload and result.format == "PNG"
     assert result.metadata["diagnostics"] == diagnostics
-    assert process.input == request.to_payload() | {"version": 1}
+    assert process.input == request.to_payload() | {"version": 2}
     assert resources.availability().available
     assert (installed.cache / "hf").is_dir()
     with pytest.raises(ValueError, match="supported"):
         provider.generate(ImageGenerationRequest("too small", 256, 256))
+
+
+@pytest.mark.parametrize("size", [(512, 512), (640, 360), (360, 640)])
+def test_local_image_worker_accepts_only_supported_sd_sizes(size):
+    request = {"version": 2, "prompt": "satellite", "negative_prompt": "", "width": size[0],
+               "height": size[1], "seed": 43, "format": "PNG"}
+    assert worker.validate_request(request) == request
+    with pytest.raises(ValueError, match="Invalid local image worker request"):
+        worker.validate_request(request | {"version": 1})
+    for width, height in ((640, 368), (1024, 576), (640, 3600), (361, 640)):
+        invalid = request | {"width": width, "height": height}
+        with pytest.raises(ValueError, match="Invalid local image worker request"):
+            worker.validate_request(invalid)
+
+
+@pytest.mark.parametrize("size", [(640, 360), (360, 640)])
+def test_local_image_provider_returns_orientation_specific_dimensions(tmp_path, monkeypatch, size):
+    installed = _installed(tmp_path)
+    payload = MockImageProvider().generate(ImageGenerationRequest("fixture", *size)).image_bytes
+    process = Process(payload)
+    provider = LocalImageProvider(tmp_path, resources=GPUResourceManager(), process_factory=lambda *a, **k: process)
+    monkeypatch.setattr(provider.installation, "active", lambda: installed)
+    monkeypatch.setattr("app.runtime.windows_job.WindowsJob", lambda pid: SimpleNamespace(close=lambda: None))
+    result = provider.generate(ImageGenerationRequest("orientation smoke", *size, seed=9))
+    assert (result.width, result.height) == size
+    assert (process.input["width"], process.input["height"], process.input["version"]) == (*size, 2)
 
 
 def test_gpu_contention_oom_failure_and_invalid_output_release(tmp_path, monkeypatch):

@@ -72,7 +72,9 @@ class LocalUpscaleProvider:
         return env
 
     def upscale(self, request: ImageUpscaleRequest):
-        self.capabilities().validate(request)
+        capabilities = self.capabilities()
+        capabilities.validate(request)
+        target_width, target_height = request.target_width, request.target_height
         if len(request.image_bytes) > 47 * 1024 * 1024:
             raise ValueError("Upscale source exceeds the bounded worker input size.")
         measured = decode_image(request.image_bytes, OUTPUT_LIMITS)
@@ -84,8 +86,9 @@ class LocalUpscaleProvider:
             raise RuntimeError("GPU is occupied by another managed workload; retry after it finishes.")
         process = job = None
         try:
-            payload = json.dumps({"version": 1, "image": base64.b64encode(request.image_bytes).decode("ascii"),
-                                  "factor": request.factor}, separators=(",", ":")).encode() + b"\n"
+            payload = json.dumps({"version": 2, "image": base64.b64encode(request.image_bytes).decode("ascii"),
+                                  "target_width": target_width, "target_height": target_height},
+                                 separators=(",", ":")).encode() + b"\n"
             process = self.process_factory(
                 [str(_python(installed.runtime)), "-I", "-B", "-u", str(installed.runtime / "upscale_worker.py")],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -110,7 +113,7 @@ class LocalUpscaleProvider:
                     raise RuntimeError("Local upscale CUDA memory exhausted at tile=128; source remains selected.")
                 raise RuntimeError("Local upscale worker failed: " + errors.decode("utf-8", "replace")[-500:])
             measured = decode_image(output, OUTPUT_LIMITS)
-            target = ("PNG", request.width * request.factor, request.height * request.factor)
+            target = ("PNG", target_width, target_height)
             if (measured["format"], measured["width"], measured["height"]) != target:
                 raise ValueError("Local upscaler output dimensions differ from request.")
             diagnostics = {}

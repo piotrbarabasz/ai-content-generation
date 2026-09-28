@@ -27,16 +27,19 @@ def _effectively_black(image):
     return max(high for _, high in image.convert("RGB").getextrema()) <= 2
 
 
-def _result_diagnostics(result, *, dtype, device, elapsed_seconds):
+def _result_diagnostics(result, *, dtype, device, elapsed_seconds, peak_vram_bytes=None):
     if len(result.images) != 1:
         raise ValueError("Local image worker expected exactly one image.")
     flags = result.nsfw_content_detected
     if flags is not None and len(flags) != 1:
         raise ValueError("Local image safety checker returned an invalid result.")
-    return {"nsfw_content_detected": bool(flags[0]) if flags is not None else None,
-            "effectively_black": _effectively_black(result.images[0]),
-            "dtype": dtype, "device": device,
-            "elapsed_inference_seconds": round(elapsed_seconds, 3)}
+    diagnostics = {"nsfw_content_detected": bool(flags[0]) if flags is not None else None,
+                   "effectively_black": _effectively_black(result.images[0]),
+                   "dtype": dtype, "device": device,
+                   "elapsed_inference_seconds": round(elapsed_seconds, 3)}
+    if peak_vram_bytes is not None:
+        diagnostics["peak_vram_bytes"] = peak_vram_bytes
+    return diagnostics
 
 
 def _require_usable_result(diagnostics):
@@ -46,22 +49,45 @@ def _require_usable_result(diagnostics):
         raise RuntimeError("local_image_black_output: Inference produced an effectively black image; no image was published.")
 
 
-def main():
-    binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
-    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    request = json.loads(sys.stdin.buffer.readline(16384))
-    if (set(request) != {"version", "prompt", "negative_prompt", "width", "height", "seed", "format"}
-            or request["version"] != 1 or request["format"] != "PNG"
-            or (request["width"], request["height"]) != (512, 512)
+def _phase(name, status, seconds=None):
+    value = {"phase": name, "status": status}
+    if seconds is not None:
+        value["elapsed_seconds"] = round(seconds, 3)
+    print("local_image_phase:" + json.dumps(value, sort_keys=True), file=sys.stderr, flush=True)
+
+
+def validate_request(request):
+    size = (request.get("width"), request.get("height")) if type(request) is dict else None
+    if (type(request) is not dict
+            or set(request) != {"version", "prompt", "negative_prompt", "width", "height", "seed", "format"}
+            or request["version"] != 2 or request["format"] != "PNG"
+            or size not in ((512, 512), (640, 360), (360, 640))
+            or any(type(value) is not int or value % 8 for value in size)
             or type(request["seed"]) is not int or not 0 <= request["seed"] < 2**32
             or type(request["prompt"]) is not str or not request["prompt"].strip()
             or type(request["negative_prompt"]) is not str):
         raise ValueError("Invalid local image worker request.")
+    return request
+
+
+def main():
+    worker_started = perf_counter()
+    _phase("worker_started", "complete", 0)
+    binary_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    request = json.loads(sys.stdin.buffer.readline(16384))
+    request = validate_request(request)
     model = Path(os.environ["AICS_LOCAL_IMAGE_MODEL"]).resolve(strict=True)
+    phase_started = perf_counter()
+    _phase("imports", "started")
     import torch
     from diffusers import StableDiffusionPipeline, DDIMScheduler
+    imports_seconds = perf_counter() - phase_started
+    _phase("imports", "complete", imports_seconds)
 
     _require_cuda_device(torch.cuda)
+    phase_started = perf_counter()
+    _phase("model_loading", "started")
     pipe = StableDiffusionPipeline.from_pretrained(
         str(model), local_files_only=True, torch_dtype=torch.float32,
         variant="fp16", use_safetensors=True,
@@ -69,20 +95,43 @@ def main():
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     pipe.enable_attention_slicing()
     pipe.to("cuda:0")
+    model_load_seconds = perf_counter() - phase_started
+    _phase("model_loaded_cuda", "complete", model_load_seconds)
     generator = torch.Generator(device="cuda:0").manual_seed(request["seed"])
-    start = perf_counter()
+    torch.cuda.reset_peak_memory_stats(0)
+    inference_started = perf_counter()
+    _phase("inference", "started")
     result = pipe(
         prompt=request["prompt"], negative_prompt=request["negative_prompt"],
-        width=512, height=512, num_inference_steps=20, guidance_scale=7.5,
+        width=request["width"], height=request["height"], num_inference_steps=20, guidance_scale=7.5,
         generator=generator,
     )
+    inference_seconds = perf_counter() - inference_started
+    _phase("inference", "complete", inference_seconds)
     diagnostics = _result_diagnostics(result, dtype=str(pipe.unet.dtype), device=str(pipe.device),
-                                      elapsed_seconds=perf_counter() - start)
-    print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
+                                      elapsed_seconds=inference_seconds,
+                                      peak_vram_bytes=torch.cuda.max_memory_allocated(0))
+    diagnostics["cuda_device_name"] = torch.cuda.get_device_name(0)
+    phase_started = perf_counter()
+    _phase("safety_output_validation", "started")
     _require_usable_result(diagnostics)
+    safety_seconds = perf_counter() - phase_started
+    _phase("safety_output_validation", "complete", safety_seconds)
+    phase_started = perf_counter()
+    _phase("png_encoding", "started")
     output = io.BytesIO()
     result.images[0].save(output, format="PNG")
-    binary_output.write(output.getvalue())
+    png_bytes = output.getvalue()
+    png_encoding_seconds = perf_counter() - phase_started
+    _phase("png_encoding", "complete", png_encoding_seconds)
+    diagnostics.update(imports_seconds=round(imports_seconds, 3),
+                       model_load_seconds=round(model_load_seconds, 3),
+                       safety_output_validation_seconds=round(safety_seconds, 3),
+                       png_encoding_seconds=round(png_encoding_seconds, 3),
+                       worker_elapsed_seconds=round(perf_counter() - worker_started, 3),
+                       png_bytes=len(png_bytes))
+    print("local_image_diagnostics:" + json.dumps(diagnostics, sort_keys=True), file=sys.stderr, flush=True)
+    binary_output.write(png_bytes)
     binary_output.close()
 
 

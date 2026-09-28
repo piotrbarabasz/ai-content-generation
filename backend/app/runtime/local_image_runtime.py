@@ -19,7 +19,7 @@ from app.domain.dependencies import canonical_json
 from app.runtime.provisioning import _install_lock
 
 
-PROFILE = "sd15-cu124-fp32-inference-v1"
+PROFILE = "sd15-cu124-fp32-inference-v3-phased-diagnostics"
 MODEL = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 MODEL_REVISION = "f03de327dd89b501a01da37fc5240cf4fdba85a1"
 PACKAGE_PINS = {
@@ -159,7 +159,11 @@ class LocalImageInstallation:
             raise ValueError("Installation sources must be outside the managed image root.")
         self.root.mkdir(parents=True, exist_ok=True)
         with _install_lock(self.root):
-            if self.active() is not None:
+            try:
+                active = self.active()
+            except ValueError:
+                active = None  # Leave the previous immutable generation; replace its pointer only after verification.
+            if active is not None:
                 raise ValueError("A local image runtime is already active.")
             generation = uuid4().hex
             directory = self.root / "installed" / generation

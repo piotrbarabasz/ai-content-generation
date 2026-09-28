@@ -22,7 +22,8 @@ class Process:
         return self.returncode
 
     def communicate(self, data, timeout):
-        assert json.loads(data)["factor"] == 2
+        request = json.loads(data)
+        assert request["version"] == 2 and request["target_width"] == 16
         self.returncode = 1
         return b"", self.error
 
@@ -52,7 +53,7 @@ def request():
     from PIL import Image
     stream = BytesIO()
     Image.new("RGB", (8, 8)).save(stream, format="PNG")
-    return ImageUpscaleRequest(stream.getvalue(), "PNG", 8, 8, 2)
+    return ImageUpscaleRequest(stream.getvalue(), "PNG", 8, 8, target_width=16, target_height=16)
 
 
 def test_pinned_model_and_gpu_contention(tmp_path, monkeypatch):
@@ -87,3 +88,17 @@ def test_cancel_releases_gpu_ownership(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="canceled"):
         value.upscale(request())
     assert resources.availability().available
+
+
+def test_upscale_worker_accepts_exact_targets_without_resolution_labels():
+    from app.runtime.upscale_worker import validate_request
+    from app.runtime.upscale_runtime import PROFILE
+
+    assert PROFILE.endswith("v2-exact-target")
+    request = {"version": 2, "image": "c291cmNl", "target_width": 1920, "target_height": 1080}
+    assert validate_request(request) == request
+    assert not any("profile" in key for key in request)
+    with pytest.raises(ValueError, match="Invalid upscale worker request"):
+        validate_request(request | {"target_width": 0})
+    with pytest.raises(ValueError, match="Invalid upscale worker request"):
+        validate_request(request | {"version": 1, "factor": 2, "target_width": None, "target_height": None})

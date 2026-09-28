@@ -227,7 +227,9 @@ def test_selected_prompt_and_image_survive_reopen_in_panel(qt, tmp_path):
         assert (panel.current.prompt_id, panel.current.image_id) == expected
         assert panel.prompt_variants.currentData() == expected[0]
         assert panel.image_variants.currentData() == expected[1]
-        assert not panel.image.pixmap().isNull()
+        assert panel.image.pixmap().isNull()
+        assert "Selected image: 32 × 24 (4:3)" in panel.image.text()
+        assert "Not compatible with Landscape (16:9)" in panel.image.text()
     finally:
         panel.close()
         reopened.close()

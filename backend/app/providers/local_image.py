@@ -19,6 +19,8 @@ from app.storage.image_decoder import ImageLimits, decode_image
 
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
+LOCAL_IMAGE_TIMEOUT_SECONDS = 600
+LOCAL_IMAGE_SIZES = ((512, 512), (640, 360), (360, 640))
 
 
 def _worker_diagnostics(errors):
@@ -30,6 +32,24 @@ def _worker_diagnostics(errors):
                 return {}
             return value if isinstance(value, dict) else {}
     return {}
+
+
+def _last_worker_phase(errors):
+    if isinstance(errors, str):
+        lines = errors.splitlines()[-512:]
+    else:
+        lines = errors[-128 * 1024:].decode("utf-8", errors="replace").splitlines()[-512:]
+    phase = None
+    for line in lines:
+        if not line.startswith("local_image_phase:"):
+            continue
+        try:
+            value = json.loads(line.removeprefix("local_image_phase:"))
+        except ValueError:
+            continue
+        if isinstance(value, dict) and isinstance(value.get("phase"), str):
+            phase = value["phase"] + ("_started" if value.get("status") == "started" else "")
+    return phase or "process_started"
 
 
 def _effectively_black_png(data):
@@ -56,6 +76,7 @@ class LocalImageProvider:
         self._lock = Lock()
         self._process = None
         self._cancel_requested = False
+        self._verified = None
 
     def cancel(self):
         with self._lock:
@@ -65,17 +86,20 @@ class LocalImageProvider:
             process.kill()
 
     def _installed(self):
-        installed = self.installation.active()
+        installed = self._verified
+        if installed is None:
+            installed = self.installation.active()
         if installed is None:
             raise ValueError("Install the pinned local image runtime and model explicitly first.")
+        self._verified = installed
         return installed
 
     def capabilities(self):
         installed = self._installed()
         return ImageGenerationCapabilities(
             "local", MODEL + "@" + MODEL_REVISION, PROFILE, formats=("PNG",),
-            max_dimension=512, max_pixels=512 * 512, negative_prompt=True, seeded=True,
-            supported_sizes=((512, 512),),
+            max_dimension=640, max_pixels=512 * 512, negative_prompt=True, seeded=True,
+            supported_sizes=LOCAL_IMAGE_SIZES,
             settings={"installation": installed.fingerprint, "device": "cuda:0", "dtype": "float32",
                       "attention_slicing": True, "scheduler": "DDIM", "steps": 20, "guidance_scale": 7.5},
         )
@@ -116,7 +140,7 @@ class LocalImageProvider:
         try:
             with self._lock:
                 self._cancel_requested = False
-            payload = request.to_payload() | {"version": 1}
+            payload = request.to_payload() | {"version": 2}
             from app.domain.dependencies import canonical_json
             process = self.process_factory(
                 [str(_python(installed.runtime)), "-I", "-B", "-u",
@@ -134,9 +158,15 @@ class LocalImageProvider:
                 from app.runtime.windows_job import WindowsJob
                 job = WindowsJob(process.pid)
             try:
-                output, errors = process.communicate((canonical_json(payload) + "\n").encode(), timeout=600)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Local image generation timed out.") from None
+                output, errors = process.communicate((canonical_json(payload) + "\n").encode(),
+                                                    timeout=LOCAL_IMAGE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as exc:
+                errors = exc.stderr or b""
+                phase = _last_worker_phase(errors)
+                raise RuntimeError(
+                    f"Local image generation timed out after {LOCAL_IMAGE_TIMEOUT_SECONDS} s; "
+                    f"last worker phase: {phase}."
+                ) from None
             if process.returncode != 0:
                 if self._cancel_requested:
                     raise RuntimeError("Local image generation canceled.")
@@ -152,12 +182,13 @@ class LocalImageProvider:
                                        + summary)
                 raise RuntimeError("Local image worker failed; inspect the installed runtime and model.")
             measured = decode_image(output, ImageLimits(max_bytes=MAX_IMAGE_BYTES,
-                                                        max_dimension=512, max_pixels=512 * 512))
-            if (measured["format"], measured["width"], measured["height"]) != ("PNG", 512, 512):
+                                                        max_dimension=max(request.width, request.height),
+                                                        max_pixels=request.width * request.height))
+            if (measured["format"], measured["width"], measured["height"]) != ("PNG", request.width, request.height):
                 raise ValueError("Local image output differs from the requested PNG dimensions.")
             if _effectively_black_png(output):
                 raise ValueError("Local image worker returned an effectively black PNG; no image was published.")
-            return ImageGenerationResult(output, "PNG", 512, 512,
+            return ImageGenerationResult(output, "PNG", request.width, request.height,
                                          {"sha256": sha256(output).hexdigest(), "runtime": installed.fingerprint,
                                           "diagnostics": _worker_diagnostics(errors)})
         finally:

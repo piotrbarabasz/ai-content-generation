@@ -106,9 +106,8 @@ def test_timeline_uses_selected_upscaled_derivative(setup, prepared):
 
         def upscale(self, request):
             output = BytesIO()
-            Image.new("RGB", (request.width * request.factor, request.height * request.factor)).save(output, format="PNG")
-            return ImageUpscaleResult(output.getvalue(), "PNG", request.width * request.factor,
-                                      request.height * request.factor)
+            Image.new("RGB", (request.target_width, request.target_height)).save(output, format="PNG")
+            return ImageUpscaleResult(output.getvalue(), "PNG", request.target_width, request.target_height)
 
     source = images[0][0]
     service = ImageUpscaleService(ProjectSceneImages(setup[0].repository, setup[3]), setup[3], Upscaler())

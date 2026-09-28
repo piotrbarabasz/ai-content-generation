@@ -17,7 +17,7 @@ from app.runtime.provisioning import _install_lock
 
 MODEL = "realesr-general-x4v3"
 MODEL_SHA256 = "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292"
-PROFILE = "realesr-general-x4v3-cu124-fp32-tile128-v1"
+PROFILE = "realesr-general-x4v3-cu124-fp32-tile128-v2-exact-target"
 PACKAGE_PINS = {"torch": "2.6.0+cu124", "pillow": "11.1.0", "numpy": "2.4.6"}
 
 
@@ -106,7 +106,11 @@ class LocalUpscaleInstallation:
             raise ValueError("Installation sources must be outside the managed upscale root.")
         self.root.mkdir(parents=True, exist_ok=True)
         with _install_lock(self.root):
-            if self.active() is not None:
+            try:
+                active = self.active()
+            except ValueError:
+                active = None
+            if active is not None:
                 raise ValueError("An upscaler runtime is already active.")
             generation = uuid4().hex
             directory = self.root / "installed" / generation

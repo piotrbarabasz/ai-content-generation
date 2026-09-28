@@ -4,10 +4,19 @@ from dataclasses import dataclass
 import json
 
 from app.application.scene_planning import ScenePlanningService
+from app.application.image_presets import RESOLUTIONS
 from app.providers.image_generation import ImageGenerationRequest
 from app.storage.section_tempo import SectionTempoArtifacts
 from app.tts.scene_sources import sentence_sources
 
+
+def _image_variant_label(value):
+    if value.provenance == "final":
+        labels = {"fhd": "Full HD", "qhd": "QHD", "uhd4k": "4K UHD"}
+        return f"final: {labels[value.target_profile]} · {value.width}×{value.height}"
+    if value.provenance == "upscaled":
+        return f"upscaled: Real-ESRGAN ×{value.scale} · {value.width}×{value.height}"
+    return f"{value.provenance}: {value.source_name} ({value.width}×{value.height})"
 
 @dataclass(frozen=True)
 class PromptVariant:
@@ -158,11 +167,7 @@ class SceneServices:
             selected_prompt.id if selected_prompt else None, prompt_choice.id if prompt_choice else None,
             tuple(PromptVariant(value.id, f"{value.provenance}: {value.prompt[:60]}") for value in prompt_history),
             image_choice.artifact_id if image_choice else None, image_choice.id if image_choice else None,
-            tuple(ImageVariant(value.artifact_id,
-                               (f"upscaled: Real-ESRGAN ×{value.scale} · {value.width}×{value.height}"
-                                if value.provenance == "upscaled" else
-                                f"{value.provenance}: {value.source_name} ({value.width}×{value.height})"))
-                  for value in image_history),
+            tuple(ImageVariant(value.artifact_id, _image_variant_label(value)) for value in image_history),
         )
 
     def scenes(self, section):
@@ -336,6 +341,20 @@ class SceneServices:
         return self.scene(prepared[0].scene_id)
 
     def select_cached_upscale(self, prepared, artifact_id):
+        self.upscale.intake.select(artifact_id, expected_selection_id=prepared[1])
+        return self.scene(prepared[0].scene_id)
+
+    def prepare_final_image(self, artifact_id, orientation, resolution):
+        return self.upscale.prepare_final(artifact_id, orientation, resolution)
+
+    def cached_final_image(self, prepared):
+        return self.upscale.cached_final(prepared)
+
+    def finish_final_image(self, prepared, result):
+        self.upscale.publish_final(prepared, result)
+        return self.scene(prepared[0].scene_id)
+
+    def select_cached_final_image(self, prepared, artifact_id):
         self.upscale.intake.select(artifact_id, expected_selection_id=prepared[1])
         return self.scene(prepared[0].scene_id)
 
