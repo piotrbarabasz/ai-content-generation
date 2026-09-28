@@ -39,7 +39,9 @@ class VisualPromptService:
         return revision
 
     def generate(self, acceptance_id, scene_id, brief_revision_id, style_revision_id):
-        if self.provider is None or not json.loads(self.identity_json):
+        if self.provider is None:
+            raise ValueError("LLM provider is not configured.")
+        if not json.loads(self.identity_json):
             raise ValueError("Generation requires an explicit provider and its configured identity.")
         inputs = self.prompts.snapshot(acceptance_id, scene_id, brief_revision_id, style_revision_id)
         selected = self.prompts.selected(scene_id)

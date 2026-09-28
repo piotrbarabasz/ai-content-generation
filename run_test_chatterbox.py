@@ -1,6 +1,32 @@
 from dataclasses import replace
 from pathlib import Path
+import os
 import shutil
+import sys
+
+
+REPO = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO / "backend"))
+
+from app.environment import load_application_environment
+
+load_application_environment()
+
+
+def configured_path(name: str, *, must_exist: bool = True) -> Path:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Set {name} in the root .env or process environment before launching Chatterbox.")
+    path = Path(value).expanduser().resolve()
+    if must_exist and not path.is_dir():
+        raise RuntimeError(f"{name} directory does not exist: {path}. Configure an installed local Chatterbox runtime.")
+    return path
+
+
+RUNTIME_ROOT = configured_path("AICS_CHATTERBOX_RUNTIME_ROOT")
+MODEL_ROOT = configured_path("AICS_CHATTERBOX_MODEL_ROOT")
+CACHE_ROOT = configured_path("AICS_CHATTERBOX_CACHE_ROOT", must_exist=False)
+WORKER_CACHE = CACHE_ROOT / "worker-cache"
 
 from app.desktop.__main__ import main
 from app.desktop.audio_composition import compose_candidate_chatterbox_audio
@@ -12,15 +38,8 @@ from app.storage.local_store import LocalArtifactStore
 from app.storage.reference_audio import ProjectReferenceAudio
 
 
-REPO = Path(r"D:\Projects\ai-content-generation")
-
-RUNTIME_ROOT = REPO / ".runtime" / "d029-managed-current"
-MODEL_ROOT = REPO / ".runtime" / "d029-models"
-
 # Wszystkie mutowalne cache testowego workera trzymamy
 # POZA immutable managed runtime.
-CACHE_ROOT = REPO / ".runtime" / "desktop-chatterbox-test"
-WORKER_CACHE = CACHE_ROOT / "worker-cache"
 
 
 distribution = load_approved_chatterbox_distribution()

@@ -29,10 +29,12 @@ class SecretHygieneTests(unittest.TestCase):
 
         self.assertIn("!.env.example", gitignore)
 
-    def test_env_example_contains_placeholders_only(self) -> None:
+    def test_env_example_leaves_credentials_and_model_unset(self) -> None:
         env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
-        self.assertIn("placeholder-only", env_example)
+        self.assertRegex(env_example, r"(?m)^OPENAI_API_KEY=$")
+        self.assertRegex(env_example, r"(?m)^AICS_OPENAI_MODEL=$")
+        self.assertIn("# AICS_OPENAI_IMAGE_MODEL=", env_example)
         for pattern in REAL_LOOKING_SECRET_PATTERNS:
             self.assertIsNone(pattern.search(env_example))
 

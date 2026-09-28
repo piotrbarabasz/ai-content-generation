@@ -23,6 +23,9 @@ class LocalProjects:
 
 def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory=None, preview_factory=None,
          regeneration_factory=None):
+    from app.environment import load_application_environment
+
+    load_application_environment()
     smoke_report = None
     if "--release-smoke" in sys.argv:
         position = sys.argv.index("--release-smoke")
