@@ -110,3 +110,23 @@ The current automated acceptance covers contract validation, SDK request mapping
 retry/error handling, catalog selection, async execution, WebP retention/display,
 and D060 bounds. The non-paid GUI review and credentialed GPT Image 2 GUI smoke are
 recorded separately; D062 remains Partial until the credentialed GUI smoke passes.
+
+## Audio runtime isolation
+
+D062 image providers execute in the main application and their own local-runtime or
+API boundary. Chatterbox and Piper receive an explicit audio-worker source closure;
+image-only changes do not participate in audio runtime verification. Immutable
+verification remains strict. Moving an existing installation from the old oversized
+closure may require one intentional rebuild. For an offline rebuild from the reviewed
+local artifact cache, provision to a new runtime root (do not edit the active runtime):
+
+```powershell
+$env:PYTHONPATH = (Join-Path (Get-Location) "backend")
+python -c "from pathlib import Path; from app.runtime.chatterbox_distribution import load_approved_chatterbox_distribution; from app.runtime.chatterbox_provisioning import ChatterboxProvisioner; from app.runtime.provisioning import DirectorySource; ChatterboxProvisioner(Path('.runtime/d029-managed-audio-closure')).install(load_approved_chatterbox_distribution(), DirectorySource(Path('.runtime/d029-wheelhouse')))"
+$env:AICS_CHATTERBOX_RUNTIME_ROOT = (Resolve-Path ".runtime/d029-managed-audio-closure").Path
+python run_test_chatterbox.py
+```
+
+The installer revalidates each cached artifact against the approved pins and performs
+its normal private health check before activating the new generation. The old runtime
+and model store are left intact.

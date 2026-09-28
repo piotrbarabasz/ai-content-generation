@@ -2,6 +2,7 @@
 
 from app.desktop import image_generators
 from app.providers.image_generation import ImageGenerationCapabilities
+from app.runtime.worker_bundle import source_files
 
 
 class LocalProvider:
@@ -16,6 +17,7 @@ class OpenAITransport:
 
 
 def test_local_and_openai_are_catalogued_independently_with_explicit_default(monkeypatch):
+    assert "app/providers/image_generation.py" not in source_files()
     original = image_generators.compose_installed_image
     def compose(*, environment, transport=None, verify=True):
         if environment.get("AICS_IMAGE_PROVIDER") == "local":
