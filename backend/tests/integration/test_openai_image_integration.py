@@ -27,7 +27,7 @@ from app.tts.scene_sources import sentence_sources
 
 def image_response(color):
     target = BytesIO()
-    Image.new("RGB", (1024, 1024), color).save(target, format="PNG")
+    Image.new("RGB", (1024, 1024), color).save(target, format="WEBP", quality=90)
     return {"created": 123, "data": [{
         "b64_json": base64.b64encode(target.getvalue()).decode("ascii"),
         "revised_prompt": f"safe {color}",
@@ -72,7 +72,7 @@ def project(tmp_path):
 
     def services(transport):
         provider = OpenAIImageProvider(
-            OpenAIImageSettings.from_mapping({"model": "gpt-image-fixture", "quality": "low"}),
+            OpenAIImageSettings.from_mapping({"model": "gpt-image-2", "quality": "low"}),
             transport=transport, environment={"OPENAI_API_KEY": "sk-never-persist"},
         )
         return ImageGenerationService(ResultPublicationService(index, store), coordinator,
@@ -84,7 +84,7 @@ def project(tmp_path):
 
 def generate(project, service, *, force=False):
     _, _, _, _, _, coordinator, prompt, _ = project
-    submission = service.enqueue(prompt.id, width=1024, height=1024, force=force)
+    submission = service.enqueue(prompt.id, width=1024, height=1024, format="WEBP", force=force)
     claim = coordinator.claim_next("d027-test")
     return service.run(claim), claim
 
@@ -102,11 +102,15 @@ def test_real_adapter_result_is_exportable_and_variants_remain_selectable(projec
     assert {item.artifact_id for item in artifacts.images.history(prompt.inputs.scene_id)} == {
         first.artifact_id, second.artifact_id,
     }
-    assert store.read_artifact(next(m.storage_key for m in store.list_artifacts()
-                                    if m.artifact_id == first.artifact_id)).startswith(b"\x89PNG")
+    retained = store.read_artifact(next(m.storage_key for m in store.list_artifacts()
+                                        if m.artifact_id == first.artifact_id))
+    assert retained[:4] == b"RIFF" and retained[8:12] == b"WEBP"
     manifest = next(m for m in store.list_artifacts() if m.artifact_id == first.artifact_id)
     evidence = manifest.metadata["image_generation"]
     assert evidence["provider"]["provider"] == "openai"
+    assert evidence["provider"]["model"] == "gpt-image-2"
+    image = artifacts.images.image(first.artifact_id)
+    assert image.format == "WEBP" and image.source_name == "generated-image.webp"
     assert evidence["provider"]["settings"]["quality"] == "low"
     assert evidence["result"] == {"created": 123, "revisedPrompt": "safe red",
                                   "usage": {"total_tokens": 17}}
@@ -125,7 +129,7 @@ def test_timeout_or_corrupt_output_cannot_replace_valid_selected_variant(project
     selected = initial_service.select(valid.artifact_id, expected_selection_id=None)
     before = store.list_artifacts()
     failing = services(Transport(failure))
-    submission = failing.enqueue(prompt.id, width=1024, height=1024, force=True)
+    submission = failing.enqueue(prompt.id, width=1024, height=1024, format="WEBP", force=True)
     claim = coordinator.claim_next("d027-test")
     with pytest.raises((OpenAIImageTransportError, RuntimeError)):
         failing.run(claim)
@@ -144,7 +148,7 @@ def test_cancellation_during_remote_call_discards_result_and_preserves_selection
     before = store.list_artifacts()
     transport = Transport(image_response("yellow"))
     service = services(transport)
-    submission = service.enqueue(prompt.id, width=1024, height=1024, force=True)
+    submission = service.enqueue(prompt.id, width=1024, height=1024, format="WEBP", force=True)
     claim = coordinator.claim_next("d027-test")
     transport.during = lambda: coordinator.cancel(claim.id)
     with pytest.raises(ValueError):

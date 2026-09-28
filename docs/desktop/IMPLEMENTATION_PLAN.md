@@ -436,7 +436,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M7 — Desktop editor | Project/section/audio/scene panels and Timeline Lite | D020, D021, D022, D023 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
-| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061 |
+| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062 |
 | M11 — Product durability and optimization | History, safe updates, schema migration and measured rendering improvements | D033, D034, D036, D037, D042, D043, D047 |
 | M12 — Optional integrations and output expansion | API, grounded sources, approvals, publishing and additional media | D035, D048, D049, D050, D051, D052, D053, D054, D055, D056 |
 
@@ -1355,6 +1355,20 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** One-command source launch after local setup; process overrides win; missing default file is allowed; missing explicit file fails clearly; no secrets enter tracked files or provider identity.
 - **Test strategy:** Focused offline loader, composition, launcher and Visuals tests; full suite; explicit manual one-command GUI check with locally supplied credentials.
 - **Implementation evidence:** [D061 configuration guide](ENVIRONMENT_CONFIGURATION.md) records setup and precedence. Offline and manual validation status is reported with the implementation branch.
+
+### D062 — Selectable image generators
+
+- **Status:** Partial — offline implementation and fake-SDK tests; credentialed GPT Image 2 GUI smoke remains intentionally unrun.
+- **Milestone:** M10
+- **Priority:** P1
+- **Goal:** Let Visuals select between managed local Stable Diffusion 1.5 and OpenAI GPT Image 2 through one provider-neutral generation and publication path.
+- **Scope:** Provider/model catalog, async generator selection, GPT Image 2 SDK adapter, WebP retention and D060 source-size integration.
+- **Out of scope:** Image editing, automatic fallback, additional models, paid API execution in automated tests, and final-resolution changes.
+- **Dependencies:** D017, D027, D040, D057, D059, D060, D061.
+- **Main code areas:** Image contracts/provider, desktop composition and Visuals panel, retained image format support, focused offline tests and explicit manual smoke.
+- **Acceptance criteria:** Configured providers coexist; dimensions and seed controls follow the selected profile; generation stays off the GUI thread; cache identity and artifact provenance distinguish provider/model; WebP remains usable by preview, timeline and the existing upscaler.
+- **Test strategy:** Deterministic fake transport/provider tests for settings, validation, SDK request mapping, retries, WebP, catalog, GUI controls, asynchronous publication and D060 compatibility. Credentialed GPT Image 2 GUI acceptance is a separate explicit paid smoke.
+- **Implementation evidence:** [D062 selectable image generators](D062_SELECTABLE_IMAGE_GENERATORS.md) records the catalog profiles, WebP pipeline, offline evidence and manual smoke procedure. Do not mark Completed without credentialed GPT Image 2 GUI smoke.
 
 ## Backlog provenance and deferred scope
 

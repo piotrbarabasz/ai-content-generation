@@ -20,6 +20,19 @@ def test_exact_limits_and_progressive_jpeg_decode():
     assert measured == {"format": "JPEG", "width": 12, "height": 8, "mode": "RGB", "orientation": 1}
 
 
+def test_webp_is_fully_decoded_but_corrupt_or_animated_webp_is_rejected():
+    payload = fixture("WEBP")
+    measured = decode_image(payload, ImageLimits())
+    assert measured["format"] == "WEBP" and (measured["width"], measured["height"]) == (12, 8)
+    with pytest.raises(ValueError):
+        decode_image(b"RIFF" + b"\x00" * 20 + b"WEBP", ImageLimits())
+    animated = io.BytesIO()
+    first, second = Image.new("RGB", (12, 8), "red"), Image.new("RGB", (12, 8), "blue")
+    first.save(animated, format="WEBP", save_all=True, append_images=[second], duration=30, loop=0)
+    with pytest.raises(ValueError):
+        decode_image(animated.getvalue(), ImageLimits())
+
+
 def test_oversized_header_is_rejected_before_pixel_loading(monkeypatch):
     payload = fixture()
     def forbidden(*args, **kwargs):

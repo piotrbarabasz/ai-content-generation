@@ -69,7 +69,7 @@ class ProjectSceneImages:
         metadata = {"version": 1, "project_id": self.project_id, "acceptance_id": acceptance_id,
                     "scene_id": scene_id, "section_revision_id": scene.revision_id,
                     "source_name": path.name, "provenance": "imported", **measured}
-        extension = ".png" if measured["format"] == "PNG" else ".jpg"
+        extension = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}[measured["format"]]
         manifest = self._publish("imported-image" + extension, payload, "scene_image", new_id("image_import"),
                                  {"scene_id": scene_id, "scene_image": metadata})
         return SceneImage.from_manifest(manifest)

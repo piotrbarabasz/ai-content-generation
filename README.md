@@ -37,6 +37,11 @@ project and runs the test suite using the active Python. Setup does not install
 Git hooks. CI performs checkout, Python setup, editable installation and pytest.
 Default tests use mocks/fakes and require no provider credentials, GPU or models.
 
+The Visuals tab can offer the configured local Stable Diffusion generator and
+OpenAI GPT Image 2. GPT Image 2 uses `quality=low` with 1280×720 Landscape and
+720×1280 Portrait source images; its key is read from `OPENAI_API_KEY`. See the
+[environment configuration guide](docs/desktop/ENVIRONMENT_CONFIGURATION.md).
+
 ## Optional API adapter
 
 The existing HTTP entrypoint is `app.api.main:app`. FastAPI remains available for

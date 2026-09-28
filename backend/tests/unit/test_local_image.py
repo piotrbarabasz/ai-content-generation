@@ -137,7 +137,7 @@ def test_provider_timeout_reports_last_worker_phase(tmp_path, monkeypatch):
 def test_factory_and_composition_keep_openai_and_absent_local_independent(tmp_path):
     assert compose_installed_image(environment={}) is None
     assert compose_installed_image(environment={
-        "AICS_IMAGE_PROVIDER": "openai", "AICS_OPENAI_IMAGE_MODEL": "gpt-image-1",
+        "AICS_IMAGE_PROVIDER": "openai", "AICS_OPENAI_IMAGE_MODEL": "gpt-image-2",
     }).capabilities().provider == "openai"
     provider = compose_installed_image(environment={
         "AICS_IMAGE_PROVIDER": "local", "AICS_LOCAL_IMAGE_ROOT": str(tmp_path),

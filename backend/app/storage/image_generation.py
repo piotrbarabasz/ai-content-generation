@@ -99,7 +99,7 @@ class ProjectImageGeneration:
             raise ValueError("Image publication section differs from its pinned prompt.")
         image = {"version": 1, "project_id": self.index.project_id, "acceptance_id": prepared["acceptance_id"],
                  "scene_id": prepared["scene_id"], "section_revision_id": prepared["section_revision_id"],
-                 "source_name": "generated-image." + ("png" if result.format == "PNG" else "jpg"),
+                 "source_name": "generated-image." + {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[result.format],
                  "provenance": "generated", **measured}
         metadata = {"artifact_type": "scene_image", "project_id": self.index.project_id,
                     "scene_id": prepared["scene_id"], "module_name": "desktop_image_generation", "scene_image": image,
