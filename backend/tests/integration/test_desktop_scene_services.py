@@ -70,6 +70,24 @@ def setup_project(path):
     return session, section, services, prompt_provider, image_provider
 
 
+def test_missing_llm_disables_generation_but_keeps_manual_save(qt, tmp_path):
+    session, section, _, _, _ = setup_project(tmp_path / "project")
+    panel = ScenePanel()
+    try:
+        services = compose_scenes(session, prompt_provider=None)
+        panel.bind(services)
+        panel.select_section(section)
+        assert not panel.buttons["Regenerate prompt"].isEnabled()
+        assert panel.buttons["Regenerate prompt"].toolTip() == "LLM provider is not configured."
+        panel.prompt.setPlainText("Updated manual visual prompt")
+        assert panel.buttons["Save prompt"].isEnabled()
+        QTest.mouseClick(panel.buttons["Save prompt"], Qt.LeftButton)
+        assert panel.current.prompt == "Updated manual visual prompt"
+    finally:
+        panel.close()
+        session.close()
+
+
 def test_project_visual_context_unlocks_first_prompts_and_retains_lineage(qt, tmp_path):
     root = tmp_path / "project"
     session = ProjectSession.create(root, name="Visual context", repository_factory=ProjectRepository)

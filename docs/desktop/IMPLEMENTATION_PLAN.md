@@ -436,7 +436,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M7 — Desktop editor | Project/section/audio/scene panels and Timeline Lite | D020, D021, D022, D023 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
-| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057 |
+| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061 |
 | M11 — Product durability and optimization | History, safe updates, schema migration and measured rendering improvements | D033, D034, D036, D037, D042, D043, D047 |
 | M12 — Optional integrations and output expansion | API, grounded sources, approvals, publishing and additional media | D035, D048, D049, D050, D051, D052, D053, D054, D055, D056 |
 
@@ -1342,12 +1342,27 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Offline provider/runtime compatibility, preset mapping, cache, exact dimensions, legacy lineage, failure/cancellation, GUI and timeline tests; explicit real GPU and interactive project acceptance.
 - **Implementation evidence:** [D060 image resolution presets](D060_IMAGE_RESOLUTION_PRESETS.md) records runtime profiles, measured GPU results and the remaining on-screen visual review gap.
 
+### D061 — Development environment configuration bootstrap
+
+- **Status:** Partial — offline implementation complete; credentialed GUI acceptance remains.
+- **Milestone:** M10
+- **Priority:** P1
+- **Goal:** Centralize source-development provider/runtime configuration in an ignored root `.env` while preserving process-environment precedence and existing provider contracts.
+- **Scope:** Optional environment loading, source Chatterbox launcher path cleanup, an example file, and a narrow prompt-provider availability message.
+- **Out of scope:** Preferences UI, credential storage, automatic runtime installation, provider fallback, and provider redesign.
+- **Dependencies:** D026, D027, D029, D057, D059, D060.
+- **Main code areas:** Application environment loader, desktop entrypoint, source launcher, example configuration, Visuals availability, and offline tests.
+- **Acceptance criteria:** One-command source launch after local setup; process overrides win; missing default file is allowed; missing explicit file fails clearly; no secrets enter tracked files or provider identity.
+- **Test strategy:** Focused offline loader, composition, launcher and Visuals tests; full suite; explicit manual one-command GUI check with locally supplied credentials.
+- **Implementation evidence:** [D061 configuration guide](ENVIRONMENT_CONFIGURATION.md) records setup and precedence. Offline and manual validation status is reported with the implementation branch.
+
 ## Backlog provenance and deferred scope
 
-There are **60 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **61 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
-GUI follow-up; D059-D060 extend the optional local image workflow. None is
+GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
+development configuration bootstrap. None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |

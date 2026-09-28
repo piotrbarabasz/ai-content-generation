@@ -295,7 +295,10 @@ class ScenePanel(QWidget):
         self.save_context_button.setEnabled(context_available and self.context_dirty and not self.busy)
         self.prompt.setEnabled(ready)
         self.buttons["Save prompt"].setEnabled(ready and self.prompt_dirty and not self.context_dirty)
-        self.buttons["Regenerate prompt"].setEnabled(ready and not self.prompt_dirty and not self.context_dirty)
+        prompt_service = getattr(self.services, "prompts", None)
+        prompt_available = prompt_service is None or getattr(prompt_service, "provider", None) is not None
+        self.buttons["Regenerate prompt"].setEnabled(ready and prompt_available and not self.prompt_dirty and not self.context_dirty)
+        self.buttons["Regenerate prompt"].setToolTip("" if prompt_available else "LLM provider is not configured.")
         self.buttons["Regenerate prompt"].setText("Regenerate prompt" if ready and self.current.prompt_id else
                                                   "Generate prompt")
         self.buttons["Select prompt"].setEnabled(ready and not self.prompt_dirty and self.prompt_variants.count() > 0)
