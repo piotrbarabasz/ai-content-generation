@@ -130,3 +130,25 @@ python run_test_chatterbox.py
 The installer revalidates each cached artifact against the approved pins and performs
 its normal private health check before activating the new generation. The old runtime
 and model store are left intact.
+
+## Workflow modes and pipeline diagnostics
+
+The project editor starts in **Manual** mode, which keeps Script, Voice, Scenes,
+Visuals, Timeline, and Export as explicit user controlled steps. The mode selector
+can switch to **Automatic**, where Run / Resume validates the saved script and
+sequentially reuses current narration, accepted scene plans, timing, prompts, images,
+and final images before building the timeline. It never rewrites the script and
+stops at the first missing prerequisite or provider error. Stop requests cancellation
+and leaves already retained artifacts available for the next run.
+
+Automatic mode does not require one image provider for the project. Each current
+selected image is reused regardless of whether it came from Local Stable Diffusion,
+GPT Image 2, import, or an upscaled derivative; only missing images use the generator
+selected when the run starts. This makes resume idempotent and avoids paid image calls
+for valid existing images.
+
+**Diagnose pipeline** is read only in either mode. It inspects saved state without
+calling generation or rendering providers and reports stage readiness in the GUI.
+Concise `[AICS][PIPELINE]` logs include specific timeline candidate rejection reasons,
+using the same resolver as timeline compilation, so missing or stale media is visible
+without changing project state.

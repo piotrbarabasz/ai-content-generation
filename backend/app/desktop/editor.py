@@ -1,6 +1,9 @@
 """Section editor presentation; persistence and editing rules live in services."""
 
-from PySide6.QtCore import QThread, Signal, Qt
+import asyncio
+import logging
+
+from PySide6.QtCore import QThread, Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -8,7 +11,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.application.script_generation import ScriptGenerationService
+from app.application.automatic_workflow import (AutomaticWorkflow, AutomaticWorkflowBlocked,
+                                                 AutomaticWorkflowCanceled, AutomaticWorkflowConfig)
+from app.application.pipeline_diagnostics import PipelineDiagnostics
 from app.desktop.audio_panel import AudioPanel
+from app.desktop.pipeline_driver import DesktopPipelineDriver
 from app.desktop.scene_panel import ScenePanel
 from app.desktop.scene_planning_panel import ScenePlanningPanel
 from app.desktop.timeline_panel import TimelinePanel
@@ -42,7 +49,7 @@ class GenerationThread(QThread):
 
 class ProjectEditor(QMainWindow):
     def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
-                 preview_factory=None, regeneration_factory=None):
+                 preview_factory=None, regeneration_factory=None, workflow_mode="manual"):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
@@ -66,6 +73,12 @@ class ProjectEditor(QMainWindow):
         self.worker = None
         self.dirty = False
         self.loading = False
+        self.pipeline_diagnostics = PipelineDiagnostics()
+        self.automatic_busy = False
+        self.automatic_loop = None
+        self.automatic_task = None
+        self.automatic_workflow = None
+        self.automatic_driver = None
         self.setWindowTitle("AI Content Studio — Project editor")
         self.resize(1000, 720)
         root = QWidget()
@@ -82,6 +95,31 @@ class ProjectEditor(QMainWindow):
         self.buttons = {}
         self._button(project_bar, "Create project", lambda: self._choose_project(True))
         self._button(project_bar, "Open project", lambda: self._choose_project(False))
+
+        workflow_bar = QHBoxLayout()
+        workflow_bar.addWidget(QLabel("Workflow mode"))
+        self.workflow_mode = QComboBox()
+        self.workflow_mode.addItem("Manual", "manual")
+        self.workflow_mode.addItem("Automatic", "automatic")
+        mode = workflow_mode if workflow_mode in ("manual", "automatic") else "manual"
+        self.workflow_mode.setCurrentIndex(self.workflow_mode.findData(mode))
+        workflow_bar.addWidget(self.workflow_mode)
+        self.diagnose_button = QPushButton("Diagnose pipeline")
+        self.diagnose_button.clicked.connect(self.diagnose_pipeline)
+        workflow_bar.addWidget(self.diagnose_button)
+        self.auto_run_button = QPushButton("Run / Resume automatic workflow")
+        self.auto_run_button.clicked.connect(self.run_automatic_workflow)
+        workflow_bar.addWidget(self.auto_run_button)
+        self.auto_stop_button = QPushButton("Stop automatic workflow")
+        self.auto_stop_button.clicked.connect(self.stop_automatic_workflow)
+        workflow_bar.addWidget(self.auto_stop_button)
+        self.workflow_status = QLabel("Idle")
+        workflow_bar.addWidget(self.workflow_status, 1)
+        layout.addLayout(workflow_bar)
+        self.workflow_summary = QLabel("")
+        self.workflow_summary.setWordWrap(True)
+        layout.addWidget(self.workflow_summary)
+        self.workflow_mode.currentIndexChanged.connect(self._workflow_mode_changed)
         self.status = QLabel("Create or open a project." if provider else
                              "Create or open a project. Generation requires a configured provider.")
         self.status.setWordWrap(True)
@@ -173,6 +211,10 @@ class ProjectEditor(QMainWindow):
 
         for field in (self.title, self.role, self.text):
             field.setEnabled(False)
+        self.automatic_timer = QTimer(self)
+        self.automatic_timer.setInterval(10)
+        self.automatic_timer.timeout.connect(self._automatic_tick)
+        self._update_workflow_controls()
 
     def _button(self, layout, label, callback):
         button = QPushButton(label)
@@ -228,6 +270,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.automatic_busy:
+            raise ValueError("Wait for the automatic workflow to finish or stop.")
         if self.regeneration.busy:
             raise ValueError("Wait for regeneration cleanup.")
         if self.worker is not None:
@@ -252,7 +296,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
+            if self.automatic_busy or self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -306,6 +350,7 @@ class ProjectEditor(QMainWindow):
         self._select(row)
         self._bind_regeneration()
         self.status.setText("Saved.")
+        self._update_workflow_controls()
 
     def _bind_regeneration(self):
         if self.regeneration_factory and self.session and not self.regeneration.busy:
@@ -346,7 +391,7 @@ class ProjectEditor(QMainWindow):
     def _select(self, row):
         if self.loading:
             return
-        if (self.dirty or self.worker is not None or self.audio.busy or self.preview.busy or self.visuals.busy
+        if (self.automatic_busy or self.dirty or self.worker is not None or self.audio.busy or self.preview.busy or self.visuals.busy
                 or self.regeneration.busy or self.visuals.prompt_dirty):
             self.sections.blockSignals(True)
             ids = [s.section_id for s in self.snapshot.sections]
@@ -485,8 +530,134 @@ class ProjectEditor(QMainWindow):
             self._generated_selection = False
             self._refresh()
 
+    def _workflow_mode_changed(self, *_):
+        if self.automatic_busy:
+            return
+        mode = self.workflow_mode.currentData()
+        self.workflow_status.setText("Manual mode" if mode == "manual" else "Automatic mode is ready; start it explicitly.")
+        self._update_workflow_controls()
+
+    def _update_workflow_controls(self):
+        busy = self.automatic_busy
+        has_project = self.session is not None
+        self.workflow_mode.setEnabled(not busy)
+        self.diagnose_button.setEnabled(has_project and not busy)
+        self.auto_run_button.setEnabled(has_project and not busy and self.workflow_mode.currentData() == "automatic")
+        self.auto_stop_button.setEnabled(busy and self.automatic_workflow is not None)
+        self.buttons["Create project"].setEnabled(not busy)
+        self.buttons["Open project"].setEnabled(not busy)
+        self.section_choice.setEnabled(not busy and has_project)
+        self.project_name.setEnabled(not busy)
+        self.language.setEnabled(not busy)
+        self.tabs.setEnabled(not busy)
+        self.final_render_button.setEnabled(
+            not busy and self.regeneration.outputs.findData("project:video_render") >= 0
+        )
+
+    def diagnose_pipeline(self):
+        if self.session is None:
+            self.workflow_summary.setText("Open a project to diagnose its pipeline.")
+            return None
+        try:
+            report = self.pipeline_diagnostics.inspect_project(
+                self.session, audio=self.audio, scenes=self.visuals.services,
+                timeline=self.timeline.services, unsaved_draft=self.dirty,
+                audio_choice=self.audio.voices.currentData())
+        except Exception:
+            logging.getLogger("aics.pipeline").exception("[AICS][PIPELINE][DIAGNOSE][FAIL] unexpected_error")
+            self.workflow_summary.setText("Pipeline diagnosis failed unexpectedly. See console for details.")
+            return None
+        summary = report.summary
+        if report.timeline_rejected:
+            summary += f"\n{report.timeline_rejected} timeline candidate(s) rejected. See console for exact reasons."
+        self.workflow_summary.setText(summary)
+        self.workflow_status.setText("Diagnostics complete; no media was generated.")
+        return report
+
+    def run_automatic_workflow(self):
+        if self.automatic_busy or self.workflow_mode.currentData() != "automatic":
+            return
+        try:
+            self._ready()
+            if self.audio.services is None:
+                raise ValueError("Audio services are not configured for this project.")
+            if self.visuals.services is None:
+                raise ValueError("Scene and visual services are not configured for this project.")
+            if self.timeline.services is None:
+                raise ValueError("Timeline services are not configured for this project.")
+            choice = self.audio.voices.currentData()
+            if choice is None:
+                raise ValueError("Choose a TTS voice before starting the automatic workflow.")
+            generator_id = self.visuals.image_generator.currentData()
+            if self.visuals.image_generator_options and generator_id is None:
+                raise ValueError("Choose an image generator before starting the automatic workflow.")
+            config = AutomaticWorkflowConfig(
+                choice, generator_id, self.visuals.orientation.currentData(),
+                self.visuals.resolution.currentData(), "original")
+            self.automatic_driver = DesktopPipelineDriver(self, config)
+            self.automatic_workflow = AutomaticWorkflow(self.automatic_driver)
+            self.automatic_loop = asyncio.new_event_loop()
+            self.automatic_task = self.automatic_loop.create_task(self.automatic_workflow.run(config))
+            self.automatic_busy = True
+            self.workflow_status.setText("Automatic workflow started; existing valid artifacts will be reused.")
+            self._update_workflow_controls()
+            self.automatic_timer.start()
+        except (ValueError, RuntimeError) as exc:
+            self.workflow_status.setText(str(exc))
+
+    def stop_automatic_workflow(self):
+        if not self.automatic_busy or self.automatic_workflow is None:
+            return
+        try:
+            self.automatic_workflow.cancel()
+            self.workflow_status.setText("Cancellation requested; waiting for the current provider operation to stop.")
+            self._update_workflow_controls()
+        except Exception:
+            logging.getLogger("aics.pipeline").exception("[AICS][PIPELINE][AUTO][CANCEL] cancel_error")
+            self.workflow_status.setText("Cancellation requested; provider cleanup is still pending.")
+
+    def _automatic_tick(self):
+        loop, task = self.automatic_loop, self.automatic_task
+        if loop is None or task is None:
+            return
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+        if not task.done():
+            return
+        self.automatic_timer.stop()
+        try:
+            result = task.result()
+            self.workflow_status.setText(
+                f"Automatic workflow complete. Timeline ready: {result.timeline_clips} clips.")
+            self.workflow_summary.setText(
+                f"Sections: {result.sections}\nScenes: {result.scenes}\n"
+                f"Timeline clips: {result.timeline_clips}\nDuration: {result.duration}\n"
+                f"Reused stages: {result.skipped}")
+            if self.timeline.services:
+                self.timeline.refresh()
+                self.preview.timeline_changed(self.timeline.edit)
+            self._bind_regeneration()
+        except AutomaticWorkflowBlocked as exc:
+            self.workflow_status.setText(f"Automatic workflow stopped at {exc.stage}.")
+            suffix = f"\nSection: {exc.section}" if exc.section else ""
+            suffix += f"\nScene: {exc.scene}" if exc.scene else ""
+            self.workflow_summary.setText(f"{exc.reason}{suffix}\nSee console for diagnostics.")
+        except AutomaticWorkflowCanceled:
+            self.workflow_status.setText("Automatic workflow canceled. Completed artifacts were retained.")
+            self.workflow_summary.setText("Click Run / Resume automatic workflow to continue from retained state.")
+        except Exception as exc:
+            logging.getLogger("aics.pipeline").exception("[AICS][PIPELINE][AUTO][FAIL] unexpected_error")
+            self.workflow_status.setText("Automatic workflow stopped after an unexpected error.")
+            self.workflow_summary.setText(f"{type(exc).__name__}: {str(exc)[:240]}\nSee console for diagnostics.")
+        finally:
+            self.automatic_busy = False
+            self._update_workflow_controls()
+            loop.close()
+            self.automatic_loop = self.automatic_task = None
+            self.automatic_workflow = self.automatic_driver = None
+
     def closeEvent(self, event):
-        if self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
+        if self.automatic_busy or self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return

@@ -274,6 +274,22 @@ def test_stage_tabs_own_existing_workflow_panels(editor):
     assert editor.findChildren(QDockWidget) == []
 
 
+def test_workflow_mode_defaults_to_manual_and_diagnostics_are_available_in_both_modes(editor):
+    assert editor.workflow_mode.currentData() == "manual"
+    assert not editor.auto_run_button.isEnabled()
+    assert editor.diagnose_button.isEnabled()
+    editor.workflow_mode.setCurrentIndex(editor.workflow_mode.findData("automatic"))
+    assert editor.auto_run_button.isEnabled()
+    assert editor.diagnose_button.isEnabled()
+    report = editor.diagnose_pipeline()
+    assert report.section_count == 0
+    assert "Script: BLOCKED" in editor.workflow_summary.text()
+    assert editor.session.active_script.sections == ()
+    editor.workflow_mode.setCurrentIndex(editor.workflow_mode.findData("manual"))
+    assert not editor.auto_run_button.isEnabled()
+    assert editor.diagnose_button.isEnabled()
+
+
 def test_shared_section_navigation_updates_all_stages_and_blocks_dirty_change(editor):
     append(editor, "Opening", "First")
     append(editor, "Body", "Second")

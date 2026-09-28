@@ -54,6 +54,8 @@ class ProjectTimelineMedia:
         if selection is None:
             raise ValueError("Timeline scene has no selected image.")
         image = self.images.image(selection.artifact_id)
+        if (image.acceptance_id, image.section_revision_id) != (accepted.id, section.id):
+            raise ValueError("Selected image belongs to a historical accepted scene revision.")
         return TimelineMedia(self.plans.project_id, section.section_id, section.id, source.scene_id,
                              accepted.plan.id, accepted.id, timing.id, timing.quality, selection.id, image,
                              AudioSpan(audio.artifact_id, audio.checksum, source.audio_variant, audio.sample_rate,

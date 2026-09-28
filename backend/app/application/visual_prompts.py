@@ -39,6 +39,10 @@ class VisualPromptService:
         return revision
 
     def generate(self, acceptance_id, scene_id, brief_revision_id, style_revision_id):
+        prepared = self.prepare_generation(acceptance_id, scene_id, brief_revision_id, style_revision_id)
+        return self.retain_generated(prepared, self.generate_payload(prepared))
+
+    def prepare_generation(self, acceptance_id, scene_id, brief_revision_id, style_revision_id):
         if self.provider is None:
             raise ValueError("LLM provider is not configured.")
         if not json.loads(self.identity_json):
@@ -46,11 +50,30 @@ class VisualPromptService:
         inputs = self.prompts.snapshot(acceptance_id, scene_id, brief_revision_id, style_revision_id)
         selected = self.prompts.selected(scene_id)
         request = prompt_request(inputs, json.loads(self.identity_json))
-        payload = self.provider.generate_structured(canonical_json({"task": "visual_prompt", "inputs": inputs.payload}), visual_prompt_schema())
-        revision = VisualPromptRevision(new_id("visual_prompt_revision"), validate_visual_prompt(payload), inputs, request,
-                                        Provenance.GENERATED, selected.revision_id if selected else None)
+        return (inputs, request, selected, canonical_json({"task": "visual_prompt", "inputs": inputs.payload}),
+                visual_prompt_schema())
+
+    def generate_payload(self, prepared):
+        if self.provider is None:
+            raise ValueError("LLM provider is not configured.")
+        _, _, _, prompt, schema = prepared
+        return self.provider.generate_structured(prompt, schema)
+
+    def retain_generated(self, prepared, payload):
+        inputs, request, selected, _, _ = prepared
+        revision = VisualPromptRevision(new_id("visual_prompt_revision"), validate_visual_prompt(payload), inputs,
+                                        request, Provenance.GENERATED,
+                                        selected.revision_id if selected else None)
         self.prompts.save_revision(revision)
-        return revision  # A late result is retained; it never changes active selection.
+        return revision  # Late results are retained; they never change active selection.
+
+    def validate_prepared_current(self, prepared):
+        inputs, _, selected, _, _ = prepared
+        self.prompts.snapshot(inputs.acceptance_id, inputs.scene_id,
+                              inputs.brief_revision_id, inputs.style_revision_id)
+        current = self.prompts.selected(inputs.scene_id)
+        if (current.id if current else None) != (selected.id if selected else None):
+            raise ValueError("Visual prompt selection changed during generation; stale result was retained but not selected.")
 
     def create_manual(self, acceptance_id, scene_id, brief_revision_id, style_revision_id, text):
         inputs = self.prompts.snapshot(acceptance_id, scene_id, brief_revision_id, style_revision_id)

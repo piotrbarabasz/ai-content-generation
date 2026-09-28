@@ -2,6 +2,8 @@
 
 from functools import partial
 import json
+import logging
+import os
 from pathlib import Path
 import sys
 
@@ -26,6 +28,14 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     from app.environment import load_application_environment
 
     load_application_environment()
+    from app.application.pipeline_diagnostics import configure_pipeline_logging
+
+    configure_pipeline_logging(os.environ.get("AICS_WORKFLOW_LOG_LEVEL", "INFO"))
+    workflow_mode = os.environ.get("AICS_WORKFLOW_MODE", "manual").strip().lower()
+    if workflow_mode not in {"manual", "automatic"}:
+        logging.getLogger("aics.pipeline").warning(
+            '[AICS][PIPELINE][CONFIG][WARN] invalid_workflow_mode=%r; using manual', workflow_mode)
+        workflow_mode = "manual"
     smoke_report = None
     if "--release-smoke" in sys.argv:
         position = sys.argv.index("--release-smoke")
@@ -72,7 +82,8 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     window = ProjectEditor(LocalProjects(), provider=llm_provider, audio_factory=audio_factory or compose_installed_audio,
                            scene_factory=scene_factory, timeline_factory=timeline_factory or compose_timeline,
                            preview_factory=preview_factory or compose_preview,
-                           regeneration_factory=regeneration_factory or compose_regeneration)
+                           regeneration_factory=regeneration_factory or compose_regeneration,
+                           workflow_mode=workflow_mode)
     window.show()
     if smoke_report is not None:
         from app.desktop.deployment import UserDataPaths, installed_root, media_executables

@@ -129,6 +129,30 @@ def test_missing_image_is_not_replaced_by_an_unselected_candidate(setup, prepare
         compiler.compile(section.project_id, [TimelineSceneInput(timing.id, scene.id, "original")])
 
 
+def test_timeline_candidate_diagnostics_share_resolver_and_preserve_rejection_reason(setup, prepared):
+    from app.desktop.timeline_composition import compose_timeline
+
+    section, _, _, scenes, _, _, _, _, _, _, _ = prepared
+    accepted = scenes.accept(scenes.suggest(section).id, reviewer_id="editor")
+    raw = SectionTempoArtifacts(setup[2], setup[3]).selected(section, "original")
+    timing = scenes.retime(accepted.id, section, raw)
+    timeline = compose_timeline(setup[0])
+    current = timeline.current_candidate_diagnostics()
+    current_for_new = [item for item in current if item.timing_id == timing.id]
+    assert len(current_for_new) == len(accepted.plan.scenes)
+    assert all(not item.accepted for item in current_for_new)
+    assert all(item.reason == "Timeline scene has no selected image." for item in current_for_new)
+
+
+def test_timeline_diagnostics_report_current_valid_candidates(setup, prepared):
+    from app.desktop.timeline_composition import compose_timeline
+
+    timeline = compose_timeline(setup[0])
+    candidates = timeline.current_candidate_diagnostics()
+    assert candidates
+    assert all(item.accepted and item.reason is None and item.media is not None for item in candidates)
+
+
 @pytest.mark.parametrize("kind", ["timing", "scene", "variant", "project", "section_edit"])
 def test_missing_foreign_and_stale_inputs_fail_without_writes(setup, prepared, kind):
     section, _, _, _, _, _, _, _, _, compiler, inputs = prepared
