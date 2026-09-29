@@ -21,6 +21,7 @@ from app.desktop.scene_planning_panel import ScenePlanningPanel
 from app.desktop.timeline_panel import TimelinePanel
 from app.desktop.preview_panel import PreviewPanel
 from app.desktop.regeneration_panel import RegenerationPanel
+from app.desktop.video_plan_panel import VideoPlanPanel
 
 
 class GenerationThread(QThread):
@@ -135,6 +136,9 @@ class ProjectEditor(QMainWindow):
 
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, 1)
+
+        self.video_plan = VideoPlanPanel(provider, self)
+        self.tabs.addTab(self.video_plan, "Plan")
 
         self.script_tab = QWidget()
         script_layout = QVBoxLayout(self.script_tab)
@@ -315,6 +319,7 @@ class ProjectEditor(QMainWindow):
                 self.preview.stop()
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
+            self.video_plan.bind(candidate)
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
