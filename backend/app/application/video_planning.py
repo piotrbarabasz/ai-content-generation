@@ -19,6 +19,25 @@ def _allocate(total, weights):
     return floors
 
 
+def _planner_prompt(fmt, target_duration_seconds, topic):
+    if fmt is VideoFormat.SOCIAL:
+        guidance = (
+            "Create 4–8 flat groups. Every group must contain exactly one section; "
+            "do not create nested or multiple sections inside a Social group. The first group "
+            "must be a hook, opening, or cold_open. Include at least one development, body, "
+            "explanation, payoff, or fact group. Use concise beats suitable for roughly 4–8 "
+            "second visual pacing. Return content matching the supplied strict schema."
+        )
+    else:
+        guidance = (
+            "Start with a cold_open, include an introduction, create 5–7 chapter groups, "
+            "and include a conclusion; chapters may contain multiple planned sections. "
+            "Shape this as a target long-form 9 to 11 minute explanatory structure. "
+            "Return content matching the supplied strict schema."
+        )
+    return f"Create a {fmt.value} video plan of {target_duration_seconds} seconds about: {topic}\n{guidance}"
+
+
 class VideoPlanningService:
     def __init__(self, plans, provider):
         self.plans, self.provider = plans, provider
@@ -33,7 +52,7 @@ class VideoPlanningService:
         if type(topic) is not str or not topic.strip():
             raise ValueError("Topic is required.")
         semantic = self.provider.generate_structured(
-            f"Create a {fmt.value} video plan of {target_duration_seconds} seconds about: {topic}", video_plan_schema(fmt))
+            _planner_prompt(fmt, target_duration_seconds, topic), video_plan_schema(fmt))
         semantic = validate_video_plan_output(semantic, fmt)
         group_durations = _allocate(target_duration_seconds, [g["weight"] for g in semantic["groups"]])
         groups = []

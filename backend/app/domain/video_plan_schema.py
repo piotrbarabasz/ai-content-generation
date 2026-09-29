@@ -14,7 +14,9 @@ def video_plan_schema(video_format=None):
              "required": ["kind", "title", "purpose", "weight", "sections"],
              "properties": {"kind": text, "title": text, "purpose": text,
                             "weight": {"type": "integer", "minimum": 1},
-                            "sections": {"type": "array", "minItems": 1, "items": section}}}
+                            "sections": {"type": "array", "minItems": 1,
+                                         **({"maxItems": 1} if fmt is VideoFormat.SOCIAL else {}),
+                                         "items": section}}}
     return {"$id": VIDEO_PLAN_SCHEMA_ID, "type": "object", "additionalProperties": False,
             "required": ["working_title", "film_brief", "visual_style", "groups"],
             "properties": {"working_title": text, "film_brief": text, "visual_style": text,
