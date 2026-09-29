@@ -23,6 +23,8 @@ class PlanGroupThread(QThread):
 
 
 class VideoPlanPanel(QWidget):
+    plan_changed = Signal(object)
+
     def __init__(self, provider=None, parent=None):
         super().__init__(parent)
         self.provider = provider
@@ -285,6 +287,7 @@ class VideoPlanPanel(QWidget):
         if self.plan is None:
             self.details.setText("No Video Plan is selected. Existing project workflows remain available.")
             self.outline.clear()
+            self.plan_changed.emit(None)
             return
         plan = self.plan
         self.format.setCurrentIndex(self.format.findData(plan.format.value))
@@ -303,6 +306,7 @@ class VideoPlanPanel(QWidget):
             for section in group.sections:
                 lines.append(f"  • {section.title} — {section.purpose} ({section.target_duration_seconds}s, ~{section.target_word_count} words, ~{section.target_scene_count} visuals)")
         self.outline.setPlainText("\n".join(lines))
+        self.plan_changed.emit(plan)
 
 
 class _ContextPort:
