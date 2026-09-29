@@ -2,13 +2,15 @@
 
 import asyncio
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, QUrl
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QVBoxLayout, QWidget)
 
 
 class AudioPanel(QWidget):
+    readiness_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.services = self.section = self.language = None
@@ -95,6 +97,7 @@ class AudioPanel(QWidget):
         self._refresh_references()
         self._refresh_voices()
         self._enable()
+        self.readiness_changed.emit()
 
     def _refresh_voices(self):
         self.voices.clear()
@@ -218,6 +221,8 @@ class AudioPanel(QWidget):
             self.loop.close()
             self.loop = None
             self._enable()
+            if self.kind == "generation":
+                self.readiness_changed.emit()
 
     def cancel(self):
         if self.busy:

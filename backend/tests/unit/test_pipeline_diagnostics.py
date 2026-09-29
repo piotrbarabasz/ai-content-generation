@@ -46,3 +46,13 @@ def test_plan_summary_is_optional_and_reports_group_progress_without_blocking_le
     assert "Plan: STANDARD · 10:00 · READY" in report.summary
     assert "Script groups: 2/3" in report.summary
     assert not report.ready_for_timeline
+
+
+def test_final_export_readiness_comes_from_selected_published_render():
+    session = SimpleNamespace(active_script=SimpleNamespace(id="script-1", sections=()))
+    no_render = PipelineDiagnostics().inspect_project(
+        session, video_render=SimpleNamespace(selected=lambda: None))
+    selected = PipelineDiagnostics().inspect_project(
+        session, video_render=SimpleNamespace(selected=lambda: SimpleNamespace(artifact_id="published")))
+    assert no_render.final_render_ready is False
+    assert selected.final_render_ready is True

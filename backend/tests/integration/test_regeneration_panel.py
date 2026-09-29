@@ -31,8 +31,9 @@ def test_editor_guards_drafts_and_busy_project_lifetime(tmp_path):
         window.discard()
         window.regeneration.start()
         assert window.regeneration.busy
-        assert all(not window.tabs.isTabEnabled(index) for index in range(5))
-        assert window.tabs.isTabEnabled(5) and window.regeneration.isEnabled()
+        assert all(not window.tabs.isTabEnabled(index) for index in range(3))
+        assert window.tabs.isTabEnabled(3) and window.tabs.isTabEnabled(4)
+        assert window.regeneration.isEnabled()
         assert not window.close()
         old_session = window.session
         window.load_project(tmp_path / "second", create=True)

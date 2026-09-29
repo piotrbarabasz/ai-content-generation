@@ -80,6 +80,29 @@ class ProjectVideoRender:
             raise ValueError("Render publication requires the owning render-aware index/store.")
         self.index, self.store, self.media = index, store, index.media
 
+    def selected(self, expected_artifact_id=None, *, verify_bytes=False):
+        """Resolve and verify only the immutable render selected for this project."""
+        artifact_id = self.index.selected().get("project:video_render")
+        if artifact_id is None or (expected_artifact_id is not None and artifact_id != expected_artifact_id):
+            return None
+        manifest = next((item for item in self.store.list_artifacts()
+                         if item.artifact_id == artifact_id and item.artifact_type == "video_render"), None)
+        if manifest is None:
+            return None
+        evidence = manifest.metadata.get("render")
+        if (not isinstance(evidence, dict) or evidence.get("checksum") != manifest.checksum
+                or evidence.get("size_bytes") != manifest.size_bytes):
+            raise ValueError("Selected render bytes differ from their immutable publication evidence.")
+        path = self.store._artifact_path(manifest.storage_key)
+        if path.stat().st_size != manifest.size_bytes:
+            raise ValueError("Selected render size differs from its immutable publication evidence.")
+        if verify_bytes:
+            with self.store.open_artifact_id(artifact_id) as source:
+                measured_checksum = file_digest(source, "sha256").hexdigest()
+            if measured_checksum != manifest.checksum:
+                raise ValueError("Selected render checksum differs from its immutable publication evidence.")
+        return manifest
+
     def current(self, timeline):
         compiled = TimelineCompiler(self.media).compile(self.index.project_id, timeline_inputs(timeline),
                                                        timebase=timeline.timebase, fit_policy=timeline.fit_policy)

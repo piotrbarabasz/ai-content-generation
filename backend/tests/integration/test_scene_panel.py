@@ -336,7 +336,8 @@ def test_visual_context_draft_survives_navigation_and_blocks_project_loss(qt, tm
         widget.visuals.film_brief.setPlainText("Unsaved brief")
         assert widget.visuals.context_dirty
         widget.tabs.setCurrentWidget(widget.script_tab)
-        widget.tabs.setCurrentWidget(widget.visuals_tab)
+        widget.tabs.setCurrentIndex(2)
+        widget.storyboard_inspector.setCurrentIndex(2)
         widget.visuals.scenes.setCurrentRow(1)
         assert widget.visuals.film_brief.toPlainText() == "Unsaved brief"
         widget.load_project(tmp_path / "other", create=True)

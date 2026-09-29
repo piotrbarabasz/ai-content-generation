@@ -1,13 +1,13 @@
-"""Section editor presentation; persistence and editing rules live in services."""
+"""Project workspace coordinator; persistence and editing rules live in services."""
 
 import asyncio
 import logging
 
 from PySide6.QtCore import QThread, Signal, Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QFileDialog, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox,
+    QPushButton, QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget, QToolButton,
 )
 
 from app.application.script_generation import ScriptGenerationService
@@ -22,6 +22,11 @@ from app.desktop.timeline_panel import TimelinePanel
 from app.desktop.preview_panel import PreviewPanel
 from app.desktop.regeneration_panel import RegenerationPanel
 from app.desktop.video_plan_panel import VideoPlanPanel
+from app.desktop.project_header import ProjectHeader
+from app.desktop.project_outline import ProjectOutline
+from app.desktop.storyboard_panel import StoryboardPanel
+from app.desktop.export_panel import ExportPanel
+from app.desktop.script_panel import ScriptPanel
 
 
 class GenerationThread(QThread):
@@ -69,7 +74,9 @@ class ProjectEditor(QMainWindow):
         self.scene_plans = ScenePlanningPanel(self)
         self.scene_plans.plan_changed.connect(self._scene_plan_changed)
         self.visuals = ScenePanel(self)
-        self.visuals.media_changed.connect(lambda: self.preview.timeline_changed(self.timeline.edit))
+        self.visuals.media_changed.connect(self._visual_media_changed)
+        self.visuals.scene_selected.connect(self._visual_scene_selected)
+        self.audio.readiness_changed.connect(self._queue_diagnostics)
         self.session = self.snapshot = self.selected_id = None
         self.worker = None
         self.dirty = False
@@ -80,64 +87,43 @@ class ProjectEditor(QMainWindow):
         self.automatic_task = None
         self.automatic_workflow = None
         self.automatic_driver = None
-        self.setWindowTitle("AI Content Studio — Project editor")
-        self.resize(1000, 720)
+        self.setWindowTitle("AI Content Studio ? Project editor")
+        self.resize(1366, 768)
+        self.setMinimumSize(820, 580)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        project_bar = QHBoxLayout()
-        self.project_name = QLineEdit("My project")
-        self.language = QLineEdit("en")
-        project_bar.addWidget(QLabel("Project name"))
-        project_bar.addWidget(self.project_name)
-        project_bar.addWidget(QLabel("Language"))
-        project_bar.addWidget(self.language)
-        layout.addLayout(project_bar)
-        self.buttons = {}
-        self._button(project_bar, "Create project", lambda: self._choose_project(True))
-        self._button(project_bar, "Open project", lambda: self._choose_project(False))
-
-        workflow_bar = QHBoxLayout()
-        workflow_bar.addWidget(QLabel("Workflow mode"))
-        self.workflow_mode = QComboBox()
-        self.workflow_mode.addItem("Manual", "manual")
-        self.workflow_mode.addItem("Automatic", "automatic")
-        mode = workflow_mode if workflow_mode in ("manual", "automatic") else "manual"
-        self.workflow_mode.setCurrentIndex(self.workflow_mode.findData(mode))
-        workflow_bar.addWidget(self.workflow_mode)
-        self.diagnose_button = QPushButton("Diagnose pipeline")
+        self.header = ProjectHeader(provider is not None, workflow_mode, self)
+        layout.addWidget(self.header)
+        self.project_name, self.language = self.header.project_name, self.header.language
+        self.workflow_mode = self.header.workflow_mode
+        self.workflow_status, self.workflow_summary = self.header.status, self.header.summary
+        self.status = self.workflow_summary
+        self.buttons = {"Create project": self.header.create_button,
+                        "Open project": self.header.open_button}
+        self.header.create_button.clicked.connect(lambda: self._choose_project(True))
+        self.header.open_button.clicked.connect(lambda: self._choose_project(False))
+        self.diagnose_button = self.header.diagnose_button
         self.diagnose_button.clicked.connect(self.diagnose_pipeline)
-        workflow_bar.addWidget(self.diagnose_button)
-        self.auto_run_button = QPushButton("Run / Resume automatic workflow")
+        self.auto_run_button = self.header.run_button
         self.auto_run_button.clicked.connect(self.run_automatic_workflow)
-        workflow_bar.addWidget(self.auto_run_button)
-        self.auto_stop_button = QPushButton("Stop automatic workflow")
+        self.auto_stop_button = self.header.stop_button
         self.auto_stop_button.clicked.connect(self.stop_automatic_workflow)
-        workflow_bar.addWidget(self.auto_stop_button)
-        self.workflow_status = QLabel("Idle")
-        workflow_bar.addWidget(self.workflow_status, 1)
-        layout.addLayout(workflow_bar)
-        self.workflow_summary = QLabel("")
-        self.workflow_summary.setWordWrap(True)
-        layout.addWidget(self.workflow_summary)
         self.workflow_mode.currentIndexChanged.connect(self._workflow_mode_changed)
-        self.status = QLabel("Create or open a project." if provider else
-                             "Create or open a project. Generation requires a configured provider.")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
 
-        section_bar = QHBoxLayout()
-        section_bar.addWidget(QLabel("Narrative section"))
+        # Kept as a synchronized compatibility adapter for existing editing code.
         self.section_choice = QComboBox()
-        self.section_choice.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.section_choice.currentIndexChanged.connect(self._section_choice_changed)
-        section_bar.addWidget(self.section_choice, 1)
-        layout.addLayout(section_bar)
-
+        self.section_choice.hide()
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, 1)
+        self.outline = ProjectOutline(self)
+        self.outline.setMinimumWidth(190)
+        self.outline.setMaximumWidth(330)
+        self.outline.section_activated.connect(self._outline_section_activated)
+        self.outline.group_activated.connect(self._outline_group_activated)
 
         self.video_plan = VideoPlanPanel(provider, self)
+        self.video_plan.plan_changed.connect(self._plan_changed)
         self.tabs.addTab(self.video_plan, "Plan")
 
         self.script_tab = QWidget()
@@ -146,49 +132,38 @@ class ProjectEditor(QMainWindow):
         self.sections.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.sections.currentRowChanged.connect(self._select)
         script_layout.addWidget(self.sections)
-        form = QFormLayout()
-        self.title, self.role = QLineEdit(), QLineEdit("body")
-        self.text = QPlainTextEdit()
-        form.addRow("Section title", self.title)
-        form.addRow("Role", self.role)
-        form.addRow("Text", self.text)
-        script_layout.addLayout(form)
-        for field in (self.title, self.role, self.text):
-            field.textChanged.connect(self._dirty)
-        actions = QHBoxLayout()
-        script_layout.addLayout(actions)
-        for label, action in (("New section", self.new_section), ("Save", self.save),
-                              ("Discard draft", self.discard), ("Split at cursor", self.split),
-                              ("Merge selected", self.merge), ("Move up", lambda: self.move(-1)),
-                              ("Move down", lambda: self.move(1))):
-            self._button(actions, label, action)
-        self.request = QPlainTextEdit()
-        self.request.setPlaceholderText("Describe the script to generate (replaces saved sections).")
-        self.request.setMaximumHeight(90)
-        script_layout.addWidget(self.request)
-        self.generate_button = QPushButton("Generate replacement script")
-        self.generate_button.clicked.connect(self.generate)
+        self.sections.hide()
+        self.script_panel = ScriptPanel({"new": self.new_section, "save": self.save,
+            "discard": self.discard, "split": self.split, "merge": self.merge,
+            "up": lambda: self.move(-1), "down": lambda: self.move(1),
+            "generate": self.generate, "dirty": self._dirty,
+            "resume": lambda: self.video_plan.resume_script_generation()}, parent=self)
+        script_layout.addWidget(self.script_panel, 1)
+        self.title, self.role, self.text = self.script_panel.title, self.script_panel.role, self.script_panel.text
+        self.request, self.generate_button = self.script_panel.request, self.script_panel.generate_button
+        self.buttons.update(self.script_panel.buttons)
         self.generate_button.setEnabled(provider is not None)
         self.generate_button.setToolTip("Generate with the configured structured script provider." if provider else
                                        "Generation is unavailable until a structured script provider is configured.")
-        script_layout.addWidget(self.generate_button)
         self.tabs.addTab(self.script_tab, "Script")
-
-        self.voice_tab = QWidget()
-        voice_layout = QVBoxLayout(self.voice_tab)
         self.voice_section = QLabel("No narrative section selected.")
-        voice_layout.addWidget(self.voice_section)
-        voice_layout.addWidget(self.audio, 1)
-        self.tabs.addTab(self.voice_tab, "Voice")
-
-        self.tabs.addTab(self.scene_plans, "Scenes")
-
-        self.visuals_tab = QWidget()
-        visuals_layout = QVBoxLayout(self.visuals_tab)
         self.visuals_section = QLabel("No narrative section selected.")
-        visuals_layout.addWidget(self.visuals_section)
-        visuals_layout.addWidget(self.visuals, 1)
-        self.tabs.addTab(self.visuals_tab, "Visuals")
+        self.storyboard = StoryboardPanel(self)
+        self.storyboard.scene_selected.connect(self._storyboard_scene_selected)
+        self.storyboard_inspector = QTabWidget()
+        self.storyboard_inspector.addTab(self.audio, "Narration")
+        self.storyboard_inspector.addTab(self.scene_plans, "Scene plan")
+        visual_scroll = QScrollArea()
+        visual_scroll.setWidgetResizable(True)
+        visual_scroll.setWidget(self.visuals)
+        self.storyboard_inspector.addTab(visual_scroll, "Visual")
+        storyboard_split = QSplitter(Qt.Horizontal)
+        storyboard_split.addWidget(self.storyboard)
+        storyboard_split.addWidget(self.storyboard_inspector)
+        storyboard_split.setStretchFactor(0, 3)
+        storyboard_split.setStretchFactor(1, 2)
+        storyboard_split.setChildrenCollapsible(False)
+        self.tabs.addTab(storyboard_split, "Storyboard")
 
         self.timeline_tab = QWidget()
         timeline_layout = QVBoxLayout(self.timeline_tab)
@@ -202,29 +177,42 @@ class ProjectEditor(QMainWindow):
 
         self.export_tab = QWidget()
         export_layout = QVBoxLayout(self.export_tab)
-        self.export_status = QLabel("Open a project to inspect final-output readiness.")
-        self.export_status.setWordWrap(True)
-        export_layout.addWidget(self.export_status)
-        self.final_render_button = QPushButton("Build/rebuild final render")
+        self.export_panel = ExportPanel(self)
+        export_layout.addWidget(self.export_panel)
+        self.export_status = self.export_panel.state
+        self.final_render_button = QPushButton("Build / rebuild final render")
         self.final_render_button.clicked.connect(self._rebuild_final_render)
-        self.final_render_button.setEnabled(False)
         export_layout.addWidget(self.final_render_button)
-        export_layout.addWidget(QLabel("Advanced / selective regeneration"))
-        export_layout.addWidget(self.regeneration, 1)
+        self.advanced_regeneration = QToolButton()
+        self.advanced_regeneration.setText("Advanced · selective regeneration")
+        self.advanced_regeneration.setCheckable(True)
+        self.advanced_regeneration.setChecked(False)
+        self.advanced_regeneration.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.advanced_regeneration.setArrowType(Qt.RightArrow)
+        self.advanced_content = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_content)
+        advanced_layout.addWidget(self.regeneration)
+        self.advanced_content.hide()
+        self.advanced_regeneration.toggled.connect(self.advanced_content.setVisible)
+        self.advanced_regeneration.toggled.connect(
+            lambda expanded: self.advanced_regeneration.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow))
+        export_layout.addWidget(self.advanced_regeneration)
+        export_layout.addWidget(self.advanced_content, 1)
         self.tabs.addTab(self.export_tab, "Export")
 
+        workspace = QSplitter(Qt.Horizontal)
+        workspace.addWidget(self.outline)
+        workspace.addWidget(self.tabs)
+        workspace.setStretchFactor(0, 1)
+        workspace.setStretchFactor(1, 5)
+        workspace.setChildrenCollapsible(False)
+        layout.addWidget(workspace, 1)
         for field in (self.title, self.role, self.text):
             field.setEnabled(False)
         self.automatic_timer = QTimer(self)
         self.automatic_timer.setInterval(10)
         self.automatic_timer.timeout.connect(self._automatic_tick)
         self._update_workflow_controls()
-
-    def _button(self, layout, label, callback):
-        button = QPushButton(label)
-        button.clicked.connect(callback)
-        layout.addWidget(button)
-        self.buttons[label] = button
 
     def _section_choice_changed(self, index):
         if self.loading or self.snapshot is None:
@@ -235,6 +223,62 @@ class ProjectEditor(QMainWindow):
         if self.selected_id != section_id:
             self._sync_section_choice()
 
+    def _outline_section_activated(self, section_id):
+        if self.snapshot is None:
+            return
+        row = next((i for i, section in enumerate(self.snapshot.sections)
+                    if section.section_id == section_id), -1)
+        if row >= 0:
+            self.tabs.setCurrentIndex(1)
+            self.sections.setCurrentRow(row)
+        else:
+            self.selected_id = section_id
+            self.loading = True
+            self.title.clear()
+            self.role.setText("body")
+            self.text.clear()
+            self.loading = False
+            self.audio.select_section(None)
+            self.scene_plans.select_section(None)
+            self.visuals.select_section(None)
+            self.storyboard.set_section(None)
+            self.section_choice.setCurrentIndex(-1)
+            self._update_script_panel_progress()
+            self.tabs.setCurrentIndex(0)
+
+    def _outline_group_activated(self, _group_id):
+        self.tabs.setCurrentIndex(0)
+
+    def _plan_changed(self, plan):
+        self.outline.populate(self.snapshot.sections if self.snapshot else (), plan,
+                              self._last_report.diagnostics if getattr(self, "_last_report", None) else (),
+                              self.selected_id)
+        self._update_script_panel_progress()
+        self._queue_diagnostics()
+
+    def _queue_diagnostics(self):
+        if self.session is not None:
+            QTimer.singleShot(0, self.diagnose_pipeline)
+
+    def _visual_media_changed(self):
+        self.preview.timeline_changed(self.timeline.edit)
+        self.diagnose_pipeline()
+
+    def _update_script_panel_progress(self):
+        plan = self.video_plan.plans.selected() if self.video_plan.plans else None
+        try:
+            states = self.video_plan.script_service.progress(plan) if plan and self.video_plan.script_service else ()
+        except Exception:
+            states = ("pending",) * len(plan.groups) if plan else ()
+        section = next((s for s in self.snapshot.sections if s.section_id == self.selected_id), None) if self.snapshot else None
+        self.script_panel.show_plan_progress(plan, states, section)
+
+    def _storyboard_scene_selected(self, scene_id):
+        self.visuals.select_scene_id(scene_id)
+
+    def _visual_scene_selected(self, scene_id):
+        self.storyboard.select_scene(scene_id)
+
     def _sync_section_choice(self):
         index = self.section_choice.findData(self.selected_id)
         self.section_choice.blockSignals(True)
@@ -243,22 +287,18 @@ class ProjectEditor(QMainWindow):
 
     def _timeline_changed(self, edit):
         self.preview.timeline_changed(edit)
-        if self.session is None:
-            self.export_status.setText("Open a project to inspect final-output readiness.")
-        elif edit is None:
-            self.export_status.setText("No saved timeline exists. Build the timeline before preview or final render.")
-        else:
-            self.export_status.setText(
-                f"Timeline ready: {len(edit.timeline.clips)} clips. Use preview in Timeline; "
-                "use selective regeneration below to inspect or rebuild the final render."
-            )
+        self.export_panel.refresh()
+        self._queue_diagnostics()
 
     def _scene_plan_changed(self):
         section = self.snapshot.section(self.selected_id) if self.snapshot and self.selected_id else None
         self.visuals.select_section(section)
+        self.storyboard.set_section(section,
+            diagnostics=self._last_report.diagnostics if getattr(self, "_last_report", None) else ())
         if self.timeline.services:
             self.timeline.run(self.timeline.refresh)
         self._run(self._bind_regeneration)
+        self.diagnose_pipeline()
 
     def _rebuild_final_render(self):
         index = self.regeneration.outputs.findData("project:video_render")
@@ -295,6 +335,7 @@ class ProjectEditor(QMainWindow):
         self.buttons["Create project"].setEnabled(not busy and not self.automatic_busy)
         self.buttons["Open project"].setEnabled(not busy and not self.automatic_busy)
         self.section_choice.setEnabled(not busy and self.session is not None)
+        self.outline.setEnabled(not busy)
         self.workflow_mode.setEnabled(not busy and not self.automatic_busy)
         self.auto_run_button.setEnabled(not busy and self.session is not None
                                         and self.workflow_mode.currentData() == "automatic"
@@ -333,6 +374,8 @@ class ProjectEditor(QMainWindow):
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
             self.video_plan.bind(candidate)
+            self.storyboard.bind(scene_services)
+            self.export_panel.bind(candidate)
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
@@ -366,9 +409,15 @@ class ProjectEditor(QMainWindow):
         self.loading = False
         self.dirty = False
         self._select(row)
+        self._update_script_panel_progress()
+        selected_plan = self.video_plan.plans.selected() if self.video_plan.plans else None
+        self.outline.populate(self.snapshot.sections, selected_plan,
+                              self._last_report.diagnostics if getattr(self, "_last_report", None) else (),
+                              self.selected_id)
         self._bind_regeneration()
         self.status.setText("Saved.")
         self._update_workflow_controls()
+        self.diagnose_pipeline()
 
     def _bind_regeneration(self):
         if self.regeneration_factory and self.session and not self.regeneration.busy:
@@ -382,10 +431,12 @@ class ProjectEditor(QMainWindow):
             self.final_render_button.setEnabled(
                 self.regeneration.outputs.findData("project:video_render") >= 0
             )
+            self.export_panel.refresh()
 
     def _regenerating(self, busy):
-        for index in range(5):
+        for index in range(3):
             self.tabs.setTabEnabled(index, not busy)
+        self.outline.setEnabled(not busy)
         self.section_choice.setEnabled(not busy)
         self.buttons["Create project"].setEnabled(not busy)
         self.buttons["Open project"].setEnabled(not busy)
@@ -405,6 +456,7 @@ class ProjectEditor(QMainWindow):
         if self.timeline.services:
             self.timeline.run(self.timeline.refresh)
         self._run(self._bind_regeneration)
+        self.diagnose_pipeline()
 
     def _select(self, row):
         if self.loading:
@@ -416,6 +468,7 @@ class ProjectEditor(QMainWindow):
             self.sections.setCurrentRow(ids.index(self.selected_id) if self.selected_id in ids else -1)
             self.sections.blockSignals(False)
             self._sync_section_choice()
+            self.outline.select_section(self.selected_id)
             self.status.setText(
                 "Save or discard drafts and finish audio, preview, or regeneration work before switching sections."
             )
@@ -430,10 +483,18 @@ class ProjectEditor(QMainWindow):
         self.audio.select_section(section)
         self.scene_plans.select_section(section)
         self.visuals.select_section(section)
+        self.storyboard.set_section(section,
+            diagnostics=self._last_report.diagnostics if getattr(self, "_last_report", None) else ())
         label = f"Selected section: {section.title}" if section else "No narrative section selected."
         self.voice_section.setText(label)
         self.visuals_section.setText(label)
         self._sync_section_choice()
+        if self.selected_id is None:
+            self.outline.setCurrentItem(None)
+            self.outline.clearSelection()
+        else:
+            self.outline.select_section(self.selected_id)
+        self._update_script_panel_progress()
 
     def new_section(self):
         def action():
@@ -588,7 +649,8 @@ class ProjectEditor(QMainWindow):
                 timeline=self.timeline.services, unsaved_draft=self.dirty,
                 audio_choice=self.audio.voices.currentData(),
                 video_plans=self.video_plan.plans,
-                plan_script=self.video_plan.script_service)
+                plan_script=self.video_plan.script_service,
+                video_render=self.export_panel.render_media)
         except Exception:
             logging.getLogger("aics.pipeline").exception("[AICS][PIPELINE][DIAGNOSE][FAIL] unexpected_error")
             self.workflow_summary.setText("Pipeline diagnosis failed unexpectedly. See console for details.")
@@ -596,7 +658,15 @@ class ProjectEditor(QMainWindow):
         summary = report.summary
         if report.timeline_rejected:
             summary += f"\n{report.timeline_rejected} timeline candidate(s) rejected. See console for exact reasons."
+        self._last_report = report
+        selected_plan = self.video_plan.plans.selected() if self.video_plan.plans else None
+        self.header.show_diagnostics(report, project_name=self.project_name.text(),
+                                     language=self.language.text(), plan=selected_plan)
         self.workflow_summary.setText(summary)
+        self.outline.populate(self.snapshot.sections, selected_plan, report.diagnostics, self.selected_id)
+        current_section = next((section for section in self.snapshot.sections
+                                if section.section_id == self.selected_id), None)
+        self.storyboard.set_section(current_section, diagnostics=report.diagnostics)
         self.workflow_status.setText("Diagnostics complete; no media was generated.")
         return report
 
@@ -677,6 +747,7 @@ class ProjectEditor(QMainWindow):
                 self.timeline.refresh()
                 self.preview.timeline_changed(self.timeline.edit)
             self._bind_regeneration()
+            self.diagnose_pipeline()
         except AutomaticWorkflowBlocked as exc:
             self.workflow_status.setText(f"Automatic workflow stopped at {exc.stage}.")
             suffix = f"\nSection: {exc.section}" if exc.section else ""

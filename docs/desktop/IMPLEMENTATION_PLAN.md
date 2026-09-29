@@ -433,7 +433,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062 |
@@ -1398,14 +1398,29 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Deterministic fake providers; temporary project binding/cache/reopen tests; AutomaticWorkflow cancel/resume call-count test; sentence-safe profile grouping and ScenePlan v1 regression; GUI controls and existing no-plan workflow regressions; full suite and diff check.
 - **Implementation evidence:** [D064 plan-driven scripting](D064_PLAN_DRIVEN_SCRIPTING.md) documents deterministic identity, binding/cache semantics, profile pacing, legacy behavior and deferred D065 work. Focused acceptance passed (105 tests); full backend suite passed (1,868 passed, 11 skipped); project schema stayed at version 1; `git diff --check` passed.
 
+### D065 — Project editor shell, storyboard and export UX
+
+- **Status:** Completed — offline UI implementation and regression coverage passed (2026-09-29); interactive source-launch acceptance remains unverified in this environment.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Compose the existing project services into a plan-first editor shell that scales from Social outlines to Standard scene lists and makes the selected final render easy to play or copy.
+- **Scope:** Five primary tabs (Plan, Script, Storyboard, Timeline, Export); project header driven by PipelineDiagnostics; Social-flat and Standard-hierarchical outline; shared section selection; scrollable bounded-thumbnail Storyboard with reused Audio/Scene/Visual panels; compact layouts; selected immutable render display, playback, folder open and atomic copy; advanced regeneration disclosure.
+- **Out of scope:** New generation algorithms/providers, database migration, timeline rewrite, QML/web UI and publishing.
+- **Dependencies:** D020, D021, D022, D023, D063, D064.
+- **Main code areas:** Desktop editor/header/outline/script/storyboard/export modules, ScenePanel selection adapter, PipelineDiagnostics and selected render resolver.
+- **Acceptance criteria:** Manual and Automatic workflows remain available; navigation keeps one coordinator-owned section selection; readiness comes from diagnostics; Storyboard rendering performs no generation and keeps thumbnail decoding bounded; final export resolves `project:video_render` selection and validates source bytes before actions; existing timeline, preview, render and plan behavior remains intact.
+- **Test strategy:** Offscreen Qt shell, Social/Standard outline, 5/60-scene Storyboard, selected-scene synchronization, selected-render play/folder/copy and empty/corrupt artifact tests; focused D063/D064 regressions; required full suite and diff check.
+- **Implementation evidence:** [D065 editor shell and storyboard](D065_EDITOR_SHELL_STORYBOARD.md) records the module boundaries and selected-render contract. Focused shell/Storyboard/Export tests passed (35 tests); the full backend suite passed (1,882 passed, 11 skipped); project schema stayed at version 1; `git diff --check` passed.
+
 ## Backlog provenance and deferred scope
 
-There are **63 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **64 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
-development configuration bootstrap; D063 adds video-format planning and D064
-connects it to resumable script generation. None is
+development configuration bootstrap; D063 adds video-format planning, D064
+connects it to resumable script generation and D065 composes the editor shell.
+None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |

@@ -40,6 +40,7 @@ class ImageUpscaleThread(QThread):
 
 class ScenePanel(QWidget):
     media_changed = Signal()
+    scene_selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -207,6 +208,13 @@ class ScenePanel(QWidget):
             self.status.setText(str(exc))
         self._enable()
 
+    def select_scene_id(self, scene_id):
+        row = next((i for i, view in enumerate(self.views) if view.id == scene_id), -1)
+        if row < 0:
+            return False
+        self.scenes.setCurrentRow(row)
+        return True
+
     def _select_row(self, row):
         if self.loading:
             return
@@ -262,6 +270,8 @@ class ScenePanel(QWidget):
         self._load_image(view.image_id if view else None)
         self._update_preset_sizes()
         self._enable()
+        if view is not None:
+            self.scene_selected.emit(view.id)
 
     def _update_preset_sizes(self):
         orientation = self.orientation.currentData()

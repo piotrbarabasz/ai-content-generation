@@ -40,6 +40,7 @@ class PipelineReport:
     plan_summary: str = "LEGACY / NOT USED"
     script_group_progress: str = "NOT USED"
     narration_duration_review: str | None = None
+    final_render_ready: bool | None = None
 
     @property
     def summary(self):
@@ -50,7 +51,7 @@ class PipelineReport:
                 f"Scenes/timing: {self.scenes_ready}/{self.section_count}\n"
                 f"Visuals: {self.visuals_ready}/{self.visual_count}\n"
                 f"Timeline candidates: {self.timeline_accepted}/{self.timeline_expected}\n"
-                f"Export: {'READY' if self.export_ready else 'BLOCKED'}")
+                f"Export: {'READY' if (self.final_render_ready if self.final_render_ready is not None else self.export_ready) else 'BLOCKED'}")
 
 
 def _emit(stage, state, message, *, level=logging.INFO):
@@ -78,7 +79,7 @@ class PipelineDiagnostics:
 
     def inspect_project(self, session, *, audio=None, scenes=None, timeline=None,
                         unsaved_draft=False, audio_choice=None, audio_variant="original",
-                        video_plans=None, plan_script=None):
+                        video_plans=None, plan_script=None, video_render=None):
         if audio_variant not in ("original", "processed"):
             raise ValueError("Choose original or processed audio explicitly.")
         sections = tuple(session.active_script.sections)
@@ -310,7 +311,16 @@ class PipelineDiagnostics:
             except (ValueError, OSError, KeyError) as exc:
                 plan_summary = "UNAVAILABLE"
                 diagnostics.append(StageDiagnostic("PLAN", "REVIEW", str(exc), reason=str(exc)))
+        final_render_ready = None
+        if video_render is not None:
+            try:
+                final_render_ready = video_render.selected() is not None
+            except (ValueError, OSError, KeyError) as exc:
+                final_render_ready = False
+                message = str(exc) or type(exc).__name__
+                diagnostics.append(StageDiagnostic("EXPORT", "REVIEW", message, reason=message))
+                _emit("EXPORT", "REVIEW", message)
         return PipelineReport(tuple(diagnostics), len(sections), voice_ready, scenes_ready,
                               scene_count, visuals_ready, visual_count, timeline_accepted,
                               timeline_rejected, timeline_expected, export_ready, ready_for_timeline,
-                              plan_summary, group_progress, duration_review)
+                              plan_summary, group_progress, duration_review, final_render_ready)
