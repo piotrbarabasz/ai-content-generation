@@ -1,10 +1,13 @@
 """Owner-thread adapter between automatic orchestration and project services."""
 
 import asyncio
+import json
 import logging
 
 from app.application.automatic_workflow import AutomaticWorkflowCanceled
 from app.application.image_presets import final_dimensions, generation_dimensions
+from app.application.invalidation import Freshness
+from app.domain.dependencies import Provenance
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -168,7 +171,14 @@ class DesktopPipelineDriver:
             current = services.prompts.prompts.snapshot(
                 revision.inputs.acceptance_id, scene.id,
                 revision.inputs.brief_revision_id, revision.inputs.style_revision_id)
-            return current == revision.inputs
+            if current != revision.inputs:
+                return False
+            if revision.provenance == Provenance.MANUAL:
+                return True
+            return services.prompts.freshness(
+                revision.inputs.acceptance_id, scene.id,
+                revision.inputs.brief_revision_id, revision.inputs.style_revision_id,
+                generation_identity=json.loads(services.prompts.identity_json)).state == Freshness.FRESH
         except (ValueError, OSError, KeyError):
             return False
 
