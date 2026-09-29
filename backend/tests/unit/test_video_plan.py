@@ -3,6 +3,30 @@ import pytest
 from app.domain.base import DomainValidationError
 from app.domain.video_plan import (PlannedSection, VideoFormat, VideoPlanGroup,
                                    VideoPlanRevision)
+from app.domain.video_plan_schema import video_plan_schema, validate_video_plan_output
+
+
+def test_video_plan_schema_section_count_matches_format_contract():
+    social_sections = video_plan_schema(VideoFormat.SOCIAL)["properties"]["groups"]["items"]["properties"]["sections"]
+    standard_sections = video_plan_schema(VideoFormat.STANDARD)["properties"]["groups"]["items"]["properties"]["sections"]
+    assert social_sections["minItems"] == standard_sections["minItems"] == 1
+    assert social_sections["maxItems"] == 1
+    assert "maxItems" not in standard_sections
+
+
+def test_social_plan_rejects_multiple_sections_in_group():
+    payload = {
+        "working_title": "Title", "film_brief": "Brief", "visual_style": "Style",
+        "groups": [
+            {"kind": kind, "title": kind, "purpose": "Purpose", "weight": 1,
+             "sections": [{"title": "Beat", "role": "beat", "purpose": "Purpose", "weight": 1},
+                          *([{"title": "Extra", "role": "detail", "purpose": "Purpose", "weight": 1}]
+                            if index == 0 else [])]}
+            for index, kind in enumerate(["hook", "body", "explanation", "payoff"])
+        ],
+    }
+    with pytest.raises(ValueError, match="Social groups must each contain one section"):
+        validate_video_plan_output(payload, VideoFormat.SOCIAL)
 
 
 def social(duration=45):

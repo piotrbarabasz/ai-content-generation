@@ -23,9 +23,10 @@ def semantic(fmt):
 
 
 class FakeProvider:
-    def __init__(self, fmt): self.fmt, self.schemas = fmt, []
+    def __init__(self, fmt): self.fmt, self.schemas, self.prompts = fmt, [], []
     def generate_structured(self, prompt, schema):
         self.schemas.append(schema)
+        self.prompts.append(prompt)
         return semantic(self.fmt)
 
 
@@ -47,6 +48,8 @@ def test_social_fake_provider_gets_application_budgets_and_application_ids(tmp_p
         assert plan.target_word_count == sum(s.target_word_count for g in plan.groups for s in g.sections)
         assert len({g.id for g in plan.groups} | {s.id for g in plan.groups for s in g.sections}) == 10
         assert provider.schemas[0]["additionalProperties"] is False
+        assert "exactly one section" in provider.prompts[0]
+        assert "4–8 flat groups" in provider.prompts[0]
         assert plans.selected() == plan
     finally:
         session.close()
@@ -55,12 +58,14 @@ def test_social_fake_provider_gets_application_budgets_and_application_ids(tmp_p
 def test_standard_fake_provider_allocates_nested_chapter_budgets(tmp_path):
     session, plans, _ = project(tmp_path)
     try:
-        plan = VideoPlanningService(plans, FakeProvider("standard")).generate(
+        provider = FakeProvider("standard")
+        plan = VideoPlanningService(plans, provider).generate(
             project_id=session.project.id, language="en", video_format="standard",
             target_duration_seconds=600, topic="How a city gets drinking water")
         assert plan.target_duration_seconds == 600 and len(plan.groups) == 8
         assert sum(g.kind == "chapter" for g in plan.groups) == 5
         assert all(len(g.sections) == 2 for g in plan.groups if g.kind == "chapter")
+        assert "chapters may contain multiple planned sections" in provider.prompts[0]
     finally:
         session.close()
 
