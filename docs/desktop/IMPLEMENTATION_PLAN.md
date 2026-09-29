@@ -433,7 +433,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels and Timeline Lite | D020, D021, D022, D023 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and optional Video Plan | D020, D021, D022, D023, D063 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062 |
@@ -1370,13 +1370,27 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Deterministic fake transport/provider tests for settings, validation, SDK request mapping, retries, WebP, catalog, GUI controls, asynchronous publication and D060 compatibility. Credentialed GPT Image 2 GUI acceptance is a separate explicit paid smoke.
 - **Implementation evidence:** [D062 selectable image generators](D062_SELECTABLE_IMAGE_GENERATORS.md) records the catalog profiles, WebP pipeline, offline evidence and manual smoke procedure. Do not mark Completed without credentialed GPT Image 2 GUI smoke.
 
+### D063 — Social / Standard video plan foundation
+
+- **Status:** Completed — offline implementation, regression coverage and full suite passed (2026-09-29).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Add an optional immutable high-level video plan for the two supported Social and Standard formats.
+- **Scope:** Strict semantic plan generation, deterministic duration/word/scene budgets, immutable artifact revisions and linear selection, explicit application of suggested visual context, and a focused Plan tab.
+- **Out of scope:** Arbitrary durations, custom/platform presets, chapter-by-chapter script generation, scene pacing changes, media behavior and full editor redesign.
+- **Dependencies:** D003, D015, D026, D058.
+- **Main code areas:** Video-plan domain/schema, planning service, artifact storage, Plan panel, editor tabs, focused offline tests and documentation.
+- **Acceptance criteria:** Social is 30–60 seconds (default 45); Standard is 540–660 seconds (default 600); exact nested duration sums and estimated budgets are retained; the active plan survives reopen; visual suggestions apply through existing prompt-context revisions; projects without plans retain existing behavior; project.sqlite remains schema version 1.
+- **Test strategy:** Fake structured providers; strict malformed-output/domain tests; temporary project artifact persistence, checksum, selection and reopen tests; offscreen Plan-panel profile, rendering and context tests; required full suite and diff check.
+- **Implementation evidence:** [D063 video formats and planning](D063_VIDEO_FORMATS_PLANNING.md) records profile constants, the 2.2 words/second planning estimate, scene-budget assumptions, immutable storage and D064 boundary. Fake-provider/domain/storage/Qt acceptance passed; 1,852 full-suite tests passed and 11 skipped; project schema stayed at version 1; `git diff --check` passed.
+
 ## Backlog provenance and deferred scope
 
-There are **61 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **62 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
-development configuration bootstrap. None is
+development configuration bootstrap; D063 adds video-format planning. None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |
