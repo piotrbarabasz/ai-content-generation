@@ -3,6 +3,12 @@
 from dataclasses import dataclass, replace
 
 from app.domain.base import DomainEntity, DomainValidationError, new_id
+from app.domain.dependencies import content_fingerprint
+
+
+def planned_section_identity(project_id, planned_section_id):
+    return "narrative_segment_" + content_fingerprint({
+        "version": 1, "project_id": project_id, "planned_section_id": planned_section_id})
 
 
 @dataclass(slots=True)
@@ -88,6 +94,15 @@ class SectionRevision:
             text=text,
             role=role,
         )
+
+    @classmethod
+    def create_for_plan(cls, *, project_id: str, planned_section_id: str,
+                        title: str, text: str, role: str) -> "SectionRevision":
+        """Create a fresh revision under a stable plan-derived editorial identity."""
+        if not isinstance(project_id, str) or not project_id.strip() or not isinstance(planned_section_id, str) or not planned_section_id.strip():
+            raise DomainValidationError("Plan section identity requires project and planned section IDs.")
+        stable_id = planned_section_identity(project_id, planned_section_id)
+        return cls(new_id("section_revision"), stable_id, project_id, title, text, role)
 
     @classmethod
     def from_segment(cls, segment: NarrativeSegment, *, project_id: str) -> "SectionRevision":

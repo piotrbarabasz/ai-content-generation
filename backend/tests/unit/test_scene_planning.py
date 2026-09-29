@@ -10,7 +10,7 @@ import pytest
 
 from app.application.scene_planning import ScenePlanningService
 from app.domain.narrative_segment import SectionRevision
-from app.domain.scene_plan import AcceptedScenePlan, ScenePlan, SceneTimingSet
+from app.domain.scene_plan import AcceptedScenePlan, ScenePacingProfile, ScenePlan, SceneTimingSet
 from app.domain.section_audio import SectionAudio
 from app.domain.speech_boundary import SpeechBoundaryMap, SpeechChunkBoundary
 from app.tts.chunking import sentence_chunks
@@ -165,6 +165,24 @@ def test_values_are_immutable_and_roundtrip_without_changing_identities():
         assert cls.from_payload(json.loads(json.dumps(value.to_payload()))) == value
         with pytest.raises(FrozenInstanceError): value.id = "changed"
     with pytest.raises(FrozenInstanceError): plan.scenes[0].visual_description = "changed"
+
+
+def test_profiled_scene_pacing_is_soft_sentence_safe_and_uses_scene_plan_v2():
+    section, _, service = make()
+    measured = audio(section, [6, 6, 6, 6])
+    social = service.suggest(section, measured,
+        pacing_profile=ScenePacingProfile.for_format("social"))
+    standard = service.suggest(section, measured,
+        pacing_profile=ScenePacingProfile.for_format("standard"))
+    assert social.to_payload()["version"] == 2
+    assert [len(scene.sentence_ids) for scene in social.scenes] == [1, 1, 1, 1]
+    assert [len(scene.sentence_ids) for scene in standard.scenes] == [2, 2]
+    for plan in (social, standard):
+        assert ScenePlan.from_payload(plan.to_payload()) == plan
+        assert "".join(section.text[scene.source_start:scene.source_end] for scene in plan.scenes) == section.text
+    legacy = service.suggest(section, measured)
+    assert legacy.to_payload()["version"] == 1
+    assert ScenePlan.from_payload(legacy.to_payload()) == legacy
 
 
 @pytest.mark.parametrize("mutation", ["gap", "overlap", "duplicate", "foreign_project", "missing_tail"])

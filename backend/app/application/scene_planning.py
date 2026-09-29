@@ -6,7 +6,7 @@ from typing import Protocol
 
 from app.domain.base import new_id
 from app.domain.render_scene import ProjectRenderScene
-from app.domain.scene_plan import AcceptedScenePlan, ScenePlan, SceneTiming, SceneTimingSet
+from app.domain.scene_plan import AcceptedScenePlan, ScenePacingProfile, ScenePlan, SceneTiming, SceneTimingSet
 
 
 class ScenePlansPort(Protocol):
@@ -44,20 +44,21 @@ def _measured(section, audio, sources):
     return boundary
 
 
-def _timed_groups(sources, blocks, sample_rate):
+def _timed_groups(sources, blocks, sample_rate, profile=None):
     """Minimize duration deviation within one semantic group; never split a block.
 
     Dynamic programming avoids leaving a tiny last scene when a better grouping
     exists. The target is soft: a coherent 13 s scene can beat two short scenes.
     """
+    profile = profile or ScenePacingProfile("legacy", 8, 10, 12)
     count = len(sources)
     costs, next_index = [float("inf")] * count + [0.0], [count] * count
     for start in range(count - 1, -1, -1):
         for end in range(start + 1, count + 1):
             duration = (blocks[end - 1].end_frame - blocks[start].start_frame) / sample_rate
-            outside = max(8 - duration, duration - 12, 0)
-            penalty = outside ** 2 + 0.01 * (duration - 10) ** 2
-            if duration > 12 and penalty >= costs[start]:
+            outside = max(profile.min_seconds - duration, duration - profile.max_seconds, 0)
+            penalty = outside ** 2 + 0.01 * (duration - profile.ideal_seconds) ** 2
+            if duration > profile.max_seconds and penalty >= costs[start]:
                 break  # Larger durations cannot beat this bound, even with zero suffix cost.
             cost = penalty + costs[end]
             if cost < costs[start]:
@@ -74,7 +75,7 @@ class ScenePlanningService:
     def __init__(self, plans: ScenePlansPort, sentence_sources):
         self.plans, self.sentence_sources = plans, sentence_sources
 
-    def suggest(self, section, audio=None, *, semantic_breaks=()):
+    def suggest(self, section, audio=None, *, semantic_breaks=(), pacing_profile: ScenePacingProfile | None = None):
         """Paragraphs/editorial topic breaks outrank duration; before TTS use only meaning."""
         self.plans.current(section)
         sources = _sources(section, self.sentence_sources)
@@ -97,7 +98,8 @@ class ScenePlanningService:
         semantic_groups.append(tuple(group))
         groups, offset = [], 0
         for group in semantic_groups:
-            groups.extend(_timed_groups(group, boundary.blocks[offset:offset + len(group)], audio.sample_rate)
+            groups.extend(_timed_groups(group, boundary.blocks[offset:offset + len(group)], audio.sample_rate,
+                                        pacing_profile)
                           if boundary is not None else [group])
             offset += len(group)
         scenes = tuple(ProjectRenderScene(new_id("render_scene"), section.project_id, section.section_id, section.id,
@@ -105,7 +107,9 @@ class ScenePlanningService:
                                           section.text[group[0].start:group[-1].end].strip()) for group in groups)
         plan = ScenePlan(new_id("scene_plan"), section.project_id, section.section_id, section.id,
                          sha256(section.text.encode()).hexdigest(), len(section.text), scenes,
-                         planning_audio_id=audio.artifact_id if audio is not None else None)
+                         method="paragraph_editorial_v2" if pacing_profile is not None else "paragraph_editorial_v1",
+                         planning_audio_id=audio.artifact_id if audio is not None else None,
+                         pacing_profile=pacing_profile)
         self.plans.save_plan(section, plan)
         return plan
 

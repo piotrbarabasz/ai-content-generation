@@ -1,6 +1,7 @@
 """Resumable orchestration over existing owner-thread project services."""
 
 from dataclasses import dataclass
+import inspect
 import logging
 
 
@@ -31,6 +32,8 @@ class AutomaticWorkflowResult:
     timeline_clips: int
     duration: str
     skipped: int
+    plan_script_groups_completed: int = 0
+    plan_script_groups_total: int = 0
 
 
 class AutomaticWorkflowBlocked(RuntimeError):
@@ -64,7 +67,8 @@ class AutomaticWorkflow:
         self.stage = stage
         self._check_cancel()
         try:
-            return await callback()
+            result = callback()
+            return await result if inspect.isawaitable(result) else result
         except AutomaticWorkflowCanceled:
             raise
         except (ValueError, RuntimeError, OSError) as exc:
@@ -77,13 +81,22 @@ class AutomaticWorkflow:
         self.cancel_requested = False
         self.skipped = 0
         try:
+            if self.driver.unsaved_script_draft():
+                logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="Unsaved script draft."')
+                raise AutomaticWorkflowBlocked("SCRIPT", "Save or discard the script draft before automatic processing.")
+            selected_plan = (self.driver.selected_video_plan()
+                             if callable(getattr(self.driver, "selected_video_plan", None)) else None)
+            if selected_plan is not None:
+                await self._operation("PLAN", lambda: self.driver.validate_plan_run(selected_plan, config))
+                logger.info("[AICS][PIPELINE][AUTO][PLAN][OK] format=%s target=%d groups=%d",
+                            selected_plan.format.value, selected_plan.target_duration_seconds,
+                            len(selected_plan.groups))
+                await self._operation("PLAN", lambda: self.driver.ensure_plan_visual_context(selected_plan))
+                await self._operation("SCRIPT", lambda: self.driver.ensure_plan_script(selected_plan))
             sections = tuple(self.driver.saved_sections())
             if not sections:
                 logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="No saved script."')
                 raise AutomaticWorkflowBlocked("SCRIPT", "No saved script.")
-            if self.driver.unsaved_script_draft():
-                logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="Unsaved script draft."')
-                raise AutomaticWorkflowBlocked("SCRIPT", "Save or discard the script draft before automatic processing.")
             logger.info("[AICS][PIPELINE][AUTO][START] sections=%d", len(sections))
             logger.info("[AICS][PIPELINE][AUTO][CONFIG] image_generator=%s orientation=%s resolution=%s audio_variant=%s",
                         config.image_generator_id or "default", config.orientation,
@@ -223,9 +236,13 @@ class AutomaticWorkflow:
                 raise AutomaticWorkflowBlocked("TIMELINE", str(exc) or type(exc).__name__) from None
             clip_count = len(current.timeline.clips) if current else 0
             duration = str(current.timeline.duration) if current else "0"
+            group_counts = (self.driver.plan_script_progress(selected_plan)
+                            if selected_plan is not None and callable(getattr(self.driver, "plan_script_progress", None))
+                            else (0, 0))
             logger.info("[AICS][PIPELINE][AUTO][DONE] sections=%d scenes=%d timeline_clips=%d duration=%s skipped=%d",
                         len(sections), expected_scene_count, clip_count, duration, self.skipped)
-            return AutomaticWorkflowResult(len(sections), expected_scene_count, clip_count, duration, self.skipped)
+            return AutomaticWorkflowResult(len(sections), expected_scene_count, clip_count, duration, self.skipped,
+                                           *group_counts)
         except AutomaticWorkflowCanceled as exc:
             logger.warning("[AICS][PIPELINE][AUTO][CANCEL] stage=%s", exc.args[0] if exc.args else self.stage)
             raise

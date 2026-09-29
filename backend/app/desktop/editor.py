@@ -280,12 +280,25 @@ class ProjectEditor(QMainWindow):
             raise ValueError("Wait for regeneration cleanup.")
         if self.worker is not None:
             raise ValueError("Wait for generation to finish.")
+        if self.video_plan.busy:
+            raise ValueError("Wait for the current planned script group to finish or cancel it.")
         if self.session is None:
             raise ValueError("Create or open a project first.")
         if clean and self.dirty:
             raise ValueError("Save or discard your draft first.")
         if self.visuals.prompt_dirty or self.visuals.context_dirty:
             raise ValueError("Save the scene prompt or visual context draft first.")
+
+    def set_plan_script_busy(self, busy):
+        for index in range(1, self.tabs.count()):
+            self.tabs.setTabEnabled(index, not busy)
+        self.buttons["Create project"].setEnabled(not busy and not self.automatic_busy)
+        self.buttons["Open project"].setEnabled(not busy and not self.automatic_busy)
+        self.section_choice.setEnabled(not busy and self.session is not None)
+        self.workflow_mode.setEnabled(not busy and not self.automatic_busy)
+        self.auto_run_button.setEnabled(not busy and self.session is not None
+                                        and self.workflow_mode.currentData() == "automatic"
+                                        and not self.automatic_busy)
 
     def _run(self, action):
         try:
@@ -300,7 +313,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.automatic_busy or self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
+            if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
                          if create else self.projects.open(path))
@@ -497,6 +510,8 @@ class ProjectEditor(QMainWindow):
     def generate(self):
         def action():
             self._ready()
+            if self.video_plan.script_artifacts and self.video_plan.script_artifacts.active_binding() is not None:
+                raise ValueError("This script is bound to a Video Plan. Use Resume script generation or Start script from new plan explicitly.")
             if self.provider is None:
                 raise ValueError("Configure a structured script provider first.")
             if not self.request.toPlainText().strip():
@@ -547,7 +562,8 @@ class ProjectEditor(QMainWindow):
         has_project = self.session is not None
         self.workflow_mode.setEnabled(not busy)
         self.diagnose_button.setEnabled(has_project and not busy)
-        self.auto_run_button.setEnabled(has_project and not busy and self.workflow_mode.currentData() == "automatic")
+        self.auto_run_button.setEnabled(has_project and not busy and not self.video_plan.busy
+                                        and self.workflow_mode.currentData() == "automatic")
         self.auto_stop_button.setEnabled(busy and self.automatic_workflow is not None)
         self.buttons["Create project"].setEnabled(not busy)
         self.buttons["Open project"].setEnabled(not busy)
@@ -555,6 +571,9 @@ class ProjectEditor(QMainWindow):
         self.project_name.setEnabled(not busy)
         self.language.setEnabled(not busy)
         self.tabs.setEnabled(not busy)
+        if self.video_plan.busy:
+            for index in range(1, self.tabs.count()):
+                self.tabs.setTabEnabled(index, False)
         self.final_render_button.setEnabled(
             not busy and self.regeneration.outputs.findData("project:video_render") >= 0
         )
@@ -567,7 +586,9 @@ class ProjectEditor(QMainWindow):
             report = self.pipeline_diagnostics.inspect_project(
                 self.session, audio=self.audio, scenes=self.visuals.services,
                 timeline=self.timeline.services, unsaved_draft=self.dirty,
-                audio_choice=self.audio.voices.currentData())
+                audio_choice=self.audio.voices.currentData(),
+                video_plans=self.video_plan.plans,
+                plan_script=self.video_plan.script_service)
         except Exception:
             logging.getLogger("aics.pipeline").exception("[AICS][PIPELINE][DIAGNOSE][FAIL] unexpected_error")
             self.workflow_summary.setText("Pipeline diagnosis failed unexpectedly. See console for details.")
@@ -596,9 +617,21 @@ class ProjectEditor(QMainWindow):
             generator_id = self.visuals.image_generator.currentData()
             if self.visuals.image_generator_options and generator_id is None:
                 raise ValueError("Choose an image generator before starting the automatic workflow.")
+            visual_services = self.visuals.services
+            generation = visual_services._generation_for(generator_id)
+            if generation.provider is None:
+                raise ValueError("Configure the selected image generator before starting the automatic workflow.")
+            resolution = self.visuals.resolution.currentData()
+            if resolution != "draft" and (visual_services.upscale is None or visual_services.upscale.provider is None):
+                raise ValueError("Configure the optional upscaler before requesting final-resolution images.")
+            selected_plan = self.video_plan.plans.selected() if self.video_plan.plans else None
+            if selected_plan is None:
+                contexts = visual_services.prompts.prompts
+                if contexts.current_context("film_brief") is None or contexts.current_context("visual_style") is None:
+                    raise ValueError("Save Film Brief and Visual Style before automatic processing.")
             config = AutomaticWorkflowConfig(
                 choice, generator_id, self.visuals.orientation.currentData(),
-                self.visuals.resolution.currentData(), "original")
+                resolution, "original")
             self.automatic_driver = DesktopPipelineDriver(self, config)
             self.automatic_workflow = AutomaticWorkflow(self.automatic_driver)
             self.automatic_loop = asyncio.new_event_loop()
@@ -637,7 +670,9 @@ class ProjectEditor(QMainWindow):
             self.workflow_summary.setText(
                 f"Sections: {result.sections}\nScenes: {result.scenes}\n"
                 f"Timeline clips: {result.timeline_clips}\nDuration: {result.duration}\n"
-                f"Reused stages: {result.skipped}")
+                f"Reused stages: {result.skipped}"
+                + (f"\nScript groups: {result.plan_script_groups_completed}/{result.plan_script_groups_total}"
+                   if result.plan_script_groups_total else ""))
             if self.timeline.services:
                 self.timeline.refresh()
                 self.preview.timeline_changed(self.timeline.edit)
@@ -662,7 +697,7 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
-        if self.automatic_busy or self.worker is not None or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
+        if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
             return
