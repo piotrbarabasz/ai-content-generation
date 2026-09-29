@@ -3,12 +3,43 @@
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 
+from app.domain.video_plan import VideoFormat
+
 from .render_scene import ProjectRenderScene
 
 
 def _text(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Nonempty scene identity/text is required.")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePacingProfile:
+    name: str
+    min_seconds: int
+    ideal_seconds: int
+    max_seconds: int
+
+    def __post_init__(self):
+        _text(self.name)
+        if any(type(value) is not int or value <= 0 for value in
+               (self.min_seconds, self.ideal_seconds, self.max_seconds)) or not self.min_seconds <= self.ideal_seconds <= self.max_seconds:
+            raise ValueError("Scene pacing profile bounds are invalid.")
+
+    def to_payload(self):
+        return asdict(self)
+
+    @classmethod
+    def for_format(cls, video_format):
+        fmt = VideoFormat(video_format)
+        return (cls("social", 4, 6, 8) if fmt is VideoFormat.SOCIAL
+                else cls("standard", 8, 10, 12))
+
+    @classmethod
+    def from_payload(cls, payload):
+        if type(payload) is not dict or set(payload) != {"name", "min_seconds", "ideal_seconds", "max_seconds"}:
+            raise ValueError("Malformed scene pacing profile.")
+        return cls(**payload)
 
 
 @dataclass(frozen=True)
@@ -22,6 +53,7 @@ class ScenePlan:
     scenes: tuple[ProjectRenderScene, ...]
     method: str = "paragraph_editorial_v1"
     planning_audio_id: str | None = None
+    pacing_profile: ScenePacingProfile | None = None
 
     def __post_init__(self):
         for value in (self.id, self.project_id, self.section_id, self.revision_id, self.text_checksum):
@@ -29,8 +61,11 @@ class ScenePlan:
         if (len(self.text_checksum) != 64 or any(c not in "0123456789abcdef" for c in self.text_checksum)
                 or type(self.text_length) is not int or self.text_length <= 0
                 or not isinstance(self.scenes, tuple) or not self.scenes
-                or self.method != "paragraph_editorial_v1"):
+                or self.method not in ("paragraph_editorial_v1", "paragraph_editorial_v2")):
             raise ValueError("Invalid scene plan source or method.")
+        if ((self.method == "paragraph_editorial_v1" and self.pacing_profile is not None)
+                or (self.method == "paragraph_editorial_v2" and not isinstance(self.pacing_profile, ScenePacingProfile))):
+            raise ValueError("Profiled scene plans require v2 and historical plans remain v1.")
         if self.planning_audio_id is not None:
             _text(self.planning_audio_id)
         cursor, scene_ids, sentence_ids = 0, set(), set()
@@ -52,12 +87,21 @@ class ScenePlan:
             raise ValueError("Scene plan differs from the expected section revision.")
 
     def to_payload(self):
-        return {"version": 1, **asdict(self)}
+        payload = asdict(self)
+        if self.pacing_profile is None:
+            payload.pop("pacing_profile")
+            return {"version": 1, **payload}
+        return {"version": 2, **payload}
 
     @classmethod
     def from_payload(cls, value):
         data = dict(value)
-        if data.pop("version") != 1:
+        version = data.pop("version")
+        if version == 1:
+            data.pop("pacing_profile", None)
+        elif version == 2:
+            data["pacing_profile"] = ScenePacingProfile.from_payload(data["pacing_profile"])
+        else:
             raise ValueError("Unsupported scene plan version.")
         data["scenes"] = tuple(ProjectRenderScene(**(scene | {"sentence_ids": tuple(scene["sentence_ids"])}))
                                for scene in data["scenes"])

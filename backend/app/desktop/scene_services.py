@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 
 from app.application.scene_planning import ScenePlanningService
+from app.domain.plan_script import planned_section_identity
+from app.domain.scene_plan import ScenePacingProfile
 from app.application.image_presets import RESOLUTIONS
 from app.providers.image_generation import ImageGenerationRequest
 from app.storage.section_tempo import SectionTempoArtifacts
@@ -83,7 +85,7 @@ class SceneServices:
 
     def __init__(self, *, plans, prompts, intake, generation, images, store, coordinator,
                  context_resolver=None, upscale=None, image_generators=(), generation_services=None,
-                 default_generator_id=None):
+                 default_generator_id=None, pacing_profile_resolver=None):
         self.plans, self.prompts = plans, prompts
         self.intake, self.generation, self.images = intake, generation, images
         self.store, self.coordinator = store, coordinator
@@ -92,6 +94,7 @@ class SceneServices:
         self.image_generators = tuple(image_generators)
         self.generation_services = dict(generation_services or {})
         self.default_generator_id = default_generator_id
+        self.pacing_profile_resolver = pacing_profile_resolver
         self.section = self.acceptance = None
 
     def _current_acceptance(self, section):
@@ -140,7 +143,8 @@ class SceneServices:
         audio = self._selected_audio(section)
         if audio is not None and audio.speech_boundary_map is None:
             audio = None
-        ScenePlanningService(self.plans, sentence_sources).suggest(section, audio)
+        profile = self.pacing_profile_resolver(section) if self.pacing_profile_resolver else None
+        ScenePlanningService(self.plans, sentence_sources).suggest(section, audio, pacing_profile=profile)
         return self.plan_state(section)
 
     def accept_scene_plan(self, section, plan_id):

@@ -19,9 +19,88 @@ class DesktopPipelineDriver:
         self.active_image = None
         self.active_upscale = None
         self.active_prompt_provider = None
+        self.active_script_provider = None
 
     def saved_sections(self):
         return tuple(self.editor.session.active_script.sections)
+
+    def selected_video_plan(self):
+        return self.editor.video_plan.plans.selected() if self.editor.video_plan.plans else None
+
+    def validate_plan_run(self, plan, config):
+        current = self.selected_video_plan()
+        if current is None or current.id != plan.id:
+            raise ValueError("The selected Video Plan changed; refresh before automatic processing.")
+        if self.editor.provider is None:
+            raise ValueError("Plan-driven automatic workflow requires a structured script provider.")
+        if self.editor.audio.services is None:
+            raise ValueError("Audio services are not configured for this project.")
+        services = self.editor.visuals.services
+        if services is None or self.editor.timeline.services is None:
+            raise ValueError("Scene and timeline services are not configured for this project.")
+        generation = services._generation_for(config.image_generator_id)
+        if generation.provider is None:
+            raise ValueError("Configure the selected image generator before automatic processing.")
+        if config.final_resolution != "draft" and (services.upscale is None or services.upscale.provider is None):
+            raise ValueError("Configure the optional upscaler before requesting final-resolution images.")
+
+    def ensure_plan_visual_context(self, plan):
+        services = self.editor.visuals.services
+        if services is None:
+            raise ValueError("Scene services are not configured for this project.")
+        prompts = services.prompts.prompts
+        values = (("film_brief", plan.film_brief), ("visual_style", plan.visual_style))
+        for kind, text in values:
+            current = prompts.current_context(kind)
+            if current is not None:
+                logger.info("[AICS][PIPELINE][AUTO][CONTEXT][USE] kind=%s source=current_context", kind)
+                continue
+            services.prompts.pin_context(kind, text)
+            logger.info("[AICS][PIPELINE][AUTO][CONTEXT][BUILD] kind=%s source=video_plan", kind)
+
+    async def ensure_plan_script(self, plan):
+        panel = self.editor.video_plan
+        service = panel.script_service
+        if service is None:
+            raise ValueError("Plan script storage is unavailable for this project.")
+        service.start_or_resume(plan)
+        for group in plan.groups:
+            if self.cancel_requested:
+                raise AutomaticWorkflowCanceled("SCRIPT")
+            state = service.group_state(plan, group)
+            if state == "complete":
+                logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][SKIP] group=%r", group.title)
+                continue
+            if state != "pending":
+                raise ValueError("Active script contains an inconsistent partial plan group.")
+            expected_revision_id = self.editor.session.active_script.id
+            prepared = service.prepare_group(plan, group)
+            if prepared["cached"] is not None:
+                result = prepared["cached"]
+                logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][CACHE] group=%r", group.title)
+            else:
+                logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][BUILD] group=%r sections=%d",
+                            group.title, len(group.sections))
+                self.active_script_provider = self.editor.provider
+                try:
+                    payload = await asyncio.to_thread(service.generate_payload, prepared)
+                    result = service.validate_and_cache(plan, group, prepared, payload)
+                finally:
+                    self.active_script_provider = None
+            if self.cancel_requested:
+                raise AutomaticWorkflowCanceled("SCRIPT")
+            service.commit_group(plan, group, result,
+                                 expected_active_revision_id=expected_revision_id)
+            logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][OK] group=%r words=%d", group.title,
+                        sum(len(item.text.split()) for item in result.sections))
+            panel._render()
+            panel._script_progress()
+            self.editor._refresh()
+
+    def plan_script_progress(self, plan):
+        service = self.editor.video_plan.script_service
+        states = service.progress(plan) if service is not None else ()
+        return sum(value == "complete" for value in states), len(states)
 
     def unsaved_script_draft(self):
         return self.editor.dirty or self.editor.worker is not None
@@ -235,6 +314,9 @@ class DesktopPipelineDriver:
             self.editor.visuals.services.cancel_background_image(claim, generator_id=generator_id)
         if self.active_upscale:
             self.active_upscale.cancel()
+        cancel_script = getattr(self.active_script_provider, "cancel", None)
+        if callable(cancel_script):
+            cancel_script()
         cancel_prompt = getattr(self.active_prompt_provider, "cancel", None)
         if callable(cancel_prompt):
             cancel_prompt()

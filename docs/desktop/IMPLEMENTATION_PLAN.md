@@ -433,7 +433,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and optional Video Plan | D020, D021, D022, D023, D063 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062 |
@@ -1384,13 +1384,28 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Fake structured providers; strict malformed-output/domain tests; temporary project artifact persistence, checksum, selection and reopen tests; offscreen Plan-panel profile, rendering and context tests; required full suite and diff check.
 - **Implementation evidence:** [D063 video formats and planning](D063_VIDEO_FORMATS_PLANNING.md) records profile constants, the 2.2 words/second planning estimate, scene-budget assumptions, immutable storage and D064 boundary. Fake-provider/domain/storage/Qt acceptance passed; 1,852 full-suite tests passed and 11 skipped; project schema stayed at version 1; `git diff --check` passed.
 
+### D064 — Plan-driven script generation and resumable long-form workflow
+
+- **Status:** Completed — offline implementation and full suite passed (2026-09-29).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Generate Social and Standard scripts one plan group at a time and continue through the existing sequential media workflow.
+- **Scope:** Deterministic plan-section identities; immutable plan/script binding and selection; strict per-group provider schema; validated group cache; one project script revision commit per completed group; plan-aware AutomaticWorkflow preflight, visual context initialization, diagnostics, and scene pacing; focused Plan-panel Resume and explicit replacement controls.
+- **Out of scope:** Project database migration, one-shot long-form generation, parallel media generation, automatic narration rewrites, arbitrary plan profiles and D065 editor redesign.
+- **Dependencies:** D003, D014, D015, D022, D063.
+- **Main code areas:** Plan-script domain/storage/application service, AutomaticWorkflow/desktop driver, ScenePlan and ScenePlanningService, diagnostics, Plan panel and focused offline tests.
+- **Acceptance criteria:** Each uncached plan group makes one strict request; completed groups and manual edits survive reopen and Resume; cached validated results avoid repeat calls; replacement is explicit; plan-driven automatic processing initializes only missing visual context before media; legacy no-plan processing and ScenePlan v1 remain valid; Social/Standard pacing remains sentence-safe.
+- **Test strategy:** Deterministic fake providers; temporary project binding/cache/reopen tests; AutomaticWorkflow cancel/resume call-count test; sentence-safe profile grouping and ScenePlan v1 regression; GUI controls and existing no-plan workflow regressions; full suite and diff check.
+- **Implementation evidence:** [D064 plan-driven scripting](D064_PLAN_DRIVEN_SCRIPTING.md) documents deterministic identity, binding/cache semantics, profile pacing, legacy behavior and deferred D065 work. Focused acceptance passed (105 tests); full backend suite passed (1,868 passed, 11 skipped); project schema stayed at version 1; `git diff --check` passed.
+
 ## Backlog provenance and deferred scope
 
-There are **62 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **63 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
-development configuration bootstrap; D063 adds video-format planning. None is
+development configuration bootstrap; D063 adds video-format planning and D064
+connects it to resumable script generation. None is
 completed merely by publishing this plan.
 
 | Original analysis item | Backlog treatment |

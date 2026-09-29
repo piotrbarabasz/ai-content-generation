@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from app.application.pipeline_diagnostics import PipelineDiagnostics
+from app.domain.video_plan import VideoFormat
 
 
 def test_diagnose_empty_script_reports_blocked_without_provider_services(caplog):
@@ -31,3 +32,17 @@ def test_diagnose_reports_invalid_saved_timeline_as_export_blocker(caplog):
     assert not report.export_ready
     assert export.reason == "Timeline content differs from its immutable identity."
     assert "[AICS][PIPELINE][EXPORT][BLOCKED]" in caplog.text
+
+
+def test_plan_summary_is_optional_and_reports_group_progress_without_blocking_legacy():
+    session = SimpleNamespace(active_script=SimpleNamespace(id="script-1", sections=()))
+    legacy = PipelineDiagnostics().inspect_project(session)
+    assert "Plan: LEGACY / NOT USED" in legacy.summary
+    plan = SimpleNamespace(format=VideoFormat.STANDARD, target_duration_seconds=600,
+                           groups=(1, 2, 3))
+    plans = SimpleNamespace(selected=lambda: plan)
+    script = SimpleNamespace(progress=lambda _plan: ("complete", "pending", "complete"))
+    report = PipelineDiagnostics().inspect_project(session, video_plans=plans, plan_script=script)
+    assert "Plan: STANDARD · 10:00 · READY" in report.summary
+    assert "Script groups: 2/3" in report.summary
+    assert not report.ready_for_timeline

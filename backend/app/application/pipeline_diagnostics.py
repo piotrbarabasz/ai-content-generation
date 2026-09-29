@@ -5,6 +5,7 @@ import json
 import logging
 
 from app.domain.section_audio import SectionAudio
+from app.domain.video_plan import VIDEO_FORMATS
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -36,10 +37,15 @@ class PipelineReport:
     timeline_expected: int
     export_ready: bool
     ready_for_timeline: bool
+    plan_summary: str = "LEGACY / NOT USED"
+    script_group_progress: str = "NOT USED"
+    narration_duration_review: str | None = None
 
     @property
     def summary(self):
-        return (f"Script: {'OK' if self.section_count else 'BLOCKED'}\n"
+        return (f"Plan: {self.plan_summary}\nScript groups: {self.script_group_progress}"
+                + (f"\nNarration duration: {self.narration_duration_review}" if self.narration_duration_review else "")
+                + f"\nScript: {'OK' if self.section_count else 'BLOCKED'}\n"
                 f"Voice: {self.voice_ready}/{self.section_count}\n"
                 f"Scenes/timing: {self.scenes_ready}/{self.section_count}\n"
                 f"Visuals: {self.visuals_ready}/{self.visual_count}\n"
@@ -71,7 +77,8 @@ class PipelineDiagnostics:
     """Inspect retained state only; never invokes generation, mutation or rendering."""
 
     def inspect_project(self, session, *, audio=None, scenes=None, timeline=None,
-                        unsaved_draft=False, audio_choice=None, audio_variant="original"):
+                        unsaved_draft=False, audio_choice=None, audio_variant="original",
+                        video_plans=None, plan_script=None):
         if audio_variant not in ("original", "processed"):
             raise ValueError("Choose original or processed audio explicitly.")
         sections = tuple(session.active_script.sections)
@@ -89,6 +96,7 @@ class PipelineDiagnostics:
             diagnostics.append(StageDiagnostic("SCRIPT", "BLOCKED", message, reason="No saved script sections."))
             _emit("SCRIPT", "BLOCKED", message)
 
+        measured_total_duration, measured_sections = 0.0, 0
         for section in sections:
             audio_value = None
             audio_reason = None
@@ -119,6 +127,8 @@ class PipelineDiagnostics:
                 _emit("VOICE", "BLOCKED", message)
             else:
                 voice_ready += 1
+                measured_total_duration += audio_value.duration_seconds
+                measured_sections += 1
                 boundary = audio_value.speech_boundary_map
                 quality = boundary.quality if boundary else "unavailable"
                 message = (f"section={json.dumps(section.title, ensure_ascii=False)} variant={audio_variant} "
@@ -270,6 +280,37 @@ class PipelineDiagnostics:
               f"script={'OK' if sections else 'BLOCKED'} voice={voice_ready}/{len(sections)} "
               f"timing={scenes_ready}/{len(sections)} visuals={visuals_ready}/{visual_count} "
               f"timeline_candidates={timeline_accepted}/{timeline_expected}")
+        plan_summary, group_progress, duration_review = "LEGACY / NOT USED", "NOT USED", None
+        selected_plan = None
+        if video_plans is not None:
+            try:
+                selected_plan = video_plans.selected()
+                if selected_plan is not None:
+                    minutes, seconds = divmod(selected_plan.target_duration_seconds, 60)
+                    plan_summary = f"{selected_plan.format.value.upper()} · {minutes}:{seconds:02d} · READY"
+                    artifacts = getattr(plan_script, "artifacts", None)
+                    binding = artifacts.active_binding() if artifacts is not None else None
+                    if binding is not None and binding.video_plan_revision_id != selected_plan.id:
+                        group_progress = "BLOCKED · script binding uses another plan"
+                    elif binding is not None and binding.script_id != session.active_script.script_id:
+                        group_progress = "BLOCKED · active script differs from its binding"
+                    elif binding is None and sections:
+                        group_progress = "BLOCKED · unbound script"
+                    else:
+                        states = plan_script.progress(selected_plan) if plan_script is not None else ("pending",) * len(selected_plan.groups)
+                        group_progress = f"{sum(value == 'complete' for value in states)}/{len(states)}"
+                    _emit("SCRIPT_GROUPS", "OK" if "BLOCKED" not in group_progress else "BLOCKED", group_progress)
+                    _emit("PLAN", "OK", f"format={selected_plan.format.value} target={selected_plan.target_duration_seconds} groups={len(states)}")
+                    if sections and measured_sections == len(sections):
+                        if not VIDEO_FORMATS[selected_plan.format].min_duration_seconds <= measured_total_duration <= VIDEO_FORMATS[selected_plan.format].max_duration_seconds:
+                            duration_review = f"REVIEW · measured {measured_total_duration:.1f}s outside {VIDEO_FORMATS[selected_plan.format].min_duration_seconds}–{VIDEO_FORMATS[selected_plan.format].max_duration_seconds}s"
+                            _emit("PLAN_DURATION", "REVIEW", f"measured={measured_total_duration:.1f}s")
+                        else:
+                            duration_review = f"OK · measured {measured_total_duration:.1f}s"
+            except (ValueError, OSError, KeyError) as exc:
+                plan_summary = "UNAVAILABLE"
+                diagnostics.append(StageDiagnostic("PLAN", "REVIEW", str(exc), reason=str(exc)))
         return PipelineReport(tuple(diagnostics), len(sections), voice_ready, scenes_ready,
                               scene_count, visuals_ready, visual_count, timeline_accepted,
-                              timeline_rejected, timeline_expected, export_ready, ready_for_timeline)
+                              timeline_rejected, timeline_expected, export_ready, ready_for_timeline,
+                              plan_summary, group_progress, duration_review)
