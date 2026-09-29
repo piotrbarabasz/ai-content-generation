@@ -1,5 +1,6 @@
 """D018 exact timing arithmetic and immutable snapshot contracts, entirely offline."""
 
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from fractions import Fraction
 import json
@@ -11,6 +12,7 @@ import pytest
 from app.application.timeline import TimelineCompiler, TimelineSceneInput
 from app.domain.scene_image import SceneImage
 from app.domain.timeline import AudioSpan, OutputTimebase, TimelineClip, TimelineMedia, TimelineRevision
+from app.domain.dependencies import content_fingerprint
 
 
 def media(scene="a", *, rate=8000, start=0, end=8000, total=None):
@@ -37,6 +39,105 @@ def compile_values(*values, **kwargs):
     port = Selected(*values)
     inputs = tuple(TimelineSceneInput(value.timing_id, value.scene_id, value.audio.variant) for value in values)
     return TimelineCompiler(port).compile("project", inputs, **kwargs)
+
+
+def legacy_timeline_payload():
+    """Literal D018 payload: its fingerprint covers only the original image dataclass fields."""
+    content = {
+        "version": 1,
+        "project_id": "project",
+        "timebase": {"numerator": 1, "denominator": 25},
+        "fit_policy": "fit",
+        "rounding": "cumulative_nearest_ties_up",
+        "clips": [{
+            "media": {
+                "project_id": "project", "section_id": "section-a", "section_revision_id": "revision-a",
+                "scene_id": "a", "plan_id": "plan-a", "acceptance_id": "accepted-a",
+                "timing_id": "timing-a", "timing_quality": "measured_sentence_blocks",
+                "image_selection_id": "choice-a",
+                "image": {
+                    "artifact_id": "image-a", "project_id": "project", "acceptance_id": "accepted-a",
+                    "scene_id": "a", "section_revision_id": "revision-a", "source_name": "fixture.png",
+                    "checksum": "a" * 64, "size_bytes": 100, "format": "PNG", "width": 12,
+                    "height": 8, "mode": "RGB", "orientation": 1, "provenance": "generated",
+                },
+                "audio": {"artifact_id": "audio-a", "checksum": "b" * 64, "variant": "original",
+                          "sample_rate": 8000, "frame_count": 8000, "start_sample": 0, "end_sample": 8000},
+            },
+            "audio_offset": [0, 1], "start_frame": 0, "end_frame": 25, "audio_duration": [1, 1],
+        }],
+    }
+    return {"id": "timeline_" + content_fingerprint(content), **content}
+
+
+def test_legacy_d018_timeline_verifies_raw_image_schema_before_current_defaults():
+    payload = legacy_timeline_payload()
+    image = payload["clips"][0]["media"]["image"]
+    assert "source_artifact_id" not in image and "lineage_version" not in image
+    legacy_hash = payload["id"]
+    raw_content = {key: value for key, value in payload.items() if key != "id"}
+    normalized_clip = TimelineClip.from_payload(payload["clips"][0])
+    normalized = TimelineRevision("project", OutputTimebase(), "fit", (normalized_clip,))
+    assert "source_artifact_id" in normalized._content()["clips"][0]["media"]["image"]
+    assert "lineage_version" in normalized._content()["clips"][0]["media"]["image"]
+    assert "timeline_" + content_fingerprint(raw_content) == legacy_hash
+    assert normalized.id != legacy_hash
+
+    loaded = TimelineRevision.from_payload(payload)
+    assert loaded.id == legacy_hash  # Existing preview/render references keep the historical id.
+    assert loaded.to_payload() == payload
+    assert TimelineRevision.from_payload(loaded.to_payload()).id == legacy_hash
+    edited = replace(loaded, fit_policy="fill")
+    edited_payload = edited.to_payload()
+    assert edited_payload["id"] == "timeline_" + content_fingerprint(
+        {key: value for key, value in edited_payload.items() if key != "id"})
+    assert TimelineRevision.from_payload(edited_payload).fit_policy == "fill"
+
+
+@pytest.mark.parametrize(("path", "value"), [
+    (("clips", 0, "media", "image", "artifact_id"), "changed-image"),
+    (("clips", 0, "media", "image", "checksum"), "c" * 64),
+    (("clips", 0, "media", "audio", "artifact_id"), "changed-audio"),
+    (("clips", 0, "media", "audio", "start_sample"), 1),
+    (("clips", 0, "media", "scene_id"), "changed-scene"),
+    (("fit_policy",), "fill"),
+])
+def test_legacy_timeline_tampering_fails_raw_identity_verification(path, value):
+    payload = legacy_timeline_payload()
+    node = payload
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = value
+    with pytest.raises(ValueError, match="Timeline content differs from its immutable identity"):
+        TimelineRevision.from_payload(payload)
+
+
+def test_legacy_upscaled_timeline_schema_is_readable_and_roundtrips_without_rewriting():
+    payload = legacy_timeline_payload()
+    image = payload["clips"][0]["media"]["image"]
+    image.update({"provenance": "upscaled", "width": 24, "height": 16,
+                  "source_artifact_id": "image-source", "source_checksum": "c" * 64,
+                  "source_width": 12, "source_height": 8, "scale": 2,
+                  "upscaler": {"model": "realesr-general-x4v3"}})
+    payload["id"] = "timeline_" + content_fingerprint({key: value for key, value in payload.items() if key != "id"})
+    loaded = TimelineRevision.from_payload(payload)
+    assert loaded.id == payload["id"]
+    assert loaded.clips[0].media.image.lineage_version == 1
+    assert loaded.to_payload() == payload
+
+
+def test_current_final_timeline_identity_and_roundtrip_remain_canonical():
+    source = media()
+    final = replace(source.image, format="PNG", provenance="final", width=1920, height=1080,
+                    source_artifact_id="image-source", source_checksum="c" * 64,
+                    source_width=12, source_height=8, lineage_version=2,
+                    target_profile="fhd", target_width=1920, target_height=1080,
+                    native_model_scale=4, native_width=48, native_height=32,
+                    final_resize_method="Lanczos")
+    timeline = compile_values(replace(source, image=final))
+    payload = timeline.to_payload()
+    assert payload["id"] == "timeline_" + content_fingerprint({k: v for k, v in payload.items() if k != "id"})
+    assert TimelineRevision.from_payload(payload).id == timeline.id
 
 
 def test_exact_mixed_sample_rates_nonzero_source_starts_and_total_rounding():

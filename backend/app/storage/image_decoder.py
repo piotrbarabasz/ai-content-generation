@@ -1,4 +1,4 @@
-"""Bounded, single-frame PNG/JPEG decoding behind the local intake adapter."""
+"""Bounded, single-frame PNG/JPEG/WebP decoding behind the local intake adapter."""
 
 from dataclasses import dataclass
 import io
@@ -27,7 +27,7 @@ def decode_image(payload: bytes, limits: ImageLimits):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG")) as image:
+            with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG", "WEBP")) as image:
                 width, height = image.size
                 if (not 0 < width <= limits.max_dimension or not 0 < height <= limits.max_dimension
                         or width * height > limits.max_pixels):
@@ -36,11 +36,11 @@ def decode_image(payload: bytes, limits: ImageLimits):
                     raise ValueError("Only single-frame images can be imported.")
                 measured = {"format": image.format, "width": width, "height": height, "mode": image.mode}
                 image.verify()
-            with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG")) as image:
+            with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG", "WEBP")) as image:
                 image.load()  # Header recognition alone is not validation.
                 orientation = image.getexif().get(274, 1)
                 if type(orientation) is not int or orientation not in range(1, 9):
                     raise ValueError("Unsupported EXIF orientation.")
                 return {**measured, "orientation": orientation}
     except (OSError, ValueError, SyntaxError, Warning, Image.DecompressionBombError) as exc:
-        raise ValueError("Invalid, unsupported or oversized PNG/JPEG image.") from exc
+        raise ValueError("Invalid, unsupported or oversized PNG/JPEG/WebP image.") from exc

@@ -88,7 +88,7 @@ def test_existing_composition_reads_loaded_settings(checkout, monkeypatch):
     with pytest.raises(ValueError, match="AICS_OPENAI_TIMEOUT_SECONDS"):
         compose_installed_llm()
     monkeypatch.setenv("AICS_IMAGE_PROVIDER", "openai")
-    monkeypatch.setenv("AICS_OPENAI_IMAGE_MODEL", "fixture-image")
+    monkeypatch.setenv("AICS_OPENAI_IMAGE_MODEL", "gpt-image-2")
     monkeypatch.setenv("AICS_OPENAI_IMAGE_MAX_RETRIES", "bad")
     with pytest.raises(ValueError, match="AICS_OPENAI_IMAGE_MAX_RETRIES"):
         compose_installed_image()
@@ -150,11 +150,13 @@ def test_real_env_is_ignored_and_example_is_tracked():
 def test_desktop_main_loads_before_provider_composition(monkeypatch):
     import app.desktop.__main__ as desktop
     import app.desktop.llm_composition as llm
+    import app.desktop.image_generators as generators
     import app.desktop.image_composition as images
     events = []
     monkeypatch.setattr(environment, "load_application_environment", lambda: events.append("load"))
     monkeypatch.setattr(llm, "compose_installed_llm", lambda: events.append("llm") or None)
-    monkeypatch.setattr(images, "compose_installed_image", lambda: events.append("image") or None)
+    monkeypatch.setattr(generators, "compose_installed_image_generators",
+                        lambda: events.append("image") or ((), None))
     monkeypatch.setattr(images, "compose_installed_upscale", lambda: events.append("upscale") or None)
     class FakeApplication:
         def __init__(self, args):

@@ -2,6 +2,8 @@
 
 from functools import partial
 import json
+import logging
+import os
 from pathlib import Path
 import sys
 
@@ -26,6 +28,14 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     from app.environment import load_application_environment
 
     load_application_environment()
+    from app.application.pipeline_diagnostics import configure_pipeline_logging
+
+    configure_pipeline_logging(os.environ.get("AICS_WORKFLOW_LOG_LEVEL", "INFO"))
+    workflow_mode = os.environ.get("AICS_WORKFLOW_MODE", "manual").strip().lower()
+    if workflow_mode not in {"manual", "automatic"}:
+        logging.getLogger("aics.pipeline").warning(
+            '[AICS][PIPELINE][CONFIG][WARN] invalid_workflow_mode=%r; using manual', workflow_mode)
+        workflow_mode = "manual"
     smoke_report = None
     if "--release-smoke" in sys.argv:
         position = sys.argv.index("--release-smoke")
@@ -35,7 +45,8 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
             raise ValueError("--release-smoke requires an explicit report path.") from exc
         del sys.argv[position:position + 2]
     from app.desktop.regeneration_composition import compose_regeneration
-    from app.desktop.image_composition import compose_installed_image, compose_installed_upscale
+    from app.desktop.image_composition import compose_installed_upscale
+    from app.desktop.image_generators import compose_installed_image_generators
     from app.desktop.llm_composition import compose_installed_llm
     from app.desktop.preview_composition import compose_preview
     from app.desktop.product_composition import compose_installed_audio
@@ -49,9 +60,12 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
     QCoreApplication.setApplicationVersion(APPLICATION_VERSION)
     application = QApplication(sys.argv)
     llm_provider = provider if provider is not None else compose_installed_llm()
-    image_provider = compose_installed_image() if scene_factory is None else None
+    image_generators, default_image_generator = (compose_installed_image_generators()
+                                                 if scene_factory is None else ((), None))
+    image_provider = next((option.provider for option in image_generators
+                           if option.id == default_image_generator), None)
     upscale_provider = compose_installed_upscale() if scene_factory is None else None
-    if scene_factory is None and (llm_provider is not None or image_provider is not None or upscale_provider is not None):
+    if scene_factory is None and (llm_provider is not None or image_generators or upscale_provider is not None):
         identity_builder = getattr(llm_provider, "generation_identity", None) if llm_provider else None
         prompt_identity = (identity_builder() if callable(identity_builder) else
                            ({"provider": getattr(llm_provider, "provider_name", "configured")}
@@ -61,12 +75,15 @@ def main(provider=None, audio_factory=None, scene_factory=None, timeline_factory
             prompt_provider=llm_provider,
             prompt_identity=prompt_identity,
             image_provider=image_provider,
+            image_generators=image_generators,
+            default_generator_id=default_image_generator,
             upscale_provider=upscale_provider,
         )
     window = ProjectEditor(LocalProjects(), provider=llm_provider, audio_factory=audio_factory or compose_installed_audio,
                            scene_factory=scene_factory, timeline_factory=timeline_factory or compose_timeline,
                            preview_factory=preview_factory or compose_preview,
-                           regeneration_factory=regeneration_factory or compose_regeneration)
+                           regeneration_factory=regeneration_factory or compose_regeneration,
+                           workflow_mode=workflow_mode)
     window.show()
     if smoke_report is not None:
         from app.desktop.deployment import UserDataPaths, installed_root, media_executables

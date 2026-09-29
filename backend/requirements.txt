@@ -3,6 +3,7 @@ pydantic>=2.7
 pytest>=8.0
 Pillow>=12.3,<13
 python-dotenv>=1.0,<2
+openai>=2.0,<3
 
 # The Chatterbox Multilingual V3 runtime is deliberately optional.  Install it
 # from the pinned ``chatterbox-v3`` project extra and choose torch/torchaudio

@@ -8,7 +8,7 @@ import os
 from app.providers.image_factory import build_image_provider
 
 
-def compose_installed_image(*, environment: Mapping[str, str] | None = None, transport=None):
+def compose_installed_image(*, environment: Mapping[str, str] | None = None, transport=None, verify=True):
     environment = os.environ if environment is None else environment
     selected = str(environment.get("AICS_IMAGE_PROVIDER", "")).strip().lower()
     if not selected:
@@ -16,10 +16,11 @@ def compose_installed_image(*, environment: Mapping[str, str] | None = None, tra
     if selected == "local":
         root = environment.get("AICS_LOCAL_IMAGE_ROOT", "")
         provider = build_image_provider("local", settings={"root": root})
-        try:
-            provider.capabilities()  # Verify before the Visuals panel is shown.
-        except ValueError:
-            pass  # An absent or outdated optional runtime leaves import usable.
+        if verify:
+            try:
+                provider.capabilities()  # Verify before the Visuals panel is shown.
+            except ValueError:
+                pass  # An absent or outdated optional runtime leaves import usable.
         return provider
     if selected != "openai":
         raise ValueError(f"Unsupported installed image provider: {selected}.")
@@ -45,6 +46,8 @@ def compose_installed_image(*, environment: Mapping[str, str] | None = None, tra
                 settings[setting] = converter(raw)
             except (TypeError, ValueError):
                 raise ValueError(f"{env_name} has an invalid value.") from None
+    settings.setdefault("quality", environment.get("AICS_OPENAI_IMAGE_QUALITY", "low"))
+    settings.setdefault("outputCompression", 90)
     return build_image_provider("openai", settings=settings, transport=transport, environment=environment)
 
 

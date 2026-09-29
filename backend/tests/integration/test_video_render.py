@@ -6,8 +6,10 @@ from fractions import Fraction
 import json
 import shutil
 from types import SimpleNamespace
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from app.application.result_publication import ResultPublicationService
 from app.application.video_render import VideoRenderService
@@ -77,6 +79,26 @@ def claim(r):
     owned = r.coordinator.claim_next("render-fixture")
     assert owned.id == attempt.id
     return owned
+
+
+def test_preview_stages_selected_webp_as_supported_png(render, tmp_path):
+    section, _, _, _, accepted, _, intake, source, images, compiler, inputs = render.prepared
+    source.write_bytes(encoded_webp((1280, 720)))
+    retained, choice = intake.import_and_select(accepted.id, inputs[0].scene_id, source,
+                                                 expected_selection_id=images[0][1].id)
+    assert retained.format == "WEBP"
+    timeline = compiler.compile(section.project_id, inputs)
+    root, staged = render.adapter.stage_scene(timeline, inputs[0].scene_id)
+    with Image.open(root / "image-0.png") as decoded:
+        assert decoded.format == "PNG" and decoded.size == (1280, 720)
+    assert staged.media.image.artifact_id == retained.artifact_id
+    assert staged.media.image_selection_id == choice.id
+
+
+def encoded_webp(size):
+    output = BytesIO()
+    Image.new("RGB", size, "teal").save(output, format="WEBP")
+    return output.getvalue()
 
 
 def test_render_publication_replay_retains_media_and_exact_snapshot(render):

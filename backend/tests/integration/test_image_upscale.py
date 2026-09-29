@@ -25,6 +25,12 @@ def png(size):
     return stream.getvalue()
 
 
+def webp(size):
+    stream = BytesIO()
+    Image.new("RGB", size, "purple").save(stream, format="WEBP", quality=90)
+    return stream.getvalue()
+
+
 class FakeUpscaler:
     def __init__(self):
         self.calls = 0
@@ -110,6 +116,28 @@ def test_generated_source_can_be_upscaled_without_mutation(setup):
     assert derivative.source_artifact_id == generated.artifact_id
     assert images.image(generated.artifact_id) == generated
     assert images.image(imported.artifact_id) == imported
+
+
+def test_gpt_image_2_source_dimensions_fit_existing_realesrgan_bounds():
+    capabilities = ImageUpscaleCapabilities("local", "realesr-general-x4v3", "v1", "runtime-1")
+    for width, height in ((1280, 720), (720, 1280)):
+        request = ImageUpscaleRequest(webp((width, height)), "WEBP", width, height,
+                                      target_width=width * 3, target_height=height * 3)
+        capabilities.validate(request)
+        assert (width * 4, height * 4) == ((5120, 2880) if width > height else (2880, 5120))
+
+
+def test_retained_webp_source_reaches_upscaler_and_reopens(setup, tmp_path):
+    session, store, images, imported, _, provider, service = setup
+    path = tmp_path / "source.webp"
+    path.write_bytes(webp((1280, 720)))
+    source = images.import_file(imported.acceptance_id, imported.scene_id, path)
+    assert source.format == "WEBP" and source.source_name == "source.webp"
+    ImageIntakeService(images).select(source.artifact_id, expected_selection_id=images.selected(source.scene_id).id)
+    prepared = service.prepare(source.artifact_id, 2)
+    assert prepared[2].format == "WEBP"
+    derivative_id = service.upscale_selected(source.scene_id, 2)
+    assert images.image(derivative_id).source_artifact_id == source.artifact_id
 
 
 def test_failure_invalid_dimensions_and_stale_selection_preserve_source(setup):

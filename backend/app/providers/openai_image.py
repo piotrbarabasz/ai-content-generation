@@ -7,14 +7,11 @@ import binascii
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import io
-import json
 import os
 import re
 import threading
 import time
 from typing import Any, Protocol
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 import warnings
 
 from PIL import Image
@@ -27,8 +24,27 @@ from app.providers.image_generation import (
 )
 
 
-IMAGES_ENDPOINT = "https://api.openai.com/v1/images/generations"
-SUPPORTED_SIZES = ((1024, 1024), (1536, 1024), (1024, 1536))
+IMAGES_ENDPOINT = "/v1/images/generations"
+SUPPORTED_SIZES = ((1280, 720), (720, 1280))
+GPT_IMAGE_2_MIN_PIXELS = 655_360
+GPT_IMAGE_2_MAX_PIXELS = 8_294_400
+GPT_IMAGE_2_MAX_EDGE = 3840
+GPT_IMAGE_2_MAX_RATIO = 3
+GPT_IMAGE_2_MAX_PROMPT_CHARS = 32_000
+
+
+def validate_gpt_image_2_dimensions(width: int, height: int) -> None:
+    """Validate a GPT Image 2 resolution independently of the desktop presets."""
+    if (type(width) is not int or type(height) is not int or width <= 0 or height <= 0
+            or width % 16 or height % 16):
+        raise ValueError("GPT Image 2 dimensions must be positive multiples of 16.")
+    pixels = width * height
+    if not GPT_IMAGE_2_MIN_PIXELS <= pixels <= GPT_IMAGE_2_MAX_PIXELS:
+        raise ValueError("GPT Image 2 dimensions are outside the supported pixel range.")
+    if max(width, height) > GPT_IMAGE_2_MAX_EDGE:
+        raise ValueError("GPT Image 2 dimensions exceed the maximum edge of 3840 pixels.")
+    if max(width, height) > min(width, height) * GPT_IMAGE_2_MAX_RATIO:
+        raise ValueError("GPT Image 2 dimensions may not exceed a 3:1 aspect ratio.")
 _SECRET_KEYS = {"apiKey", "api_key", "authorization", "bearer", "credential",
                 "credentials", "secret", "token"}
 
@@ -53,10 +69,10 @@ class OpenAIImageTransport(Protocol):
 class OpenAIImageSettings:
     model: str
     api_key_env: str = "OPENAI_API_KEY"
-    quality: str = "auto"
+    quality: str = "low"
     background: str = "auto"
     moderation: str = "auto"
-    output_compression: int = 100
+    output_compression: int = 90
     timeout_seconds: float = 120.0
     max_image_bytes: int = 16 * 1024 * 1024
     max_retries: int = 2
@@ -91,19 +107,19 @@ class OpenAIImageSettings:
         if unknown:
             raise ValueError("Unknown OpenAI image setting(s): " + ", ".join(unknown) + ".")
         model = normalized.get("model")
-        if not isinstance(model, str) or not re.fullmatch(r"gpt-image-[A-Za-z0-9._:-]{1,120}", model):
-            raise ValueError("OpenAI image model must be an explicit gpt-image model identifier.")
+        if model != "gpt-image-2":
+            raise ValueError("OpenAI image model must be exactly gpt-image-2.")
         api_key_env = normalized.get("apiKeyEnv", "OPENAI_API_KEY")
         if not isinstance(api_key_env, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
             raise ValueError("OpenAI image apiKeyEnv must be an environment variable name.")
-        quality, background, moderation = (normalized.get("quality", "auto"),
+        quality, background, moderation = (normalized.get("quality", "low"),
                                             normalized.get("background", "auto"),
                                             normalized.get("moderation", "auto"))
-        if quality not in {"auto", "low", "medium", "high"}:
-            raise ValueError("OpenAI image quality must be auto, low, medium or high.")
-        if background not in {"auto", "opaque", "transparent"}:
+        if not isinstance(quality, str) or quality not in {"low", "medium", "high"}:
+            raise ValueError("GPT Image 2 quality must be low, medium or high.")
+        if not isinstance(background, str) or background not in {"auto", "opaque", "transparent"}:
             raise ValueError("OpenAI image background must be auto, opaque or transparent.")
-        if moderation not in {"auto", "low"}:
+        if not isinstance(moderation, str) or moderation not in {"auto", "low"}:
             raise ValueError("OpenAI image moderation must be auto or low.")
 
         def number(name, default, minimum, maximum):
@@ -112,7 +128,7 @@ class OpenAIImageSettings:
                 raise ValueError(f"OpenAI image {name} must be between {minimum:g} and {maximum:g}.")
             return float(item)
 
-        compression = normalized.get("outputCompression", 100)
+        compression = normalized.get("outputCompression", 90)
         image_bytes = normalized.get("maxImageBytes", 16 * 1024 * 1024)
         retries = normalized.get("maxRetries", 2)
         if isinstance(compression, bool) or not isinstance(compression, int) or not 0 <= compression <= 100:
@@ -137,52 +153,90 @@ class OpenAIImageSettings:
         }
 
 
-class UrllibOpenAIImageTransport:
-    def __init__(self, *, opener: Callable[..., Any] = urlopen) -> None:
-        self._opener = opener
+class SDKOpenAIImageTransport:
+    """Official SDK adapter. Client construction and network I/O stay request-lazy."""
+
+    def __init__(self, *, client_factory: Callable[..., Any] | None = None) -> None:
+        self._client_factory = client_factory
 
     def create_image(self, *, payload: JsonDict, api_key: str, timeout_seconds: float,
                      max_response_bytes: int) -> Mapping[str, Any]:
-        request = Request(IMAGES_ENDPOINT,
-                          data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                          headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                          method="POST")
-        try:
-            with self._opener(request, timeout=timeout_seconds) as response:
-                body = response.read(max_response_bytes + 1)
-            if len(body) > max_response_bytes:
-                raise OpenAIImageTransportError("OpenAI image response exceeded the configured byte limit.")
-            result = json.loads(body.decode("utf-8"))
-        except HTTPError as exc:
-            status = int(exc.code)
-            retry_after = None
+        factory = self._client_factory
+        if factory is None:
             try:
-                retry_after = float(exc.headers.get("Retry-After"))
-            except (AttributeError, TypeError, ValueError):
+                from openai import OpenAI
+            except ImportError:
+                raise OpenAIImageTransportError("OpenAI SDK is unavailable; install the application dependencies.") from None
+            factory = OpenAI
+        client = None
+        try:
+            client = factory(api_key=api_key, timeout=timeout_seconds, max_retries=0)
+            response = client.images.generate(**payload)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            status = status if type(status) is int else None
+            name = type(exc).__name__
+            retry_after = None
+            response_obj = getattr(exc, "response", None)
+            headers = getattr(response_obj, "headers", None)
+            try:
+                retry_after = float(headers.get("retry-after")) if headers else None
+            except (TypeError, ValueError):
                 pass
-            if status in (401, 403):
-                message = "OpenAI image authentication failed."
-            elif status == 429:
-                message = "OpenAI image request was rate limited."
-            elif 400 <= status < 500:
-                message = "OpenAI rejected the image request."
+            if name == "AuthenticationError" or status in (401, 403):
+                message, retryable = "OpenAI image authentication failed.", False
+            elif name == "RateLimitError" or status == 429:
+                message, retryable = "OpenAI image request was rate limited.", True
+            elif name in {"APITimeoutError", "TimeoutError"}:
+                message, retryable = "OpenAI image request timed out.", True
+            elif name in {"APIConnectionError", "ConnectError", "ReadError"}:
+                message, retryable = "OpenAI image network request failed.", True
+            elif status is not None and 500 <= status <= 599:
+                message, retryable = "OpenAI image service is unavailable.", True
+            elif status is not None and 400 <= status <= 499:
+                message, retryable = "OpenAI rejected the image request.", False
             else:
-                message = "OpenAI image service is unavailable."
-            raise OpenAIImageTransportError(message, status_code=status,
-                                            retryable=status == 429 or status >= 500,
-                                            retry_after=retry_after) from None
-        except OpenAIImageTransportError:
-            raise
-        except (TimeoutError, URLError, OSError) as exc:
-            message = ("OpenAI image network request failed."
-                       if isinstance(exc, URLError) and not isinstance(exc.reason, TimeoutError)
-                       else "OpenAI image request timed out.")
-            raise OpenAIImageTransportError(message, retryable=True) from None
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise OpenAIImageTransportError("OpenAI returned an invalid image response.") from None
-        if not isinstance(result, Mapping):
+                message, retryable = "OpenAI image request failed.", False
+            raise OpenAIImageTransportError(message, status_code=status, retryable=retryable,
+                                            retry_after=retry_after if retryable else None) from None
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        items = getattr(response, "data", None)
+        if items is None and isinstance(response, Mapping):
+            items = response.get("data")
+        if not isinstance(items, (list, tuple)):
             raise OpenAIImageTransportError("OpenAI returned an invalid image response.")
+        data = []
+        for item in items:
+            encoded = getattr(item, "b64_json", None)
+            if encoded is None and isinstance(item, Mapping):
+                encoded = item.get("b64_json")
+            if isinstance(encoded, str) and len(encoded) > max_response_bytes:
+                raise OpenAIImageTransportError("OpenAI image response exceeded the configured byte limit.")
+            row = {"b64_json": encoded}
+            revised = getattr(item, "revised_prompt", None)
+            if revised is None and isinstance(item, Mapping):
+                revised = item.get("revised_prompt")
+            if revised is not None:
+                row["revised_prompt"] = revised
+            data.append(row)
+        created = getattr(response, "created", None)
+        usage = getattr(response, "usage", None)
+        result = {"data": data}
+        if created is not None:
+            result["created"] = created
+        if usage is not None:
+            result["usage"] = usage.model_dump() if callable(getattr(usage, "model_dump", None)) else usage
         return result
+
+
+# Preserve the historical import name for callers that injected a transport.
+UrllibOpenAIImageTransport = SDKOpenAIImageTransport
 
 
 class OpenAIImageProvider:
@@ -198,17 +252,19 @@ class OpenAIImageProvider:
         self._last_request_at: float | None = None
 
     def capabilities(self) -> ImageGenerationCapabilities:
-        formats = ("PNG",) if self.settings.background == "transparent" else ("PNG", "JPEG")
         return ImageGenerationCapabilities(
-            "openai", self.settings.model, "images-v1", formats=formats,
-            max_dimension=1536, max_pixels=1536 * 1024, negative_prompt=False, seeded=False,
-            supported_sizes=SUPPORTED_SIZES,
+            "openai", self.settings.model, "gpt-image-2-images-v1", formats=("PNG", "JPEG", "WEBP"),
+            max_dimension=GPT_IMAGE_2_MAX_EDGE, max_pixels=GPT_IMAGE_2_MAX_PIXELS,
+            negative_prompt=False, seeded=False, supported_sizes=(),
             settings={key: value for key, value in self.settings.public_payload().items()
                       if key not in {"apiKeyEnv", "timeoutSeconds", "maxRetries",
                                      "requestIntervalSeconds", "retryDelaySeconds"}},
         )
 
     def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult:
+        if len(request.prompt) > GPT_IMAGE_2_MAX_PROMPT_CHARS:
+            raise ValueError("GPT Image 2 prompts cannot exceed 32000 characters.")
+        validate_gpt_image_2_dimensions(request.width, request.height)
         self.capabilities().validate(request)
         output_format = request.format.lower()
         payload = {
@@ -217,7 +273,7 @@ class OpenAIImageProvider:
             "background": self.settings.background, "moderation": self.settings.moderation,
             "output_format": output_format, "n": 1,
         }
-        if output_format == "jpeg":
+        if output_format in {"jpeg", "webp"}:
             payload["output_compression"] = self.settings.output_compression
         response = self._request(payload)
         image_bytes, response_metadata = self._decode_response(response)
@@ -257,7 +313,8 @@ class OpenAIImageProvider:
             except OpenAIImageTransportError as exc:
                 if not exc.retryable or attempt >= self.settings.max_retries:
                     raise
-                delay = exc.retry_after if exc.retry_after is not None else self.settings.retry_delay_seconds
+                delay = (exc.retry_after if exc.retry_after is not None else
+                         self.settings.retry_delay_seconds * (2 ** attempt))
                 self._sleep(min(max(delay, 0.0), 60.0))
         raise AssertionError("unreachable")
 
@@ -297,18 +354,18 @@ class OpenAIImageProvider:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
-                with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG")) as image:
+                with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG", "WEBP")) as image:
                     measured = image.format, *image.size
                     if getattr(image, "n_frames", 1) != 1 or getattr(image, "is_animated", False):
                         raise ValueError
                     image.verify()
-                with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG")) as image:
+                with Image.open(io.BytesIO(payload), formats=("PNG", "JPEG", "WEBP")) as image:
                     image.load()
             return measured
         except (OSError, SyntaxError, ValueError, Warning, Image.DecompressionBombError):
-            raise OpenAIImageError("OpenAI returned an invalid PNG/JPEG image.") from None
+            raise OpenAIImageError("OpenAI returned an invalid PNG/JPEG/WebP image.") from None
 
 
 __all__ = ["IMAGES_ENDPOINT", "OpenAIImageError", "OpenAIImageProvider", "OpenAIImageSettings",
            "OpenAIImageTransport", "OpenAIImageTransportError", "SUPPORTED_SIZES",
-           "UrllibOpenAIImageTransport"]
+           "UrllibOpenAIImageTransport", "SDKOpenAIImageTransport", "validate_gpt_image_2_dimensions"]

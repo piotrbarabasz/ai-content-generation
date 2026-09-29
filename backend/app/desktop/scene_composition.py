@@ -14,7 +14,7 @@ from app.storage.scene_plans import ProjectScenePlans
 
 
 def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image_provider=None, upscale_provider=None,
-                   context_resolver=None):
+                   context_resolver=None, image_generators=(), default_generator_id=None):
     jobs = JobRepository(session.repository)
     index = ImageResultIndex(session.repository, jobs)
     store = LocalArtifactStore(index.root, index=index)
@@ -27,13 +27,20 @@ def compose_scenes(session, *, prompt_provider=None, prompt_identity=None, image
             brief = index.prompts.current_context("film_brief")
             style = index.prompts.current_context("visual_style")
             return brief.id if brief else None, style.id if style else None
-    generation = ImageGenerationService(ResultPublicationService(index, store), coordinator,
-                                        artifacts, image_provider)
+    publication = ResultPublicationService(index, store)
+    generation_services = {
+        option.id: ImageGenerationService(publication, coordinator, artifacts, option.provider)
+        for option in image_generators
+    }
+    legacy_generation = ImageGenerationService(publication, coordinator, artifacts, image_provider)
+    generation = generation_services.get(default_generator_id, legacy_generation)
     return SceneServices(plans=ProjectScenePlans(session.repository, store), prompts=prompts,
                          intake=ImageIntakeService(artifacts.images), generation=generation,
                          images=artifacts.images, store=store, coordinator=coordinator,
                          context_resolver=context_resolver,
-                         upscale=ImageUpscaleService(artifacts.images, store, upscale_provider))
+                         upscale=ImageUpscaleService(artifacts.images, store, upscale_provider),
+                         image_generators=image_generators, generation_services=generation_services,
+                         default_generator_id=default_generator_id)
 
 
 __all__ = ["compose_scenes"]

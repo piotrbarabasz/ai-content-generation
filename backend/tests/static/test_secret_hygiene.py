@@ -34,7 +34,7 @@ class SecretHygieneTests(unittest.TestCase):
 
         self.assertRegex(env_example, r"(?m)^OPENAI_API_KEY=$")
         self.assertRegex(env_example, r"(?m)^AICS_OPENAI_MODEL=$")
-        self.assertIn("# AICS_OPENAI_IMAGE_MODEL=", env_example)
+        self.assertIn("AICS_OPENAI_IMAGE_MODEL=gpt-image-2", env_example)
         for pattern in REAL_LOOKING_SECRET_PATTERNS:
             self.assertIsNone(pattern.search(env_example))
 

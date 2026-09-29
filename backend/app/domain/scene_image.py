@@ -45,7 +45,7 @@ class SceneImage:
             _text(value)
         if any(c in self.source_name for c in "/\\:"):
             raise ValueError("Image source name must not expose a path.")
-        if (self.format not in ("PNG", "JPEG") or self.provenance not in ("imported", "generated", "upscaled", "final")
+        if (self.format not in ("PNG", "JPEG", "WEBP") or self.provenance not in ("imported", "generated", "upscaled", "final")
                 or any(type(n) is not int or n <= 0 for n in (self.size_bytes, self.width, self.height))
                 or type(self.orientation) is not int or self.orientation not in range(1, 9)
                 or type(self.checksum) is not str or len(self.checksum) != 64

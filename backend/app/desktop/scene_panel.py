@@ -44,6 +44,7 @@ class ScenePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.services = self.section = self.current = None
+        self.image_generator_options = ()
         self.views = ()
         self.loading = self.prompt_dirty = self.context_dirty = False
         self.context_saved = ("", "")
@@ -96,6 +97,9 @@ class ScenePanel(QWidget):
         self._button(image_actions, "Cancel image", self.cancel_image)
         self._button(image_actions, "Select image", self.select_image)
         settings = QFormLayout()
+        self.image_generator = QComboBox()
+        self.image_generator.currentIndexChanged.connect(self._generator_changed)
+        settings.addRow("Image generator", self.image_generator)
         self.orientation = QComboBox()
         for key, value in ORIENTATIONS.items():
             self.orientation.addItem(value["label"], key)
@@ -140,6 +144,17 @@ class ScenePanel(QWidget):
         if self.context_dirty:
             raise ValueError("Save the visual context draft before switching projects.")
         self.services, self.section, self.current = services, None, None
+        self.image_generator.blockSignals(True)
+        self.image_generator.clear()
+        option_reader = getattr(services, "image_generator_options", None)
+        self.image_generator_options = tuple(option_reader()) if callable(option_reader) else ()
+        for option in self.image_generator_options:
+            self.image_generator.addItem(option.label, option.id)
+        default_reader = getattr(services, "image_generator_default", None)
+        default_id = default_reader() if callable(default_reader) else None
+        default_index = self.image_generator.findData(default_id) if default_id else -1
+        self.image_generator.setCurrentIndex(default_index)
+        self.image_generator.blockSignals(False)
         self.views = ()
         context_reader = getattr(services, "visual_context", None)
         context = context_reader() if callable(context_reader) else None
@@ -154,7 +169,10 @@ class ScenePanel(QWidget):
         if services:
             try:
                 capability_reader = getattr(services, "image_capabilities", None)
-                capabilities = capability_reader() if callable(capability_reader) else None
+                generator_id = self.image_generator.currentData()
+                capabilities = capability_reader(generator_id) if callable(capability_reader) and generator_id else None
+                if not self.image_generator_options:
+                    capabilities = capability_reader() if callable(capability_reader) else None
                 if capabilities is not None:
                     self.seed.setEnabled(capabilities.seeded)
                     if not capabilities.seeded:
@@ -248,7 +266,10 @@ class ScenePanel(QWidget):
     def _update_preset_sizes(self):
         orientation = self.orientation.currentData()
         resolution = self.resolution.currentData()
-        gen_width, gen_height = generation_dimensions(orientation)
+        generator_id = self.image_generator.currentData()
+        dimension_reader = getattr(self.services, "image_generation_dimensions", None)
+        dimensions = dimension_reader(generator_id, orientation) if callable(dimension_reader) and generator_id else None
+        gen_width, gen_height = dimensions or generation_dimensions(orientation)
         final_width, final_height = final_dimensions(orientation, resolution)
         self.generation_size.setText(f"{gen_width} × {gen_height}")
         self.final_size.setText(f"{final_width} × {final_height}")
@@ -257,6 +278,17 @@ class ScenePanel(QWidget):
 
     def _orientation_changed(self):
         self._update_preset_sizes()
+
+    def _generator_changed(self):
+        if self.services is not None and self.image_generator.currentData():
+            capabilities = self.services.image_capabilities(self.image_generator.currentData())
+            self.seed.setEnabled(capabilities.seeded)
+            if not capabilities.seeded:
+                self.seed.setValue(0)
+        else:
+            self.seed.setEnabled(True)
+        self._update_preset_sizes()
+        self._enable()
 
     @staticmethod
     def _select_combo(combo, value):
@@ -303,12 +335,15 @@ class ScenePanel(QWidget):
                                                   "Generate prompt")
         self.buttons["Select prompt"].setEnabled(ready and not self.prompt_dirty and self.prompt_variants.count() > 0)
         self.buttons["Import image"].setEnabled(ready and not self.prompt_dirty)
-        self.buttons["Generate image"].setEnabled(ready and not self.prompt_dirty and bool(self.current.prompt_id if ready else False))
+        generator_selected = not self.image_generator_options or self.image_generator.currentData() is not None
+        self.buttons["Generate image"].setEnabled(ready and generator_selected and not self.prompt_dirty
+                                                   and bool(self.current.prompt_id if ready else False))
         self.buttons["Cancel image"].setEnabled(self.image_worker is not None)
         self.buttons["Select image"].setEnabled(ready and not self.prompt_dirty and self.image_variants.count() > 0)
         configured = bool(self.services and getattr(self.services, "upscale", None)
                           and self.services.upscale.provider is not None)
         self.orientation.setEnabled(not self.busy)
+        self.image_generator.setEnabled(not self.busy and bool(self.image_generator_options))
         self.resolution.setEnabled(not self.busy)
         self.buttons["Create final image"].setEnabled(ready and configured and bool(self.current.image_id)
                                                      and self.resolution.currentData() != "draft")
@@ -347,30 +382,42 @@ class ScenePanel(QWidget):
     def import_image(self):
         if not self.current:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import scene image", filter="Images (*.png *.jpg *.jpeg)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import scene image", filter="Images (*.png *.jpg *.jpeg *.webp)")
         if path:
             self._act(lambda: self.services.import_image(self.current.id, path), "Image imported and selected.",
                       media_changed=True)
 
     def generate_image(self):
         if self.current:
-            width, height = generation_dimensions(self.orientation.currentData())
+            generator_id = self.image_generator.currentData() if self.image_generator_options else None
+            if self.image_generator_options and generator_id is None:
+                self.status.setText("Select an image generator.")
+                return
+            dimension_reader = getattr(self.services, "image_generation_dimensions", None)
+            dimensions = dimension_reader(generator_id, self.orientation.currentData()) if callable(dimension_reader) and generator_id else None
+            width, height = dimensions or generation_dimensions(self.orientation.currentData())
             provider = getattr(self.services.generation, "provider", None) if hasattr(self.services, "generation") else None
-            if getattr(provider, "requires_background", False):
+            if generator_id is not None or getattr(provider, "requires_background", False):
                 try:
                     pending, cached = self.services.prepare_background_image(
-                        self.current.id, width=width, height=height, seed=self.seed.value())
+                        self.current.id, width=width, height=height, seed=self.seed.value(),
+                        **({"generator_id": generator_id} if generator_id is not None else {}))
                     if cached is not None:
                         self._replace(cached, "Cached image selected.")
                         self.media_changed.emit()
                         self._auto_upscale()
                         return
-                    claim, scene_id, provider, request = pending
-                    self.image_claim = claim, scene_id
+                    if len(pending) == 6:
+                        claim, scene_id, generator_id, provider, request, expected_selection_id = pending
+                        self.image_claim = claim, scene_id, generator_id, expected_selection_id
+                    else:
+                        claim, scene_id, provider, request = pending
+                        generator_id, expected_selection_id = None, ...
+                        self.image_claim = claim, scene_id
                     self.image_worker = ImageGenerationThread(provider, request, self)
                     self.image_worker.outcome.connect(self._image_generated)
                     self.image_worker.start()
-                    self.status.setText("Generating image in the managed CUDA worker…")
+                    self.status.setText("Generating image in a background worker…")
                     self._enable()
                 except Exception as exc:
                     self.status.setText(str(exc))
@@ -382,13 +429,24 @@ class ScenePanel(QWidget):
                     self._auto_upscale()
 
     def _image_generated(self, result, error):
-        claim, scene_id = self.image_claim
+        if len(self.image_claim) == 4:
+            claim, scene_id, generator_id, expected_selection_id = self.image_claim
+        else:
+            claim, scene_id = self.image_claim
+            generator_id, expected_selection_id = None, ...
         succeeded = False
         try:
             if error is not None:
-                self.services.finish_background_image(claim, scene_id, error=error)
+                if generator_id is None:
+                    self.services.finish_background_image(claim, scene_id, error=error)
+                else:
+                    self.services.finish_background_image(claim, scene_id, error=error, generator_id=generator_id)
             else:
-                view = self.services.finish_background_image(claim, scene_id, result=result)
+                if generator_id is None:
+                    view = self.services.finish_background_image(claim, scene_id, result=result)
+                else:
+                    view = self.services.finish_background_image(claim, scene_id, result=result,
+                        generator_id=generator_id, expected_selection_id=expected_selection_id)
                 self._replace(view, "Image generated and selected.")
                 self.media_changed.emit()
                 succeeded = True
@@ -460,9 +518,13 @@ class ScenePanel(QWidget):
 
     def cancel_image(self):
         if self.busy:
-            claim, _ = self.image_claim
-            self.services.cancel_background_image(claim)
-            self.status.setText("Cancel requested; waiting for local image worker cleanup.")
+            claim = self.image_claim[0]
+            generator_id = self.image_claim[2] if len(self.image_claim) == 4 else None
+            if generator_id is None:
+                self.services.cancel_background_image(claim)
+            else:
+                self.services.cancel_background_image(claim, generator_id=generator_id)
+            self.status.setText("Cancel requested; waiting for image worker completion.")
 
     def select_image(self):
         if self.current and self.image_variants.currentData():

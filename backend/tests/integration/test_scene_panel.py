@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QSpinBox
 from PIL import Image
 
@@ -31,6 +32,14 @@ def sized_png(size):
     output = BytesIO()
     Image.new("RGB", size, (80, 100, 120)).save(output, format="PNG")
     return output.getvalue()
+
+
+def test_qt_can_display_retained_webp_bytes(qt):
+    output = BytesIO()
+    Image.new("RGB", (32, 18), "navy").save(output, format="WEBP")
+    pixmap = QPixmap()
+    assert pixmap.loadFromData(output.getvalue())
+    assert (pixmap.width(), pixmap.height()) == (32, 18)
 
 
 def test_orientation_and_final_resolution_presets_update_exact_sizes(qt):
@@ -54,6 +63,52 @@ def test_orientation_and_final_resolution_presets_update_exact_sizes(qt):
     panel.resolution.setCurrentIndex(1)
     assert panel.final_size.text() == "1080 × 1920"
     panel.close()
+
+
+def test_generator_catalog_updates_source_size_seed_and_keeps_selected_image(qt):
+    class CatalogServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.values[0] = replace(self.values[0], image_id="legacy", image_selection_id="selection-1")
+            self.options = (SimpleNamespace(id="local-sd15", label="Local — Stable Diffusion 1.5"),
+                            SimpleNamespace(id="openai-gpt-image-2", label="OpenAI — GPT Image 2"))
+            self.caps = {"local-sd15": SimpleNamespace(seeded=True),
+                         "openai-gpt-image-2": SimpleNamespace(seeded=False)}
+
+        def image_generator_options(self):
+            return self.options
+
+        def image_generator_default(self):
+            return "local-sd15"
+
+        def image_capabilities(self, generator_id=None):
+            return self.caps.get(generator_id)
+
+        def image_generation_dimensions(self, generator_id, orientation):
+            return {"local-sd15": {"landscape": (640, 360), "portrait": (360, 640)},
+                    "openai-gpt-image-2": {"landscape": (1280, 720), "portrait": (720, 1280)}}[generator_id][orientation]
+
+    services = CatalogServices()
+    services.image_payloads["legacy"] = sized_png((640, 360))
+    panel = ScenePanel()
+    panel.bind(services)
+    panel.select_section(object())
+    try:
+        panel.seed.setValue(43)
+        assert panel.image_generator.count() == 2
+        assert panel.generation_size.text() == "640 × 360"
+        assert panel.seed.isEnabled() and panel.seed.value() == 43
+        panel.image_generator.setCurrentIndex(panel.image_generator.findData("openai-gpt-image-2"))
+        assert panel.generation_size.text() == "1280 × 720"
+        assert not panel.seed.isEnabled() and panel.seed.value() == 0
+        panel.orientation.setCurrentIndex(1)
+        assert panel.generation_size.text() == "720 × 1280"
+        assert panel.current.image_id == "legacy"
+        assert panel.current.image_selection_id == "selection-1"
+        panel.image_generator.setCurrentIndex(panel.image_generator.findData("local-sd15"))
+        assert panel.generation_size.text() == "360 × 640" and panel.seed.isEnabled()
+    finally:
+        panel.close()
 
 
 def test_generate_passes_selected_orientation_dimensions(panel):
@@ -332,5 +387,62 @@ def test_local_image_inference_runs_off_gui_thread_and_finishes_on_owner_thread(
         assert not widget.busy and widget.current.image_id == "generated"
         assert next(call[1] for call in services.calls if call[0] == "infer") != services.gui_thread
         assert next(call[1] for call in services.calls if call[0] == "finish") == services.gui_thread
+    finally:
+        widget.close()
+
+
+def test_catalog_image_inference_runs_off_gui_thread_and_finishes_on_owner_thread(qt):
+    class BackgroundServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.gui_thread = threading.get_ident()
+            self.provider = SimpleNamespace(generate=self.generate)
+            self.option = SimpleNamespace(id="openai-gpt-image-2", label="OpenAI GPT Image 2",
+                                          provider=self.provider)
+
+        def image_generator_options(self):
+            return (self.option,)
+
+        def image_generator_default(self):
+            return self.option.id
+
+        def image_generator_seeded(self, generator_id):
+            return False
+
+        def image_generation_dimensions(self, generator_id, orientation):
+            return (1280, 720) if orientation == "landscape" else (720, 1280)
+
+        def prepare_background_image(self, scene_id, **settings):
+            self.calls.append(("prepare", settings))
+            return (SimpleNamespace(id="claim"), scene_id, self.option.id,
+                    self.provider, object(), "selection-before"), None
+
+        def generate(self, request):
+            self.calls.append(("infer", threading.get_ident()))
+            return PNG
+
+        def finish_background_image(self, claim, scene_id, result=None, error=None,
+                                    *, generator_id=None, expected_selection_id=...):
+            self.calls.append(("finish", threading.get_ident(), generator_id, expected_selection_id))
+            assert result == PNG and error is None
+            return self._change(scene_id, image_id="generated", image_selection_id="generated-selection",
+                                images=(ImageVariant("generated", "generated: image.png (1×1)"),))
+
+    services = BackgroundServices()
+    widget = ScenePanel()
+    widget.bind(services)
+    widget.select_section(object())
+    try:
+        QTest.mouseClick(widget.buttons["Generate image"], Qt.LeftButton)
+        for _ in range(100):
+            qt.processEvents()
+            if not widget.busy:
+                break
+            QTest.qWait(10)
+        assert not widget.busy and widget.current.image_id == "generated"
+        assert next(call[1] for call in services.calls if call[0] == "infer") != services.gui_thread
+        finish = next(call for call in services.calls if call[0] == "finish")
+        assert finish[1] == services.gui_thread
+        assert finish[2:] == ("openai-gpt-image-2", "selection-before")
     finally:
         widget.close()

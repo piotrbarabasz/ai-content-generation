@@ -7,8 +7,9 @@ import sys
 import pytest
 
 from app.providers.image_factory import build_image_provider
-from app.providers.image_generation import ImageGenerationCapabilities, ImageGenerationRequest, ImageGenerationResult
-from app.providers.interfaces import ImageGenerationProvider
+from app.providers.image_generation import (
+    ImageGenerationCapabilities, ImageGenerationProvider, ImageGenerationRequest, ImageGenerationResult,
+)
 from app.storage.image_decoder import ImageLimits, decode_image
 
 

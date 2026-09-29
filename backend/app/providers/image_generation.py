@@ -25,7 +25,7 @@ class ImageGenerationRequest:
         _text(self.prompt)
         if (any(type(n) is not int or n <= 0 for n in (self.width, self.height))
                 or type(self.seed) is not int or not 0 <= self.seed < 2**32
-                or self.format not in ("PNG", "JPEG") or type(self.negative_prompt) is not str):
+                or self.format not in ("PNG", "JPEG", "WEBP") or type(self.negative_prompt) is not str):
             raise ValueError("Invalid image generation settings.")
 
     def to_payload(self):
@@ -53,7 +53,7 @@ class ImageGenerationCapabilities:
         for value in (self.provider, self.model, self.version):
             _text(value)
         if (type(self.formats) is not tuple or not self.formats or len(set(self.formats)) != len(self.formats)
-                or any(f not in ("PNG", "JPEG") for f in self.formats)
+                or any(f not in ("PNG", "JPEG", "WEBP") for f in self.formats)
                 or any(type(n) is not int or n <= 0 for n in (self.max_dimension, self.max_pixels))
                 or type(self.negative_prompt) is not bool or type(self.seeded) is not bool
                 or type(self.supported_sizes) is not tuple
@@ -92,7 +92,7 @@ class ImageGenerationResult:
 
     def __post_init__(self):
         if (type(self.image_bytes) is not bytes or not self.image_bytes
-                or self.format not in ("PNG", "JPEG")
+                or self.format not in ("PNG", "JPEG", "WEBP")
                 or any(type(n) is not int or n <= 0 for n in (self.width, self.height))
                 or type(self.metadata) is not dict):
             raise ValueError("Invalid image generation result; encoded bytes are required.")

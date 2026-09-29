@@ -70,13 +70,36 @@ def test_factory_wraps_provider_configuration_failure():
 
 
 def test_private_source_bundle_imports_without_application_checkout_or_optional_packages(tmp_path):
-    for name, data in source_files().items():
+    sources = source_files()
+    for name, data in sources.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-    code = "import sys; sys.path.insert(0, sys.argv[1]); import app.runtime.section_worker; assert not any(x in sys.modules for x in ('sqlite3','torch','piper','onnxruntime','PySide6'))"
+    code = "import sys; sys.path.insert(0, sys.argv[1]); import app.runtime.section_worker, app.runtime.chatterbox_worker, app.runtime.piper_worker; assert not any(x in sys.modules for x in ('sqlite3','torch','torchaudio','piper','onnxruntime','PySide6','app.providers.image_generation'))"
     child = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=15)
     assert child.returncode == 0, child.stderr
+
+
+def test_audio_worker_source_closure_excludes_image_modules_and_keeps_audio_dependencies():
+    sources = source_files()
+    image_only = (
+        "app/providers/image_generation.py", "app/providers/openai_image.py",
+        "app/providers/local_image.py", "app/providers/image_upscale.py",
+        "app/providers/local_upscale.py", "app/desktop/image_generators.py",
+        "app/desktop/image_composition.py", "app/desktop/scene_panel.py",
+        "app/desktop/scene_services.py", "app/storage/image_generation.py",
+        "app/storage/scene_images.py", "app/storage/image_decoder.py",
+    )
+    audio_required = (
+        "app/runtime/chatterbox_worker.py", "app/runtime/piper_worker.py",
+        "app/runtime/worker.py", "app/runtime/supervisor.py",
+        "app/runtime/section_synthesis.py", "app/runtime/section_worker.py",
+        "app/runtime/chatterbox_voice.py", "app/providers/chatterbox_v3.py",
+        "app/providers/piper_tts.py", "app/providers/interfaces.py",
+    )
+    assert set(image_only).isdisjoint(sources)
+    assert set(audio_required) <= set(sources)
+    assert b"ImageGenerationProvider" not in sources["app/providers/interfaces.py"]
 
 
 def test_packaged_bundle_retains_exact_source_bytes(tmp_path):

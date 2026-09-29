@@ -16,7 +16,7 @@ class ImageUpscaleRequest:
 
     def __post_init__(self):
         if (type(self.image_bytes) is not bytes or not self.image_bytes
-                or self.format not in ("PNG", "JPEG")
+                or self.format not in ("PNG", "JPEG", "WEBP")
                 or type(self.width) is not int or type(self.height) is not int
                 or not 0 < self.width <= 8192 or not 0 < self.height <= 8192
                 or type(self.target_width) is not int or type(self.target_height) is not int
