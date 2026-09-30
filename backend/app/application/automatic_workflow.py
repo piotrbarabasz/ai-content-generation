@@ -187,18 +187,18 @@ class AutomaticWorkflow:
                     if config.final_resolution == "draft":
                         logger.info("[AICS][PIPELINE][AUTO][FINAL_IMAGE][SKIP] scene=%s resolution=draft", scene.id)
                         self.skipped += 1
-                    elif self.driver.final_image_ready(section, scene, config):
-                        logger.info("[AICS][PIPELINE][AUTO][FINAL_IMAGE][SKIP] scene=%s resolution=%s",
+                    elif self.driver.motion_master_ready(section, scene, config):
+                        logger.info("[AICS][PIPELINE][AUTO][MOTION_MASTER][SKIP] scene=%s resolution=%s",
                                     scene.id, config.final_resolution)
                         self.skipped += 1
                     else:
-                        logger.info("[AICS][PIPELINE][AUTO][FINAL_IMAGE][BUILD] scene=%s resolution=%s",
+                        logger.info("[AICS][PIPELINE][AUTO][MOTION_MASTER][BUILD] scene=%s resolution=%s",
                                     scene.id, config.final_resolution)
-                        await self._operation("FINAL_IMAGE",
-                            lambda section=section, scene=scene: self.driver.create_final_image(section, scene, config),
+                        await self._operation("MOTION_MASTER",
+                            lambda section=section, scene=scene: self.driver.create_motion_master(section, scene, config),
                             section=section_label, scene=scene.id)
-                        if not self.driver.final_image_ready(section, scene, config):
-                            raise AutomaticWorkflowBlocked("FINAL_IMAGE", "Final image did not validate for the requested target.",
+                        if not self.driver.motion_master_ready(section, scene, config):
+                            raise AutomaticWorkflowBlocked("MOTION_MASTER", "Motion master did not validate for the requested target.",
                                                            section=section_label, scene=scene.id)
 
             self._check_cancel()

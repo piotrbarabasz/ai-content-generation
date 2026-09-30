@@ -61,3 +61,56 @@ def test_real_colors_and_tones_follow_exact_reordered_source_ranges(tmp_path, re
     path.write_bytes(path.read_bytes()[:path.stat().st_size // 2])
     with pytest.raises((ValueError, RuntimeError, KeyError, StopIteration)):
         asyncio.run(provider.validate(timeline, tmp_path, canceled=lambda: False, progress=lambda *_: None))
+
+
+def test_motion_master_renders_fhd_with_deterministic_camera_motion(tmp_path):
+    ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+    assert ffmpeg and ffprobe
+    source = media("motion", rate=8000, end=16000, total=16000)
+    master = replace(source.image, width=2400, height=1350, provenance="motion_master", lineage_version=3,
+        source_artifact_id="source-motion", source_checksum="c" * 64, source_width=640, source_height=360,
+        target_profile="fhd", master_width=2400, master_height=1350, delivery_width=1920, delivery_height=1080,
+        overscan_policy="5:4", native_model_scale=4, native_width=2560, native_height=1440,
+        final_resize_method="Lanczos")
+    source = replace(source, image=master)
+    timeline = compile_values(source, fit_policy="fill")
+    # Asymmetric synthetic master makes camera movement visible after H.264 encoding.
+    image = Image.new("RGB", (2400, 1350))
+    pixels = image.load()
+    for x in range(2400):
+        color = (255, 30, 20) if x < 800 else ((20, 220, 40) if x < 1600 else (20, 40, 255))
+        for y in range(1350):
+            pixels[x, y] = color
+    image.save(tmp_path / "image-0.png")
+    with wave.open(str(tmp_path / "audio-0.wav"), "wb") as audio:
+        audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        audio.writeframes(array("h", [0] * 16000).tobytes())
+    renderer = FFmpegRenderer(ffmpeg, ffprobe)
+    assert FFmpegRenderer(ffmpeg, ffprobe, proxy=True).dimensions(timeline) == ("proxy", 640, 360)
+    result = asyncio.run(renderer.render(timeline, tmp_path, canceled=lambda: False, progress=lambda *_: None))
+    assert (result.width, result.height, result.fps) == (1920, 1080, 25)
+    assert result.frame_count == 50 and result.profile == "fhd"
+    decoded = subprocess.run([ffmpeg, "-v", "error", "-i", str(tmp_path / "render.mp4"),
+        "-vf", "select='eq(n,0)+eq(n,49)',scale=64:36", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True, timeout=30).stdout
+    frame_bytes = 64 * 36 * 3
+    assert len(decoded) == 2 * frame_bytes
+    assert sum(a != b for a, b in zip(decoded[:frame_bytes], decoded[frame_bytes:])) > 100
+    corners = subprocess.run([ffmpeg, "-v", "error", "-i", str(tmp_path / "render.mp4"),
+        "-frames:v", "1", "-vf", "crop=2:2:0:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True, timeout=30).stdout
+    assert len(corners) == 12 and max(corners) > 15
+
+
+def test_portrait_delivery_resolves_portrait_proxy_size(tmp_path):
+    ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+    assert ffmpeg and ffprobe
+    source = media("portrait")
+    image = replace(source.image, width=1350, height=2400, provenance="motion_master", lineage_version=3,
+        source_artifact_id="source-portrait", source_checksum="d" * 64, source_width=360, source_height=640,
+        target_profile="fhd", master_width=1350, master_height=2400, delivery_width=1080, delivery_height=1920,
+        overscan_policy="5:4", native_model_scale=4, native_width=1440, native_height=2560,
+        final_resize_method="Lanczos")
+    timeline = compile_values(replace(source, image=image))
+    assert FFmpegRenderer(ffmpeg, ffprobe).dimensions(timeline) == ("fhd", 1080, 1920)
+    assert FFmpegRenderer(ffmpeg, ffprobe, proxy=True).dimensions(timeline) == ("proxy", 360, 640)

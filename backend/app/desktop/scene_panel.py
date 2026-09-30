@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
-from app.application.image_presets import (ORIENTATIONS, RESOLUTIONS, final_dimensions,
+from app.application.image_presets import (ORIENTATIONS, RESOLUTIONS, delivery_dimensions, motion_master_dimensions,
                                            aspect_label, generation_dimensions, orientation_compatible)
 
 
@@ -117,11 +117,15 @@ class ScenePanel(QWidget):
         self.seed.setRange(0, 2**31 - 1)
         settings.addRow("Orientation", self.orientation)
         settings.addRow("Generation size", self.generation_size)
-        settings.addRow("Final resolution", self.resolution)
-        settings.addRow("Final size", self.final_size)
+        settings.addRow("Delivery resolution", self.resolution)
+        settings.addRow("Motion master size", self.final_size)
+        self.delivery_size = QLabel()
+        settings.addRow("Delivery size", self.delivery_size)
+        self.motion_policy = QLabel()
+        settings.addRow("Motion", self.motion_policy)
         settings.addRow("Seed", self.seed)
         layout.addLayout(settings)
-        self._button(layout, "Create final image", self.create_final_image)
+        self._button(layout, "Create motion master", self.create_final_image)
         self._button(layout, "Cancel upscale", self.cancel_upscale)
         self._update_preset_sizes()
         self.status = QLabel("Scene services are not configured.")
@@ -280,9 +284,12 @@ class ScenePanel(QWidget):
         dimension_reader = getattr(self.services, "image_generation_dimensions", None)
         dimensions = dimension_reader(generator_id, orientation) if callable(dimension_reader) and generator_id else None
         gen_width, gen_height = dimensions or generation_dimensions(orientation)
-        final_width, final_height = final_dimensions(orientation, resolution)
+        final_width, final_height = motion_master_dimensions(orientation, resolution)
+        delivery_width, delivery_height = delivery_dimensions(orientation, resolution)
         self.generation_size.setText(f"{gen_width} × {gen_height}")
-        self.final_size.setText(f"{final_width} × {final_height}")
+        self.final_size.setText("—" if resolution == "draft" else f"{final_width} × {final_height}")
+        self.delivery_size.setText("—" if resolution == "draft" else f"{delivery_width} × {delivery_height}")
+        self.motion_policy.setText("—" if resolution == "draft" else "Auto subtle")
         if self.current is not None:
             self._load_image(self.current.image_id)
 
@@ -355,7 +362,7 @@ class ScenePanel(QWidget):
         self.orientation.setEnabled(not self.busy)
         self.image_generator.setEnabled(not self.busy and bool(self.image_generator_options))
         self.resolution.setEnabled(not self.busy)
-        self.buttons["Create final image"].setEnabled(ready and configured and bool(self.current.image_id)
+        self.buttons["Create motion master"].setEnabled(ready and configured and bool(self.current.image_id)
                                                      and self.resolution.currentData() != "draft")
         self.buttons["Cancel upscale"].setEnabled(self.upscale_worker is not None)
 
@@ -482,11 +489,11 @@ class ScenePanel(QWidget):
         if self.busy or self.resolution.currentData() == "draft":
             return
         try:
-            prepared = self.services.prepare_final_image(artifact_id, self.orientation.currentData(),
+            prepared = self.services.prepare_motion_master(artifact_id, self.orientation.currentData(),
                                                          self.resolution.currentData())
-            cached = self.services.cached_final_image(prepared)
+            cached = self.services.cached_motion_master(prepared)
             if cached is not None:
-                self._replace(self.services.select_cached_final_image(prepared, cached), "Cached final image selected.")
+                self._replace(self.services.select_cached_motion_master(prepared, cached), "Cached motion master selected.")
                 self.media_changed.emit()
                 return
             self.upscale_prepared = prepared
@@ -509,7 +516,7 @@ class ScenePanel(QWidget):
                 raise RuntimeError("Local upscaling canceled.")
             if error is not None:
                 raise error
-            self._replace(self.services.finish_final_image(self.upscale_prepared, result), "Final image selected.")
+            self._replace(self.services.finish_motion_master(self.upscale_prepared, result), "Motion master selected.")
             self.media_changed.emit()
         except Exception as exc:
             self.status.setText(str(exc))

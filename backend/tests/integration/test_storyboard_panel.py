@@ -89,7 +89,7 @@ def test_standard_storyboard_populates_sixty_cards_and_selection_does_not_reload
     assert selected == ["scene-37"]
     assert service.calls == 2 and service.image_reads == 60
     assert "Local SD 1.5" in panel._cards["scene-37"][4].text()
-    assert "Final ready" in panel._cards["scene-1"][4].text()
+    assert "Legacy final" in panel._cards["scene-1"][4].text()
     panel.close()
 
 

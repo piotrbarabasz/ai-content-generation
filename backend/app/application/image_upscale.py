@@ -8,7 +8,8 @@ from app.domain.dependencies import content_fingerprint
 from app.application.image_intake import ImageIntakeService
 from app.providers.image_upscale import ImageUpscaleCapabilities, ImageUpscaleRequest, ImageUpscaleResult
 from app.storage.image_decoder import ImageLimits, decode_image
-from app.application.image_presets import RESOLUTIONS, compatible_aspect, final_dimensions
+from app.application.image_presets import (RESOLUTIONS, compatible_aspect, final_dimensions,
+                                           delivery_dimensions, motion_master_dimensions)
 
 
 OUTPUT_LIMITS = ImageLimits(max_bytes=64 * 1024 * 1024, max_dimension=8192, max_pixels=32_000_000)
@@ -94,6 +95,102 @@ class ImageUpscaleService:
             "provider": capabilities.to_payload(), "native_model_scale": capabilities.native_model_scale,
             "final_resize_method": "Pillow Lanczos"})
         return source, choice.id, request, fingerprint, capabilities, app_request
+
+    def prepare_motion_master(self, artifact_id, orientation, resolution):
+        capabilities = self.capabilities()
+        if capabilities is None:
+            raise ValueError("Configure the optional local upscaler first.")
+        selected = self.images.image(artifact_id)
+        choice = self.images.selected(selected.scene_id)
+        if choice is None or choice.artifact_id != artifact_id:
+            raise ValueError("Select an image before creating a motion master.")
+        source = selected
+        if selected.provenance in ("upscaled", "final", "motion_master"):
+            source = self.images.image(selected.source_artifact_id)
+        delivery_width, delivery_height = delivery_dimensions(orientation, resolution)
+        target_width, target_height = motion_master_dimensions(orientation, resolution)
+        if resolution == "draft":
+            raise ValueError("Draft / Source does not create a motion master.")
+        if not compatible_aspect(source.width, source.height, delivery_width, delivery_height):
+            ratio = "16:9 Landscape" if orientation == "landscape" else "9:16 Portrait"
+            raise ValueError(f"Selected image is not compatible with the {ratio} preset.")
+        with self.store.open_artifact_id(source.artifact_id) as stream:
+            payload = stream.read(OUTPUT_LIMITS.max_bytes + 1)
+        if len(payload) != source.size_bytes or sha256(payload).hexdigest() != source.checksum:
+            raise ValueError("Source bytes changed before motion-master processing.")
+        request = ImageUpscaleRequest(payload, source.format, source.width, source.height,
+                                      target_width=target_width, target_height=target_height)
+        capabilities.validate(request)
+        fingerprint = content_fingerprint({"algorithm": "scene_image.motion_master.v1",
+            "source_artifact_id": source.artifact_id, "source_checksum": source.checksum,
+            "delivery_profile": resolution, "delivery_width": delivery_width,
+            "delivery_height": delivery_height, "master_width": target_width, "master_height": target_height,
+            "overscan_policy": "5:4", "provider": capabilities.to_payload(),
+            "native_model_scale": 4, "final_resize_policy": "Pillow Lanczos"})
+        app_request = FinalImageRequest(source.artifact_id, resolution, target_width, target_height)
+        return source, choice.id, request, fingerprint, capabilities, (app_request, delivery_width, delivery_height)
+
+    def cached_motion_master(self, prepared):
+        source, _, _, fingerprint, _, _ = prepared
+        for manifest in self.store.list_artifacts():
+            if (manifest.artifact_type == "scene_image"
+                    and manifest.metadata.get("image_motion_master", {}).get("fingerprint") == fingerprint):
+                image = self.images.image(manifest.artifact_id)
+                if image.provenance == "motion_master" and image.source_artifact_id == source.artifact_id:
+                    return image.artifact_id
+        return None
+
+    def publish_motion_master(self, prepared, result):
+        source, selection_id, request, fingerprint, capabilities, details = prepared
+        app_request, delivery_width, delivery_height = details
+        if not isinstance(result, ImageUpscaleResult) or self.capabilities() != capabilities:
+            raise ValueError("Upscaler result or identity changed during motion-master inference.")
+        measured = decode_image(result.image_bytes, OUTPUT_LIMITS)
+        target = ("PNG", request.target_width, request.target_height)
+        if (result.format, result.width, result.height) != target or (measured["format"], measured["width"], measured["height"]) != target:
+            raise ValueError("Decoded motion master differs from requested dimensions.")
+        current = self.images.selected(source.scene_id)
+        if current is None or current.id != selection_id:
+            raise ValueError("Image selection changed during processing; stale motion master discarded.")
+        existing = self.cached_motion_master(prepared)
+        if existing:
+            self.intake.select(existing, expected_selection_id=selection_id)
+            return existing
+        diagnostics = result.metadata.get("diagnostics", {})
+        native_width, native_height = source.width * 4, source.height * 4
+        resized = (native_width, native_height) != (request.target_width, request.target_height)
+        method = "Lanczos" if resized else None
+        if (diagnostics.get("native_model_scale") != 4
+                or (diagnostics.get("native_width"), diagnostics.get("native_height")) != (native_width, native_height)
+                or (diagnostics.get("final_width"), diagnostics.get("final_height")) != (request.target_width, request.target_height)
+                or diagnostics.get("final_resize_occurred") is not resized
+                or diagnostics.get("final_resize_method") != method):
+            raise ValueError("Upscaler diagnostics do not describe one native x4 inference and the requested resize.")
+        lineage = {"version": 3, "project_id": source.project_id, "acceptance_id": source.acceptance_id,
+            "scene_id": source.scene_id, "section_revision_id": source.section_revision_id,
+            "source_name": "motion-master.png", "provenance": "motion_master",
+            "source_artifact_id": source.artifact_id, "source_checksum": source.checksum,
+            "source_width": source.width, "source_height": source.height,
+            "target_profile": app_request.target_profile, "master_width": request.target_width,
+            "master_height": request.target_height, "delivery_width": delivery_width,
+            "delivery_height": delivery_height, "overscan_policy": "5:4", "native_model_scale": 4,
+            "native_width": native_width, "native_height": native_height,
+            "final_resize_method": method, "lineage_version": 3,
+            "upscaler": {**capabilities.to_payload(), "diagnostics": result.metadata}, **measured}
+        metadata = {"artifact_type": "scene_image", "project_id": source.project_id,
+            "scene_id": source.scene_id, "module_name": "desktop_image_motion_master",
+            "scene_image": lineage, "image_motion_master": {"version": 1, "fingerprint": fingerprint}}
+        manifest = self.store.save_artifact("motion-master.png", result.image_bytes, metadata)
+        self.intake.select(manifest.artifact_id, expected_selection_id=selection_id)
+        return manifest.artifact_id
+
+    def create_motion_master_selected(self, artifact_id, orientation, resolution):
+        prepared = self.prepare_motion_master(artifact_id, orientation, resolution)
+        cached = self.cached_motion_master(prepared)
+        if cached:
+            self.intake.select(cached, expected_selection_id=prepared[1])
+            return cached
+        return self.publish_motion_master(prepared, self.provider.upscale(prepared[2]))
 
     def cached_final(self, prepared):
         source, _, _, fingerprint, _, app_request = prepared

@@ -6,7 +6,8 @@ from PIL import Image
 import pytest
 
 from app.application.image_intake import ImageIntakeService
-from app.application.image_presets import final_dimensions, generation_dimensions, orientation_compatible
+from app.application.image_presets import (final_dimensions, generation_dimensions, orientation_compatible,
+                                           delivery_dimensions, motion_master_dimensions)
 from app.application.image_upscale import ImageUpscaleService
 from app.application.projects import ProjectSession
 from app.application.scene_planning import ScenePlanningService
@@ -70,6 +71,20 @@ def project(tmp_path):
 ])
 def test_orientation_maps_to_bounded_generation_dimensions(orientation, generation):
     assert generation_dimensions(orientation) == generation
+
+
+@pytest.mark.parametrize("orientation,profile,delivery,master", [
+    ("landscape", "fhd", (1920, 1080), (2400, 1350)),
+    ("landscape", "qhd", (2560, 1440), (3200, 1800)),
+    ("landscape", "uhd4k", (3840, 2160), (4800, 2700)),
+    ("portrait", "fhd", (1080, 1920), (1350, 2400)),
+    ("portrait", "qhd", (1440, 2560), (1800, 3200)),
+    ("portrait", "uhd4k", (2160, 3840), (2700, 4800)),
+])
+def test_delivery_and_motion_master_dimensions_are_exact_5_over_4(orientation, profile, delivery, master):
+    assert delivery_dimensions(orientation, profile) == delivery
+    assert motion_master_dimensions(orientation, profile) == master
+    assert master[0] * delivery[1] == master[1] * delivery[0]
 
 
 @pytest.mark.parametrize("orientation,size", [
@@ -163,6 +178,39 @@ def test_failure_and_stale_selection_do_not_publish(project):
     with pytest.raises(ValueError, match="stale result"):
         service.publish_final(prepared, result)
     assert images.selected(source.scene_id).artifact_id == alternative.artifact_id
+
+
+def test_motion_master_uses_overscan_lineage_and_reuses_selected_final_source(project):
+    session, store, images, source, choice, provider, service = project
+    # Existing final derivatives remain selectable and resolve to their retained original.
+    final_prepared = service.prepare_final(source.artifact_id, "landscape", "fhd")
+    final_id = service.publish_final(final_prepared, provider.upscale(final_prepared[2]))
+    selected = images.selected(source.scene_id)
+    prepared = service.prepare_motion_master(final_id, "landscape", "fhd")
+    assert prepared[0].artifact_id == source.artifact_id
+    assert prepared[2].target_width == 2400 and prepared[2].target_height == 1350
+    master_id = service.publish_motion_master(prepared, provider.upscale(prepared[2]))
+    master = images.image(master_id)
+    assert master.provenance == "motion_master" and master.lineage_version == 3
+    assert (master.width, master.height) == (2400, 1350)
+    assert (master.delivery_width, master.delivery_height) == (1920, 1080)
+    assert master.overscan_policy == "5:4" and master.source_artifact_id == source.artifact_id
+    assert (master.master_width, master.master_height) == (2400, 1350)
+    cached_prepared = service.prepare_motion_master(master_id, "landscape", "fhd")
+    assert service.cached_motion_master(cached_prepared) == master_id
+    qhd_prepared = service.prepare_motion_master(master_id, "landscape", "qhd")
+    assert qhd_prepared[3] != prepared[3]
+    assert (qhd_prepared[2].target_width, qhd_prepared[2].target_height) == (3200, 1800)
+    assert images.selected(source.scene_id).artifact_id == master_id
+    assert len(provider.calls) == 2
+    path = session.repository.workspace
+    session.close()
+    from app.storage.project_repository import ProjectRepository
+    from app.application.projects import ProjectSession
+    with ProjectSession.open(path, repository_factory=ProjectRepository) as reopened:
+        reopened_store = LocalArtifactStore.for_project(reopened.repository)
+        reopened_images = ProjectSceneImages(reopened.repository, reopened_store)
+        assert reopened_images.image(master_id) == master
 
 
 def _write_image(directory, payload):

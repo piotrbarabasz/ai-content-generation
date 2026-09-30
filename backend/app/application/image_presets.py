@@ -14,6 +14,8 @@ RESOLUTIONS = {
     "uhd4k": "4K UHD",
 }
 
+MOTION_MASTER_SCALE = (5, 4)
+
 FINAL_DIMENSIONS = {
     ("landscape", "draft"): (640, 360),
     ("landscape", "fhd"): (1920, 1080),
@@ -38,6 +40,18 @@ def final_dimensions(orientation, resolution):
         return FINAL_DIMENSIONS[(orientation, resolution)]
     except (KeyError, TypeError):
         raise ValueError("Choose Draft / Source, Full HD, QHD / 1440p or 4K UHD.") from None
+
+
+def delivery_dimensions(orientation, resolution):
+    """Return the encoded video frame size for the selected profile."""
+    return final_dimensions(orientation, resolution)
+
+
+def motion_master_dimensions(orientation, resolution):
+    if resolution == "draft":
+        return delivery_dimensions(orientation, resolution)
+    width, height = delivery_dimensions(orientation, resolution)
+    return width * MOTION_MASTER_SCALE[0] // MOTION_MASTER_SCALE[1], height * MOTION_MASTER_SCALE[0] // MOTION_MASTER_SCALE[1]
 
 
 def compatible_aspect(width, height, target_width, target_height):

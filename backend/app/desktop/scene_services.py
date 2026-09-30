@@ -13,6 +13,9 @@ from app.tts.scene_sources import sentence_sources
 
 
 def _image_variant_label(value, provider_identity=None):
+    if value.provenance == "motion_master":
+        labels = {"fhd": "FHD", "qhd": "QHD", "uhd4k": "4K UHD"}
+        return f"motion master: {labels[value.target_profile]} motion-ready · Auto subtle"
     if value.provenance == "final":
         labels = {"fhd": "Full HD", "qhd": "QHD", "uhd4k": "4K UHD"}
         return f"final: {labels[value.target_profile]} · {value.width}×{value.height}"
@@ -420,6 +423,20 @@ class SceneServices:
         return self.scene(prepared[0].scene_id)
 
     def select_cached_final_image(self, prepared, artifact_id):
+        self.upscale.intake.select(artifact_id, expected_selection_id=prepared[1])
+        return self.scene(prepared[0].scene_id)
+
+    def prepare_motion_master(self, artifact_id, orientation, resolution):
+        return self.upscale.prepare_motion_master(artifact_id, orientation, resolution)
+
+    def cached_motion_master(self, prepared):
+        return self.upscale.cached_motion_master(prepared)
+
+    def finish_motion_master(self, prepared, result):
+        self.upscale.publish_motion_master(prepared, result)
+        return self.scene(prepared[0].scene_id)
+
+    def select_cached_motion_master(self, prepared, artifact_id):
         self.upscale.intake.select(artifact_id, expected_selection_id=prepared[1])
         return self.scene(prepared[0].scene_id)
 
