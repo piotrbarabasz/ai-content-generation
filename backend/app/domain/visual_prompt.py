@@ -83,12 +83,14 @@ class PromptInputs:
         return json.loads(self.payload_json)
 
 
-def prompt_request(inputs: PromptInputs, identity: dict):
+def prompt_request(inputs: PromptInputs, identity: dict, *, version="2"):
+    if version not in ("1", "2"):
+        raise ValueError("Unsupported visual prompt request version.")
     payload = inputs.payload
     keys = {"scene": f"scene:{inputs.scene_id}:content", "section_context": f"section:{inputs.section_id}:context",
             "film_brief": "context:" + payload["film_brief"]["context_id"],
             "visual_style": "context:" + payload["visual_style"]["context_id"]}
-    return RequestFingerprint.create("visual_prompt.generate", "1",
+    return RequestFingerprint.create("visual_prompt.generate", version,
                                      inputs=[InputEdge(name, keys[name], content_fingerprint(value)) for name, value in payload.items()],
                                      settings={"schema": visual_prompt_schema()["$id"]}, effective_identity=identity)
 
@@ -106,7 +108,8 @@ class VisualPromptRevision:
         _text(self.id)
         _text(self.prompt)
         object.__setattr__(self, "provenance", Provenance(self.provenance))
-        if self.request != prompt_request(self.inputs, json.loads(self.request.effective_identity_json)):
+        if self.request != prompt_request(self.inputs, json.loads(self.request.effective_identity_json),
+                                          version=self.request.algorithm_version):
             raise ValueError("Prompt request does not describe the pinned inputs.")
         if self.parent_revision_id is not None:
             _text(self.parent_revision_id)

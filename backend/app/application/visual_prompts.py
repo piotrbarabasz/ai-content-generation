@@ -50,7 +50,26 @@ class VisualPromptService:
         inputs = self.prompts.snapshot(acceptance_id, scene_id, brief_revision_id, style_revision_id)
         selected = self.prompts.selected(scene_id)
         request = prompt_request(inputs, json.loads(self.identity_json))
-        return (inputs, request, selected, canonical_json({"task": "visual_prompt", "inputs": inputs.payload}),
+        instruction = (
+            "Create one image-generation prompt for one render scene: ONE RENDER SCENE = ONE IMAGE = "
+            "ONE COHERENT VISUAL COMPOSITION. Choose the single strongest visual idea in the current scene. "
+            "Describe one continuous scene, one moment in time, one camera/viewpoint, one main subject or "
+            "coherent subject group, and one full-frame composition. Favor natural scene construction, "
+            "cinematic documentary/editorial composition, physically plausible lighting, clear subject "
+            "separation, and an image readable without text. Preserve the selected Visual Style; use "
+            "photographic realism when that style calls for it, and illustration when it calls for illustration. "
+            "Never request an infographic, storyboard, collage, grid, multiple panels, split screen, "
+            "comic-strip layout, before/after layout, timeline, chart, graph, explanatory diagram, "
+            "UI/mockup/interface elements, captions, titles, labels, callouts, arrows, speech bubbles, "
+            "visible explanatory text, visible written words, or poster-like information layout. "
+            "Do not depict every sentence or concept, or combine the entire section or Film Brief into one image. "
+            "Context priority: CURRENT SCENE > SECTION CONTEXT > VISUAL STYLE > FILM BRIEF. "
+            "The current scene is the authoritative visual subject; section context only resolves ambiguity; "
+            "Visual Style controls aesthetics; Film Brief supplies global video context only. "
+            "Return only the final image-generation prompt in the required JSON prompt field."
+        )
+        return (inputs, request, selected, canonical_json({"task": "visual_prompt", "instruction": instruction,
+                                                           "inputs": inputs.payload}),
                 visual_prompt_schema())
 
     def generate_payload(self, prepared):

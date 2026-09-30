@@ -5,6 +5,7 @@ from dataclasses import replace
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,8 +14,9 @@ from app.application.projects import ProjectSession
 from app.application.scene_planning import ScenePlanningService
 from app.application.script_generation import ScriptGenerationService
 from app.application.visual_prompts import VisualPromptService
+from app.desktop.pipeline_driver import DesktopPipelineDriver
 from app.domain.dependencies import ArtifactDependency, DependencyDeclaration, InputEdge, Provenance, RequestFingerprint
-from app.domain.visual_prompt import VisualPromptRevision, visual_prompt_schema
+from app.domain.visual_prompt import VisualPromptRevision, prompt_request, visual_prompt_schema
 from app.providers.mock_llm import MockLLMProvider
 from app.storage.dependency_index import ArtifactDependencyIndex
 from app.storage.local_store import LocalArtifactStore
@@ -109,6 +111,83 @@ def test_provider_receives_only_exact_pinned_context_and_response_is_not_rewritt
     assert "Second A sentence." in payload["inputs"]["section_context"]["text"]
     provider.output["prompt"] = "Late mutation"
     assert adapter.revision(revision.id) == revision
+
+
+def test_generation_instruction_prioritizes_one_scene_over_global_brief(project, monkeypatch):
+    service, adapter = project[3], project[2]
+    pinned = adapter.snapshot(*args(project))
+    payload = pinned.payload
+    payload["scene"]["text"] = "A bright Moon visible in a blue daytime sky"
+    payload["scene"]["visual_description"] = payload["scene"]["text"]
+    payload["film_brief"]["text"] = "Explain the whole process using multiple concepts"
+    monkeypatch.setattr(adapter, "snapshot", lambda *a, **kw: replace(pinned, payload_json=json.dumps(payload)))
+    prepared = service.prepare_generation(*args(project))
+    envelope = json.loads(prepared[3])
+    instruction = envelope["instruction"].lower()
+    assert envelope["inputs"]["scene"]["text"] == payload["scene"]["text"]
+    assert envelope["inputs"]["film_brief"]["text"] == payload["film_brief"]["text"]
+    for phrase in ("one continuous scene", "one camera/viewpoint", "single strongest visual idea",
+                   "one full-frame composition", "infographic", "storyboard", "collage", "multiple panels",
+                   "labels", "arrows", "visible written words", "film brief supplies global video context only",
+                   "current scene > section context > visual style > film brief"):
+        assert phrase in instruction
+    assert "do not" in instruction and "combine the entire section or film brief" in instruction
+    assert prepared[4] == visual_prompt_schema()
+
+
+def test_legacy_generated_request_is_stale_but_readable_and_new_request_is_fresh(project):
+    service, adapter = project[3], project[2]
+    inputs = adapter.snapshot(*args(project))
+    identity = json.loads(service.identity_json)
+    old_request = prompt_request(inputs, identity, version="1")
+    new_request = prompt_request(inputs, identity)
+    assert old_request.operation == new_request.operation == "visual_prompt.generate"
+    assert old_request.algorithm_version == "1" and new_request.algorithm_version == "2"
+    assert old_request.fingerprint != new_request.fingerprint
+    old = VisualPromptRevision("legacy-generated", "Old infographic prompt", inputs, old_request, Provenance.GENERATED)
+    adapter.save_revision(old)
+    first = service.select(old.id, expected_selection_id=None)
+    assert adapter.revision(old.id) == old
+    assert VisualPromptRevision.from_payload(json.loads(json.dumps(old.to_payload()))) == old
+    assert service.freshness(*args(project)).state == Freshness.STALE
+    new = service.generate(*args(project))
+    service.select(new.id, expected_selection_id=first.id)
+    assert service.freshness(*args(project)).state == Freshness.FRESH
+    assert adapter.history(inputs.scene_id) == (old, new)
+
+
+def test_legacy_manual_prompt_history_remains_selected_by_automatic_driver(project):
+    service, adapter = project[3], project[2]
+    inputs = adapter.snapshot(*args(project))
+    old = VisualPromptRevision("legacy-manual", "My exact prompt", inputs,
+                               prompt_request(inputs, json.loads(service.identity_json), version="1"), Provenance.MANUAL)
+    adapter.save_revision(old)
+    service.select(old.id, expected_selection_id=None)
+    section = project[0].active_script.sections[0]
+    scene = project[5][0].plan.scenes[0]
+    editor = SimpleNamespace(visuals=SimpleNamespace(services=SimpleNamespace(prompts=service)))
+    driver = DesktopPipelineDriver(editor, None)
+    assert driver.prompt_ready(section, scene)
+    assert service.selected(scene.id).prompt == "My exact prompt"
+    assert adapter.history(scene.id) == (old,)
+
+
+def test_automatic_driver_rebuilds_legacy_generated_prompt_only(project):
+    service, adapter = project[3], project[2]
+    inputs = adapter.snapshot(*args(project))
+    old = VisualPromptRevision("legacy-generated", "Old prompt", inputs,
+                               prompt_request(inputs, json.loads(service.identity_json), version="1"), Provenance.GENERATED)
+    adapter.save_revision(old)
+    first = service.select(old.id, expected_selection_id=None)
+    section = project[0].active_script.sections[0]
+    scene = project[5][0].plan.scenes[0]
+    editor = SimpleNamespace(visuals=SimpleNamespace(services=SimpleNamespace(prompts=service)))
+    driver = DesktopPipelineDriver(editor, None)
+    assert not driver.prompt_ready(section, scene)
+    new = service.generate(*args(project))
+    service.select(new.id, expected_selection_id=first.id)
+    assert driver.prompt_ready(section, scene)
+    assert adapter.history(scene.id) == (old, new)
 
 
 @pytest.mark.parametrize("invalid", [None, [], "text", {}, {"prompt": ""}, {"prompt": " \n"},
@@ -261,7 +340,8 @@ def test_mock_is_deterministic_schema_specific_and_generation_identity_is_record
     identity["model"] = "external mutation"
     one, two = service.generate(*args(project)), service.generate(*args(project))
     assert one.prompt == two.prompt and one.id != two.id
-    assert project[6].text in one.prompt and project[7].text in one.prompt
+    assert project[7].text in one.prompt and one.inputs.payload["scene"]["visual_description"] in one.prompt
+    assert project[6].text not in one.prompt
     assert json.loads(one.request.effective_identity_json)["model"] == "fixture-v1"
     assert VisualPromptRevision.from_payload(json.loads(json.dumps(one.to_payload()))) == one
     service.select(one.id, expected_selection_id=None)

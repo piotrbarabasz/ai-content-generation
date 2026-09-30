@@ -34,9 +34,10 @@ class MockLLMProvider(LLMProvider):
         normalized_schema = _coerce_json_dict(schema)
         if normalized_schema == visual_prompt_schema():
             inputs = json.loads(prompt)["inputs"]
-            return {"prompt": (f"Scene: {inputs['scene']['text']}\n"
-                               f"Section: {inputs['section_context']['title']}\n{inputs['section_context']['text']}\n"
-                               f"Film brief: {inputs['film_brief']['text']}\nStyle: {inputs['visual_style']['text']}")}
+            subject = inputs["scene"]["visual_description"] or inputs["scene"]["text"]
+            return {"prompt": (f"One continuous scene: {subject}. "
+                               f"Style: {inputs['visual_style']['text']}. "
+                               "One full-frame composition, no visible text, labels, or arrows.")}
         if normalized_schema == script_sections_schema():
             # Deliberately simple offline fixture, not a real language model.
             # The desktop envelope carries language as context without changing it.
