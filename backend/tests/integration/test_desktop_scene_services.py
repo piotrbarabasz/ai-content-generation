@@ -1,7 +1,10 @@
 """D022 real project adapters: isolation, failures and persisted selection round-trip."""
 
 from dataclasses import replace
+import asyncio
+import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,8 +18,12 @@ from app.application.projects import ProjectSession
 from app.application.invalidation import Freshness
 from app.application.scene_planning import ScenePlanningService
 from app.application.script_generation import ScriptGenerationService
+from app.domain.dependencies import Provenance
+from app.domain.scene_plan import SceneTiming, SceneTimingSet
+from app.domain.visual_prompt import VisualPromptRevision, prompt_request
 from app.desktop.scene_composition import compose_scenes
 from app.desktop.scene_panel import ScenePanel
+from app.desktop.pipeline_driver import DesktopPipelineDriver
 from app.providers.mock_image import MockImageProvider
 from app.storage.project_repository import ProjectRepository
 from app.tts.scene_sources import sentence_sources
@@ -251,6 +258,99 @@ def test_selected_prompt_and_image_survive_reopen_in_panel(qt, tmp_path):
     finally:
         panel.close()
         reopened.close()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_stale_or_corrupt_generated_prompt_keeps_scenes_visible_and_recovers(qt, tmp_path, corrupt):
+    root = tmp_path / "project"
+    session, section, services, prompt_provider, image_provider = setup_project(root)
+    panel = ScenePanel()
+    try:
+        first, second = services.scenes(section)
+        accepted = services.acceptance
+        timing = SceneTimingSet(
+            "timing-legacy-prompt", accepted.id, accepted.plan.id, "audio-fixture", "a" * 64,
+            8000, 16000, "measured_duration_ratio", "approximate_internal_positions",
+            (SceneTiming(first.id, 0, 8000), SceneTiming(second.id, 8000, 16000)))
+        services.plans.save_timing(section, timing)
+        active = services.prompts.prompts.selected(first.id)
+        inputs = services.prompts.prompts.snapshot(
+            services.acceptance.id, first.id, *services._context_ids(first.id))
+        legacy = VisualPromptRevision(
+            "legacy-generated-corrupt" if corrupt else "legacy-generated-v2",
+            "Old generated prompt", inputs,
+            prompt_request(inputs, json.loads(services.prompts.identity_json), version="2"),
+            Provenance.GENERATED)
+        services.prompts.prompts.save_revision(legacy)
+        selected = services.prompts.select(legacy.id, expected_selection_id=active.id)
+        if corrupt:
+            manifest = next(item for item in services.store.list_artifacts()
+                            if item.metadata.get("value_id") == legacy.id)
+            services.store._artifact_path(manifest.storage_key).write_bytes(b"{broken prompt artifact")
+            session.close()
+            session = ProjectSession.open(root, repository_factory=ProjectRepository)
+            prompt_provider, image_provider = PromptProvider(), ImageProvider()
+            services = compose_scenes(session, prompt_provider=prompt_provider,
+                                      prompt_identity={"provider": "fixture", "model": "v1"},
+                                      image_provider=image_provider)
+            section = session.active_script.sections[0]
+            first, second = services.scenes(section)
+
+        panel.bind(services)
+        panel.select_section(section)
+        assert panel.scenes.count() == 2
+        assert panel.current.time_label != "Timing unavailable"
+        assert panel.current.id == first.id and panel.current.prompt == ""
+        assert panel.current.prompt_id is None and panel.current.prompt_selection_id is None
+        assert panel.buttons["Regenerate prompt"].text() == "Generate prompt"
+        assert not panel.buttons["Generate image"].isEnabled()
+        assert second.id in {view.id for view in services.scenes(section)}
+
+        QTest.mouseClick(panel.buttons["Regenerate prompt"], Qt.LeftButton)
+        recovered = services.prompts.selected(first.id)
+        assert recovered is not None and recovered.request.algorithm_version == "3"
+        assert panel.current.prompt == "Generated visual" and panel.current.prompt_id == recovered.id
+        assert panel.current.prompt_selection_id is not None
+        assert panel.buttons["Generate image"].isEnabled()
+        QTest.mouseClick(panel.buttons["Generate image"], Qt.LeftButton)
+        assert image_provider.calls
+        if not corrupt:
+            assert recovered.parent_revision_id == legacy.id
+        else:
+            assert recovered.parent_revision_id is None
+        assert selected.id != panel.current.prompt_selection_id
+    finally:
+        panel.close()
+        session.close()
+
+
+def test_automatic_driver_replaces_legacy_generated_prompt_then_image_can_start(tmp_path):
+    session, section, services, prompt_provider, image_provider = setup_project(tmp_path / "project")
+    try:
+        scene = services.scenes(section)[0]
+        active = services.prompts.prompts.selected(scene.id)
+        inputs = services.prompts.prompts.snapshot(
+            services.acceptance.id, scene.id, *services._context_ids(scene.id))
+        legacy = VisualPromptRevision(
+            "automatic-legacy-v2", "Old generated prompt", inputs,
+            prompt_request(inputs, json.loads(services.prompts.identity_json), version="2"),
+            Provenance.GENERATED)
+        services.prompts.prompts.save_revision(legacy)
+        services.prompts.select(legacy.id, expected_selection_id=active.id)
+        driver = DesktopPipelineDriver(SimpleNamespace(visuals=SimpleNamespace(services=services)), None)
+        assert not driver.prompt_ready(section, scene)
+
+        asyncio.run(driver.generate_prompt(section, scene))
+
+        current = services.prompts.selected(scene.id)
+        assert current is not None and current.request.algorithm_version == "3"
+        assert current.parent_revision_id == legacy.id
+        assert driver.prompt_ready(section, scene)
+        assert len(prompt_provider.calls) == 1
+        assert services.generate_image(scene.id, width=640, height=360, seed=0).image_id
+        assert image_provider.calls
+    finally:
+        session.close()
 
 
 def test_scene_plan_presentation_requires_explicit_review_and_retains_history(tmp_path):

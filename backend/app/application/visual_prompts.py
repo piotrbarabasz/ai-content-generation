@@ -86,11 +86,23 @@ class VisualPromptService:
 
     def retain_generated(self, prepared, payload):
         inputs, request, selected, _, _ = prepared
+        parent_revision_id = self._readable_parent_revision(selected)
         revision = VisualPromptRevision(new_id("visual_prompt_revision"), validate_visual_prompt(payload), inputs,
                                         request, Provenance.GENERATED,
-                                        selected.revision_id if selected else None)
+                                        parent_revision_id)
         self.prompts.save_revision(revision)
         return revision  # Late results are retained; they never change active selection.
+
+    def _readable_parent_revision(self, selection):
+        if selection is None:
+            return None
+        try:
+            self.prompts.revision(selection.revision_id)
+            return selection.revision_id
+        except (ValueError, OSError, KeyError, TypeError):
+            # Keep the selection event as the compare-and-select token, but do
+            # not make a new valid prompt inherit unreadable legacy data.
+            return None
 
     def validate_prepared_current(self, prepared):
         inputs, _, selected, _, _ = prepared
@@ -105,7 +117,7 @@ class VisualPromptService:
         selected = self.prompts.selected(scene_id)
         revision = VisualPromptRevision(new_id("visual_prompt_revision"), text, inputs,
                                         prompt_request(inputs, json.loads(self.identity_json)), Provenance.MANUAL,
-                                        selected.revision_id if selected else None)
+                                        self._readable_parent_revision(selected))
         self.prompts.save_revision(revision)
         return revision
 
@@ -125,7 +137,15 @@ class VisualPromptService:
 
     def selected(self, scene_id):
         selection = self.prompts.selected(scene_id)
-        return self.prompts.revision(selection.revision_id) if selection else None
+        if selection is None:
+            return None
+        try:
+            return self.prompts.revision(selection.revision_id)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            if getattr(self.prompts, "revision_is_generated", lambda _: False)(selection.revision_id):
+                getattr(self.prompts, "_recovery_warning", lambda **_: None)(
+                    scene_id=scene_id, revision_id=selection.revision_id, reason=exc)
+            return None
 
     def freshness(self, acceptance_id, scene_id, brief_revision_id, style_revision_id, *, generation_identity=None):
         # Explicit desired revision bindings, never an unversioned global-context lookup.

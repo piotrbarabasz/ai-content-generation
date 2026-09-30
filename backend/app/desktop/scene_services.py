@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+import logging
 
 from app.application.scene_planning import ScenePlanningService
 from app.domain.plan_script import planned_section_identity
@@ -10,6 +11,9 @@ from app.application.image_presets import RESOLUTIONS
 from app.providers.image_generation import ImageGenerationRequest
 from app.storage.section_tempo import SectionTempoArtifacts
 from app.tts.scene_sources import sentence_sources
+
+
+logger = logging.getLogger("aics.pipeline")
 
 
 def _image_variant_label(value, provider_identity=None):
@@ -169,8 +173,29 @@ class SceneServices:
 
     def _view(self, scene, index, timing):
         prompt_choice = self.prompts.prompts.selected(scene.id)
-        selected_prompt = (self.prompts.prompts.revision(prompt_choice.revision_id)
-                           if prompt_choice else None)
+        selected_prompt = None
+        if prompt_choice:
+            try:
+                selected_prompt = self.prompts.prompts.revision(prompt_choice.revision_id)
+                if selected_prompt.provenance.value == "generated":
+                    freshness = self.prompts.freshness(
+                        selected_prompt.inputs.acceptance_id, scene.id,
+                        selected_prompt.inputs.brief_revision_id, selected_prompt.inputs.style_revision_id)
+                    if (selected_prompt.request.algorithm_version != "3"
+                            or freshness.state.value != "fresh"):
+                        reason = (f"generated prompt request v{selected_prompt.request.algorithm_version} is stale"
+                                  if selected_prompt.request.algorithm_version != "3"
+                                  else "generated prompt no longer matches current inputs")
+                        self.prompts.prompts._recovery_warning(
+                            scene_id=scene.id, revision_id=selected_prompt.id, reason=reason)
+                        selected_prompt = None
+                        prompt_choice = None
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                if self.prompts.prompts.revision_is_generated(prompt_choice.revision_id):
+                    self.prompts.prompts._recovery_warning(
+                        scene_id=scene.id, revision_id=prompt_choice.revision_id, reason=exc)
+                selected_prompt = None
+                prompt_choice = None
         prompt_history = self.prompts.prompts.history(scene.id)
         image_choice = self.images.selected(scene.id)
         image_history = self.images.history(scene.id)
@@ -243,10 +268,11 @@ class SceneServices:
         if not text.strip():
             raise ValueError("Visual prompt cannot be empty.")
         chosen = self.prompts.prompts.selected(scene_id)
-        if chosen is None:
+        current = self.prompts.selected(scene_id)
+        if current is None:
             revision = self.prompts.create_manual(self.acceptance.id, scene_id, *self._context_ids(scene_id), text)
         else:
-            revision = self.prompts.edit_manual(chosen.revision_id, text)
+            revision = self.prompts.edit_manual(current.id, text)
         self.prompts.select(revision.id, expected_selection_id=chosen.id if chosen else None)
         return self.scene(scene_id)
 

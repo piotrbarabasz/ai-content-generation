@@ -158,6 +158,32 @@ def test_legacy_generated_request_is_stale_but_readable_and_new_request_is_fresh
     assert adapter.history(inputs.scene_id) == (old, new)
 
 
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_legacy_generated_revision_versions_remain_readable_but_stale(project, version):
+    service, adapter = project[3], project[2]
+    inputs = adapter.snapshot(*args(project))
+    old = VisualPromptRevision(
+        f"legacy-generated-v{version}", "Retained prompt", inputs,
+        prompt_request(inputs, json.loads(service.identity_json), version=version), Provenance.GENERATED)
+    adapter.save_revision(old)
+    assert adapter.revision(old.id) == old
+    selected = service.select(old.id, expected_selection_id=None)
+    assert selected.revision_id == old.id
+    assert service.freshness(*args(project)).state == Freshness.STALE
+
+
+def test_legacy_manual_v2_remains_readable_and_selected(project):
+    service, adapter = project[3], project[2]
+    inputs = adapter.snapshot(*args(project))
+    old = VisualPromptRevision(
+        "legacy-manual-v2", "Keep this manual prompt", inputs,
+        prompt_request(inputs, json.loads(service.identity_json), version="2"), Provenance.MANUAL)
+    adapter.save_revision(old)
+    service.select(old.id, expected_selection_id=None)
+    assert service.selected(inputs.scene_id) == old
+    assert adapter.history(inputs.scene_id) == (old,)
+
+
 def test_legacy_manual_prompt_history_remains_selected_by_automatic_driver(project):
     service, adapter = project[3], project[2]
     inputs = adapter.snapshot(*args(project))
