@@ -215,11 +215,18 @@ class PipelineDiagnostics:
                     if not provider and image_value.source_artifact_id:
                         provider = scenes._image_generation_identity(image_value.source_artifact_id) or {}
                     orientation = "landscape" if image_value.width >= image_value.height else "portrait"
+                    delivery_width = image_value.delivery_width or image_value.target_width
+                    delivery_height = image_value.delivery_height or image_value.target_height
+                    delivery = (f"{image_value.target_profile.upper()} {delivery_width}x{delivery_height}"
+                                if delivery_width and delivery_height else "legacy")
                     message = (f"section={json.dumps(section.title, ensure_ascii=False)} scene={scene.id} "
                                f"prompt={scene.prompt_id} image={image_value.artifact_id} "
                                f"provenance={image_value.provenance} provider={provider.get('provider', 'unknown')} "
                                f"model={provider.get('model', 'unknown')} size={image_value.width}x{image_value.height} "
-                               f"orientation={orientation}")
+                               f"orientation={orientation} "
+                               f"motion_master={'READY' if image_value.provenance == 'motion_master' else 'MISSING'} "
+                               f"delivery={delivery} "
+                               f"motion={'AUTO SUBTLE' if image_value.provenance == 'motion_master' else 'LEGACY STATIC'}")
                     diagnostics.append(StageDiagnostic("VISUALS", "OK", message, section.section_id,
                                                        section.title, scene.id, image_value.artifact_id))
                     _emit("VISUALS", "OK", message)

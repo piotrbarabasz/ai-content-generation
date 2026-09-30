@@ -436,7 +436,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
-| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062 |
+| M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
 | M11 — Product durability and optimization | History, safe updates, schema migration and measured rendering improvements | D033, D034, D036, D037, D042, D043, D047 |
 | M12 — Optional integrations and output expansion | API, grounded sources, approvals, publishing and additional media | D035, D048, D049, D050, D051, D052, D053, D054, D055, D056 |
 
@@ -1412,14 +1412,29 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Offscreen Qt shell, Social/Standard outline, 5/60-scene Storyboard, selected-scene synchronization, selected-render play/folder/copy and empty/corrupt artifact tests; focused D063/D064 regressions; required full suite and diff check.
 - **Implementation evidence:** [D065 editor shell and storyboard](D065_EDITOR_SHELL_STORYBOARD.md) records the module boundaries and selected-render contract. Focused shell/Storyboard/Export tests passed (35 tests); the full backend suite passed (1,882 passed, 11 skipped); project schema stayed at version 1; `git diff --check` passed.
 
+### D066 — Motion-ready image masters and local cinematic scene motion
+
+- **Status:** Partial — core presets, v3 motion-master lineage, prompt policy, automatic master creation, dynamic delivery rendering and deterministic FFmpeg motion are implemented; remaining regression, compatibility and manual acceptance are listed in the evidence note.
+- **Milestone:** M10
+- **Priority:** P1
+- **Goal:** Turn retained scene images into overscanned motion masters and render subtle deterministic local camera movement at the selected FHD, QHD or 4K landscape/portrait delivery profile.
+- **Scope:** Separate generation/master/delivery dimensions; exact 5:4 masters; one native x4 upscale with one Lanczos resize; immutable SceneImage lineage v3; motion-safe visual prompt request v3; auto-subtle scene motion in FFmpeg; profile-aware final and portrait proxy rendering; motion render/cache identity; legacy static behavior; automatic/manual motion-master creation.
+- **Out of scope:** Square masters, generative video, optical flow, parallax, persistent per-scene controls, Timeline schema changes, transitions, music and chained neural upscaling.
+- **Dependencies:** D016, D017, D019, D022, D040, D057, D059, D060, D062, D065.
+- **Main code areas:** Image presets/upscale/lineage, visual prompt policy, Scene Visuals and AutomaticWorkflow, render contract/FFmpeg, preview cache, offline media and GUI tests.
+- **Acceptance criteria:** Existing sources and final derivatives can create motion masters without image-provider regeneration; v1/v2 SceneImage and historical Timeline payloads remain readable; motion masters retain exact lineage and 5:4 dimensions; same scene/policy yields stable safe motion; legacy images stay static; final dimensions follow a consistent retained delivery profile; portrait proxy is portrait; no project database migration.
+- **Test strategy:** Exact preset/lineage/cache tests; prompt freshness and safety tests; paid-provider-free AutomaticWorkflow reuse tests; deterministic motion tests; synthetic real-FFmpeg FHD and portrait proxy tests; historical payload regressions; full backend suite and diff check. Hardware/provider and interactive GUI acceptance are separate manual evidence.
+- **Implementation evidence:** [D066 motion-ready scenes](D066_MOTION_READY_SCENES.md) records implementation and outstanding acceptance.
+
 ## Backlog provenance and deferred scope
 
-There are **64 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **66 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
 development configuration bootstrap; D063 adds video-format planning, D064
-connects it to resumable script generation and D065 composes the editor shell.
+connects it to resumable script generation, D065 composes the editor shell and
+D066 adds motion-ready visuals and local motion rendering.
 None is
 completed merely by publishing this plan.
 

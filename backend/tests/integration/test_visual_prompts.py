@@ -129,7 +129,9 @@ def test_generation_instruction_prioritizes_one_scene_over_global_brief(project,
     for phrase in ("one continuous scene", "one camera/viewpoint", "single strongest visual idea",
                    "one full-frame composition", "infographic", "storyboard", "collage", "multiple panels",
                    "labels", "arrows", "visible written words", "film brief supplies global video context only",
-                   "current scene > section context > visual style > film brief"):
+                   "current scene > section context > visual style > film brief", "breathing room",
+                   "central safe composition area", "extreme edges", "subtle zoom or pan",
+                   "foreground, midground and background", "safe-area guides"):
         assert phrase in instruction
     assert "do not" in instruction and "combine the entire section or film brief" in instruction
     assert prepared[4] == visual_prompt_schema()
@@ -142,7 +144,7 @@ def test_legacy_generated_request_is_stale_but_readable_and_new_request_is_fresh
     old_request = prompt_request(inputs, identity, version="1")
     new_request = prompt_request(inputs, identity)
     assert old_request.operation == new_request.operation == "visual_prompt.generate"
-    assert old_request.algorithm_version == "1" and new_request.algorithm_version == "2"
+    assert old_request.algorithm_version == "1" and new_request.algorithm_version == "3"
     assert old_request.fingerprint != new_request.fingerprint
     old = VisualPromptRevision("legacy-generated", "Old infographic prompt", inputs, old_request, Provenance.GENERATED)
     adapter.save_revision(old)

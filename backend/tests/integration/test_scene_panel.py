@@ -47,21 +47,22 @@ def test_orientation_and_final_resolution_presets_update_exact_sizes(qt):
     assert [panel.orientation.itemText(i) for i in range(2)] == ["Landscape (16:9)", "Portrait (9:16)"]
     assert [panel.resolution.itemText(i) for i in range(4)] == ["Draft / Source", "Full HD", "QHD / 1440p", "4K UHD"]
     assert panel.orientation.currentData() == "landscape" and panel.resolution.currentData() == "fhd"
-    assert panel.generation_size.text() == "640 × 360" and panel.final_size.text() == "1920 × 1080"
+    assert panel.generation_size.text() == "640 × 360" and panel.final_size.text() == "2400 × 1350"
+    assert panel.delivery_size.text() == "1920 × 1080"
     assert len(panel.findChildren(QSpinBox)) == 1  # Seed only.
     panel.resolution.setCurrentIndex(0)
-    assert panel.final_size.text() == "640 × 360"
+    assert panel.final_size.text() == "—" and panel.delivery_size.text() == "—"
     panel.resolution.setCurrentIndex(2)
-    assert panel.final_size.text() == "2560 × 1440"
+    assert panel.final_size.text() == "3200 × 1800" and panel.delivery_size.text() == "2560 × 1440"
     panel.resolution.setCurrentIndex(3)
-    assert panel.final_size.text() == "3840 × 2160"
+    assert panel.final_size.text() == "4800 × 2700" and panel.delivery_size.text() == "3840 × 2160"
     panel.orientation.setCurrentIndex(1)
     assert panel.generation_size.text() == "360 × 640"
-    assert panel.final_size.text() == "2160 × 3840"
+    assert panel.final_size.text() == "2700 × 4800" and panel.delivery_size.text() == "2160 × 3840"
     panel.resolution.setCurrentIndex(2)
-    assert panel.final_size.text() == "1440 × 2560"
+    assert panel.final_size.text() == "1800 × 3200" and panel.delivery_size.text() == "1440 × 2560"
     panel.resolution.setCurrentIndex(1)
-    assert panel.final_size.text() == "1080 × 1920"
+    assert panel.final_size.text() == "1350 × 2400" and panel.delivery_size.text() == "1080 × 1920"
     panel.close()
 
 

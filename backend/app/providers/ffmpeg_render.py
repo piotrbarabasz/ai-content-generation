@@ -5,7 +5,8 @@ from hashlib import file_digest
 import json
 from pathlib import Path
 
-from app.domain.render_result import RenderedVideo, render_request
+from app.domain.render_result import (RenderedVideo, render_request, delivery_profile,
+                                      resolve_motion, MOTION_POLICY_VERSION)
 from app.domain.timeline import OutputTimebase, TimelineRevision
 from app.runtime.media_process import MediaProcess, RenderCanceled
 from app.storage.paths import contained_path
@@ -23,19 +24,20 @@ class FFmpegRenderer:
         self.process = process if process is not None else MediaProcess()
         self.proxy = proxy
 
-    @property
-    def width(self):
-        return 640 if self.proxy else 1280
-
-    @property
-    def height(self):
-        return 360 if self.proxy else 720
+    def dimensions(self, timeline):
+        profile, width, height = delivery_profile(timeline)
+        if not self.proxy:
+            return profile, width, height
+        proxy_width, proxy_height = (640, 360) if width >= height else (360, 640)
+        return "proxy", proxy_width, proxy_height
 
     def identity(self):
-        return {"provider": "ffmpeg", "adapter": "proxy-mp4-360p25-v1" if self.proxy else "static-mp4-v1",
+        return {"provider": "ffmpeg", "adapter": "proxy-motion-mp4-v1" if self.proxy else "motion-mp4-v1",
+                "motion_policy": MOTION_POLICY_VERSION,
                 "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
 
     async def render(self, timeline, root, *, captions=None, canceled, progress):
+        profile, width, height = self.dimensions(timeline)
         if self.proxy:
             if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
                 raise ValueError("MP4 proxy requires a D018 timeline at 25 FPS.")
@@ -49,12 +51,26 @@ class FFmpegRenderer:
             image = contained_path(root, f"image-{i}.png")
             audio = contained_path(root, f"audio-{i}.wav")
             command.extend(("-loop", "1", "-framerate", "25", "-i", image.name, "-i", audio.name))
-            fit = (f"scale={self.width}:{self.height}:force_original_aspect_ratio=decrease,"
-                   f"pad={self.width}:{self.height}:(ow-iw)/2:(oh-ih)/2:black"
-                   if timeline.fit_policy == "fit" else
-                   f"scale={self.width}:{self.height}:force_original_aspect_ratio=increase,"
-                   f"crop={self.width}:{self.height}")
-            filters.append(f"[{2*i}:v]{fit},setsar=1,format=yuv420p,trim=end_frame={clip.duration_frames},setpts=PTS-STARTPTS[v{i}]")
+            if clip.media.image.provenance == "motion_master":
+                mode = resolve_motion(clip.media.scene_id)
+                frames = clip.duration_frames
+                progress_expr = f"on/{max(1, frames - 1)}"
+                zoom = (f"1+0.10*{progress_expr}" if mode == "zoom_in" else
+                        f"1.10-0.10*{progress_expr}" if mode == "zoom_out" else "1.10")
+                max_x, max_y = f"(iw-iw/zoom)", f"(ih-ih/zoom)"
+                x = (f"{max_x}*{progress_expr}" if mode == "pan_right" else
+                     f"{max_x}*(1-{progress_expr})" if mode == "pan_left" else f"{max_x}/2")
+                y = (f"{max_y}*{progress_expr}" if mode == "pan_down" else
+                     f"{max_y}*(1-{progress_expr})" if mode == "pan_up" else f"{max_y}/2")
+                motion = (f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps=25")
+                filters.append(f"[{2*i}:v]{motion},setsar=1,format=yuv420p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}]")
+            else:
+                fit = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+                       if timeline.fit_policy == "fit" else
+                       f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                       f"crop={width}:{height}")
+                filters.append(f"[{2*i}:v]{fit},setsar=1,format=yuv420p,trim=end_frame={clip.duration_frames},setpts=PTS-STARTPTS[v{i}]")
             span = clip.media.audio
             filters.append(f"[{2*i+1}:a]atrim=start_sample={span.start_sample}:end_sample={span.end_sample},"
                            f"asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono[a{i}]")
@@ -86,9 +102,12 @@ class FFmpegRenderer:
                     progress("encoding", max(0, min(timeline.total_frames, int(raw) * 25 // 1000000)), timeline.total_frames)
 
         await self.process.run(command, cwd=root, canceled=canceled, on_line=line)
-        return await self.validate(timeline, root, canceled=canceled, progress=progress)
+        return await self.validate(timeline, root, canceled=canceled, progress=progress,
+                                   profile=profile, width=width, height=height)
 
-    async def validate(self, timeline, root, *, canceled, progress):
+    async def validate(self, timeline, root, *, canceled, progress, profile=None, width=None, height=None):
+        if profile is None:
+            profile, width, height = self.dimensions(timeline)
         path = contained_path(root, "render.mp4")
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError("Renderer did not produce MP4 bytes.")
@@ -105,7 +124,7 @@ class FFmpegRenderer:
         vd, ad = Fraction(video["duration"]), Fraction(audio["duration"])
         tolerance = Fraction(1024, 48000) + Fraction(len(timeline.clips), 48000)
         if ((video["codec_name"], video["width"], video["height"], video["pix_fmt"])
-                != ("h264", self.width, self.height, "yuv420p")
+                != ("h264", width, height, "yuv420p")
                 or Fraction(video["avg_frame_rate"]) != 25 or int(video["nb_read_frames"]) != timeline.total_frames
                 or abs(vd - timeline.video_duration) > Fraction(1, 1000000)
                 or (audio["codec_name"], int(audio["sample_rate"]), audio["channels"]) != ("aac", 48000, 1)
@@ -120,4 +139,5 @@ class FFmpegRenderer:
         if checksum(path) != before or path.stat().st_size != size:
             raise ValueError("MP4 changed while validating.")
         progress("validated", 1, 1)
-        return RenderedVideo(timeline.id, before, size, timeline.total_frames, vd, ad)
+        return RenderedVideo(timeline.id, before, size, timeline.total_frames, vd, ad,
+                             profile=profile, width=width, height=height)

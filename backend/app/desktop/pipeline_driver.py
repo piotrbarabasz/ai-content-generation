@@ -5,7 +5,7 @@ import json
 import logging
 
 from app.application.automatic_workflow import AutomaticWorkflowCanceled
-from app.application.image_presets import final_dimensions, generation_dimensions
+from app.application.image_presets import motion_master_dimensions, generation_dimensions
 from app.application.invalidation import Freshness
 from app.domain.dependencies import Provenance
 
@@ -252,7 +252,7 @@ class DesktopPipelineDriver:
         finally:
             self.active_image = None
 
-    def final_image_ready(self, section, scene, config):
+    def motion_master_ready(self, section, scene, config):
         if config.final_resolution == "draft":
             return True
         services = self.editor.visuals.services
@@ -261,22 +261,22 @@ class DesktopPipelineDriver:
             if selected is None:
                 return False
             image = services.images.image(selected.artifact_id)
-            dimensions = final_dimensions(config.orientation, config.final_resolution)
-            return (image.provenance == "final" and image.section_revision_id == section.id
+            dimensions = motion_master_dimensions(config.orientation, config.final_resolution)
+            return (image.provenance == "motion_master" and image.section_revision_id == section.id
                     and image.target_profile == config.final_resolution
-                    and (image.width, image.height) == dimensions)
+                    and (image.master_width, image.master_height) == dimensions)
         except (ValueError, OSError, KeyError):
             return False
 
-    async def create_final_image(self, section, scene, config):
+    async def create_motion_master(self, section, scene, config):
         services = self.editor.visuals.services
         selected = services.images.selected(scene.id)
         if selected is None:
-            raise ValueError("No selected source image for final-resolution processing.")
-        prepared = services.prepare_final_image(selected.artifact_id, config.orientation, config.final_resolution)
-        cached = services.cached_final_image(prepared)
+            raise ValueError("No selected source image for motion-master processing.")
+        prepared = services.prepare_motion_master(selected.artifact_id, config.orientation, config.final_resolution)
+        cached = services.cached_motion_master(prepared)
         if cached is not None:
-            services.select_cached_final_image(prepared, cached)
+            services.select_cached_motion_master(prepared, cached)
             return
         provider = services.upscale.provider if services.upscale else None
         if provider is None:
@@ -288,8 +288,8 @@ class DesktopPipelineDriver:
         try:
             result = await asyncio.to_thread(provider.upscale, prepared[2])
             if self.cancel_requested:
-                raise AutomaticWorkflowCanceled("FINAL_IMAGE")
-            services.finish_final_image(prepared, result)
+                raise AutomaticWorkflowCanceled("MOTION_MASTER")
+            services.finish_motion_master(prepared, result)
         finally:
             self.active_upscale = None
 

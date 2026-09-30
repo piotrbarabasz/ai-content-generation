@@ -30,7 +30,7 @@ class VideoRenderService:
         if existing is not None:
             return existing
         job = self.coordinator.repository.get_job(claim.job_id)
-        if job.request.operation != OPERATION or job.request.algorithm_version != "1":
+        if job.request.operation != OPERATION or job.request.algorithm_version != "2":
             raise ValueError("Video service requires a timeline render job.")
 
         def canceled():

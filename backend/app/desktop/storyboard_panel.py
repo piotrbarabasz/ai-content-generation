@@ -159,7 +159,14 @@ class StoryboardPanel(QWidget):
                                   and d.section_id == self._section.section_id), None)
         for scene_id, (view, image_label) in self._card_views.items():
             voice = "Ready" if voice_diagnostic and voice_diagnostic.state == "OK" else "Pending"
-            final = "Final ready" if image_label.lower().startswith("final:") else "Final pending"
+            if image_label.lower().startswith("motion master:"):
+                image_status = f"Master  {image_label}"
+            elif image_label.lower().startswith("final:"):
+                image_status = f"Legacy final  {image_label}"
+            elif image_label.lower().startswith("no selected"):
+                image_status = "Source image missing"
+            else:
+                image_status = f"Source  {image_label} · Motion master missing"
             visual_diagnostic = by_scene.get(scene_id)
             visual_state = visual_diagnostic.state if visual_diagnostic else "PENDING"
             timing = timing_diagnostic.state if timing_diagnostic else "PENDING"
@@ -167,7 +174,7 @@ class StoryboardPanel(QWidget):
                      else "REVIEW" if visual_state in {"REVIEW", "REJECT"} or timing in {"REVIEW", "REJECT"}
                      else "PENDING")
             self._cards[scene_id][4].setText(
-                f"Voice  {voice}     Visual  {image_label} ({visual_state})     {final}     Status  {state}")
+                f"Voice  {voice}     Visual  {image_label} ({visual_state})     {image_status}     Status  {state}")
 
     def _select(self, scene_id):
         self.select_scene(scene_id)
