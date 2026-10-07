@@ -105,8 +105,8 @@ class ImageUpscaleService:
         if choice is None or choice.artifact_id != artifact_id:
             raise ValueError("Select an image before creating a motion master.")
         source = selected
-        if selected.provenance in ("upscaled", "final", "motion_master"):
-            source = self.images.image(selected.source_artifact_id)
+        while source.provenance in ("upscaled", "final", "motion_master"):
+            source = self.images.image(source.source_artifact_id)
         delivery_width, delivery_height = delivery_dimensions(orientation, resolution)
         target_width, target_height = motion_master_dimensions(orientation, resolution)
         if resolution == "draft":
@@ -123,6 +123,7 @@ class ImageUpscaleService:
         capabilities.validate(request)
         fingerprint = content_fingerprint({"algorithm": "scene_image.motion_master.v1",
             "source_artifact_id": source.artifact_id, "source_checksum": source.checksum,
+            "source_width": source.width, "source_height": source.height, "source_format": source.format,
             "delivery_profile": resolution, "delivery_width": delivery_width,
             "delivery_height": delivery_height, "master_width": target_width, "master_height": target_height,
             "overscan_policy": "5:4", "provider": capabilities.to_payload(),

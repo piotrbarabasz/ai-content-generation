@@ -1416,7 +1416,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D066 — Motion-ready image masters and local cinematic scene motion
 
-- **Status:** Partial — core presets, v3 motion-master lineage, prompt policy, automatic master creation, dynamic delivery rendering and deterministic FFmpeg motion are implemented; remaining regression, compatibility and manual acceptance are listed in the evidence note.
+- **Status:** Partial — implementation and offline regression/compatibility/media acceptance are covered; real local upscaler/GPU, paid GPT Image and interactive Windows playback acceptance remain unverified (2026-10-07). See the evidence note for the exact manual procedure.
 - **Milestone:** M10
 - **Priority:** P1
 - **Goal:** Turn retained scene images into overscanned motion masters and render subtle deterministic local camera movement at the selected FHD, QHD or 4K landscape/portrait delivery profile.
@@ -1426,7 +1426,7 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** Image presets/upscale/lineage, visual prompt policy, Scene Visuals and AutomaticWorkflow, render contract/FFmpeg, preview cache, offline media and GUI tests.
 - **Acceptance criteria:** Existing sources and final derivatives can create motion masters without image-provider regeneration; v1/v2 SceneImage and historical Timeline payloads remain readable; motion masters retain exact lineage and 5:4 dimensions; same scene/policy yields stable safe motion; legacy images stay static; final dimensions follow a consistent retained delivery profile; portrait proxy is portrait; no project database migration.
 - **Test strategy:** Exact preset/lineage/cache tests; prompt freshness and safety tests; paid-provider-free AutomaticWorkflow reuse tests; deterministic motion tests; synthetic real-FFmpeg FHD and portrait proxy tests; historical payload regressions; full backend suite and diff check. Hardware/provider and interactive GUI acceptance are separate manual evidence.
-- **Implementation evidence:** [D066 motion-ready scenes](D066_MOTION_READY_SCENES.md) records implementation and outstanding acceptance.
+- **Implementation evidence:** [D066 motion-ready scenes](D066_MOTION_READY_SCENES.md) records 39 added regression cases, zero paid image calls through interruption/reopen/resume, historical request compatibility, synthetic real-FFmpeg/caption acceptance and offscreen desktop startup. Focused runs: 137 and 36 passed; full backend suite: 1,943 passed, 11 existing D044 skips; `git diff --check` PASS. Real hardware/provider and interactive acceptance remain outstanding with a documented operator procedure.
 
 ## Backlog provenance and deferred scope
 

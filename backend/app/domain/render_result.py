@@ -10,6 +10,7 @@ from .timeline import OutputTimebase, TimelineRevision
 
 OPERATION = "timeline.render"
 PROFILE = "motion-mp4-v1"
+LEGACY_PROFILE = "static-mp4-720p25-v1"
 MOTION_POLICY_VERSION = "auto-subtle-v1"
 
 
@@ -37,7 +38,7 @@ def resolve_motion(scene_id, policy_version=MOTION_POLICY_VERSION):
     return modes[int.from_bytes(digest[:4], "big") % len(modes)]
 
 
-def render_request(timeline, identity, captions=None):
+def render_request(timeline, identity, captions=None, *, algorithm_version="2"):
     if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
         raise ValueError("MP4 v1 requires a D018 timeline at 25 FPS.")
     edges = []
@@ -48,9 +49,16 @@ def render_request(timeline, identity, captions=None):
                                         media.image.artifact_id, media.image.checksum),
                       InputEdge.artifact(f"audio:{i}", f"section:{media.section_id}:audio:{audio_head}",
                                         media.audio.artifact_id, media.audio.checksum)))
-    profile, width, height = delivery_profile(timeline)
-    settings = {"profile": PROFILE, "delivery_profile": profile, "width": width, "height": height,
-                "motion_policy": MOTION_POLICY_VERSION, "timeline": timeline.to_payload(), "captions": None}
+    if algorithm_version == "1":
+        if any(c.media.image.provenance == "motion_master" for c in timeline.clips):
+            raise ValueError("Historical render requests cannot contain motion masters.")
+        settings = {"profile": LEGACY_PROFILE, "timeline": timeline.to_payload(), "captions": None}
+    elif algorithm_version == "2":
+        profile, width, height = delivery_profile(timeline)
+        settings = {"profile": PROFILE, "delivery_profile": profile, "width": width, "height": height,
+                    "motion_policy": MOTION_POLICY_VERSION, "timeline": timeline.to_payload(), "captions": None}
+    else:
+        raise ValueError("Unsupported render request algorithm version.")
     if captions is not None:
         milliseconds = timeline.duration * 1000
         duration_ms = (2 * milliseconds.numerator + milliseconds.denominator) // (
@@ -67,7 +75,7 @@ def render_request(timeline, identity, captions=None):
                                captions.ass_artifact_id, captions.ass_checksum),
         ))
         settings["captions"] = captions.to_payload()
-    return RequestFingerprint.create(OPERATION, "2", inputs=edges,
+    return RequestFingerprint.create(OPERATION, algorithm_version, inputs=edges,
                                      settings=settings,
                                      effective_identity=identity)
 

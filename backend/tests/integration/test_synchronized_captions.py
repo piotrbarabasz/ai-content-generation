@@ -2,6 +2,7 @@
 
 import asyncio
 from array import array
+from dataclasses import replace
 from hashlib import sha256
 import io
 import math
@@ -10,6 +11,7 @@ import subprocess
 import wave
 
 from PIL import Image
+import pytest
 
 from app.application.speech_alignment import SpeechAlignmentService
 from app.domain.caption_track import (
@@ -103,11 +105,17 @@ def _synthetic_track(timeline):
     return track, ass, srt
 
 
-def test_real_ffmpeg_burns_measured_ass_and_keeps_playable_profile(tmp_path):
+@pytest.mark.parametrize("motion", [False, True])
+def test_real_ffmpeg_burns_measured_ass_and_keeps_playable_profile(tmp_path, motion):
     ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
     assert ffmpeg and ffprobe, "Mandatory D032 synthetic smoke requires ffmpeg and ffprobe."
     timeline = compile_values(media(rate=8_000, end=16_000, total=16_000))
-    Image.new("RGB", (64, 64), "black").save(tmp_path / "image-0.png")
+    if motion:
+        from tests.unit.test_motion_compatibility import motion_image
+        source = timeline.clips[0].media
+        timeline = compile_values(replace(source, image=motion_image(source.image)))
+    image = timeline.clips[0].media.image
+    Image.new("RGB", (image.width, image.height), "black").save(tmp_path / "image-0.png")
     samples = array("h", [int(2_000 * math.sin(2 * math.pi * 220 * n / 8_000))
                           for n in range(16_000)])
     buffer = io.BytesIO()
@@ -128,10 +136,14 @@ def test_real_ffmpeg_burns_measured_ass_and_keeps_playable_profile(tmp_path):
     def luminance(at):
         return subprocess.run(
             [ffmpeg, "-v", "error", "-ss", at, "-i", str(tmp_path / "render.mp4"),
-             "-frames:v", "1", "-vf", "crop=640:240:320:440,format=gray",
+             "-frames:v", "1", "-vf", "format=gray",
              "-f", "rawvideo", "-"], capture_output=True, check=True,
             timeout=20).stdout
 
     before, during = luminance("0.20"), luminance("1.00")
     assert max(before) < 20
     assert max(during) > 200 and sum(during) > sum(before) + 20_000
+    assert (result.width, result.height) == ((1920, 1080) if motion else (1280, 720))
+    filters = (tmp_path / "filters.txt").read_text()
+    if motion:
+        assert filters.index("zoompan") < filters.index("subtitles=")

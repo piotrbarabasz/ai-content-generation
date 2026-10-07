@@ -14,6 +14,8 @@ from PIL import Image
 from app.application.result_publication import ResultPublicationService
 from app.application.video_render import VideoRenderService
 from app.domain.generation_job import AttemptStatus
+from app.domain.dependencies import RequestFingerprint, content_fingerprint
+from app.domain.timeline import TimelineRevision
 from app.jobs.coordinator import JobCoordinator
 from app.providers.ffmpeg_render import FFmpegRenderer
 from app.runtime.media_process import RenderCanceled
@@ -116,6 +118,32 @@ def test_render_publication_replay_retains_media_and_exact_snapshot(render):
     assert asyncio.run(r.service.run(owned)) == result and len(r.process.calls) == 3
     job = r.coordinator.repository.get_job(owned.job_id)
     assert json.loads(job.request.settings_json)["timeline"] == r.timeline.to_payload()
+
+
+def test_pending_historical_render_request_publishes_without_reinterpreting_snapshot(render):
+    r = render
+    payload = r.timeline.to_payload()
+    for clip in payload["clips"]:
+        for field in ("master_width", "master_height", "delivery_width", "delivery_height", "overscan_policy"):
+            clip["media"]["image"].pop(field)
+    payload["id"] = "timeline_" + content_fingerprint({k: v for k, v in payload.items() if k != "id"})
+    timeline = TimelineRevision.from_payload(payload)
+    from app.domain.render_result import render_request
+    request = RequestFingerprint.create("timeline.render", "1", inputs=render_request(timeline, {}).inputs,
+        settings={"profile": "static-mp4-720p25-v1", "timeline": payload, "captions": None},
+        effective_identity=r.provider.for_request("1").identity())
+    attempt = r.service.publication.enqueue("project:video_render", request,
+        expected_sections={c.media.section_id: c.media.section_revision_id for c in timeline.clips})
+    owned = r.coordinator.claim_next("legacy-render")
+    assert owned.id == attempt.id
+    result = asyncio.run(r.service.run(owned))
+    assert result.selected_at_publication
+    manifest = r.adapter.selected(verify_bytes=True)
+    assert manifest.metadata["render"]["timeline_id"] == payload["id"]
+    assert (manifest.metadata["render"]["width"], manifest.metadata["render"]["height"]) == (1280, 720)
+    assert asyncio.run(r.service.run(owned)) == result
+    assert json.loads(r.coordinator.repository.get_job(owned.job_id).request.settings_json)["timeline"] == payload
+    assert len(r.process.calls) == 3
 
 
 @pytest.mark.parametrize("failure", ["encode", "probe", "decode", "json", "width", "nb_read_frames",
