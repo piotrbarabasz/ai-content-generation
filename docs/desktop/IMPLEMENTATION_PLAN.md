@@ -2,7 +2,9 @@
 
 ## Authority and implementation policy
 
-Status: accepted plan; all tasks below are initially **Planned**, not implemented.
+Status: accepted plan; task status and implementation evidence are recorded
+individually below. Completed and partial tasks describe implemented work; planned
+tasks remain future work.
 Accepted on 2026-09-11 against repository baseline `7d19a70`.
 
 [ADR 0003](../decisions/0003-desktop-first-architecture.md) records the architecture
