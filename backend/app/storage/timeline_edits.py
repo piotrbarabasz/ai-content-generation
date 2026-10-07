@@ -15,6 +15,10 @@ class ProjectTimelineEdits:
         self.store, self.project_id = store, repository.project().id
 
     def current(self):
+        history = self.history()
+        return history[-1] if history else None
+
+    def history(self):
         children, ids = {}, set()
         for manifest in self.store.list_artifacts():
             if manifest.artifact_type != "desktop_timeline_edit":
@@ -31,13 +35,14 @@ class ProjectTimelineEdits:
                 raise ValueError("Invalid or branching timeline history.")
             ids.add(data["id"])
             children[data["parent"]] = TimelineEdit(data["id"], timeline)
-        current, parent = None, None
+        history, parent = [], None
         while parent in children:
             current = children.pop(parent)
+            history.append(current)
             parent = current.id
         if children:
             raise ValueError("Incomplete timeline history.")
-        return current
+        return tuple(history)
 
     def save(self, timeline, expected):
         previous = self.current()

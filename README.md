@@ -11,6 +11,10 @@ uses SQLite and files; application services keep provider and media work isolate
 
 - Create and reopen project workspaces; edit, split, merge and order narrative
   sections while retaining revisions.
+- Inspect retained script, prompt, image, audio and timeline/render choices in
+  **Project history**, then restore selections without regenerating media.
+- Upgrade version 1 projects with a restorable SQLite/media backup; use
+  **Project storage** to preview and explicitly remove eligible cache/work/orphans.
 - Plan scenes, edit visual prompts, import or generate images, and manage selected
   visuals through the editor.
 - Generate section audio through supported optional runtimes, edit a timeline,
@@ -23,6 +27,10 @@ installed Windows workflow, signed installer and clean-machine human acceptance
 remain release gates. AI generated output also depends on optional providers and
 their configuration. See the current state in [architecture docs](docs/architecture/overview.md)
 and the [MVP acceptance record](docs/desktop/D025_MVP_ACCEPTANCE.md).
+
+See [project durability](docs/desktop/PROJECT_DURABILITY.md) for backup recovery,
+retention rules and cleanup limitations. Older application versions refuse the
+new project schema; backups restore into a new folder, without silent downgrade.
 
 ## Install and run
 

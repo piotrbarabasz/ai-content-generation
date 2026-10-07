@@ -6,7 +6,7 @@ import logging
 from PySide6.QtCore import QThread, Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QFileDialog, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox,
+    QMainWindow, QMessageBox, QHBoxLayout,
     QPushButton, QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget, QToolButton,
 )
 
@@ -95,6 +95,15 @@ class ProjectEditor(QMainWindow):
         layout = QVBoxLayout(root)
         self.header = ProjectHeader(provider is not None, workflow_mode, self)
         layout.addWidget(self.header)
+        self.history_button = QPushButton("Project history")
+        self.history_button.clicked.connect(self.show_history)
+        durability_actions = QHBoxLayout()
+        durability_actions.addWidget(self.history_button)
+        self.storage_button = QPushButton("Project storage")
+        self.storage_button.clicked.connect(self.show_storage)
+        durability_actions.addWidget(self.storage_button)
+        durability_actions.addStretch(1)
+        layout.addLayout(durability_actions)
         self.project_name, self.language = self.header.project_name, self.header.language
         self.workflow_mode = self.header.workflow_mode
         self.workflow_status, self.workflow_summary = self.header.status, self.header.summary
@@ -213,6 +222,30 @@ class ProjectEditor(QMainWindow):
         self.automatic_timer.setInterval(10)
         self.automatic_timer.timeout.connect(self._automatic_tick)
         self._update_workflow_controls()
+
+    def show_storage(self):
+        def action():
+            self._ready()
+            if self.audio.busy or self.preview.busy or self.visuals.busy:
+                raise ValueError("Finish media jobs before cleaning storage.")
+            from app.desktop.storage_dialog import StorageDialog
+            from app.storage.project_storage import ProjectStorage
+            self.preview.clear()
+            StorageDialog(ProjectStorage(self.session.repository), self).exec()
+        self._run(action)
+
+    def show_history(self):
+        def action():
+            self._ready()
+            if self.audio.busy or self.preview.busy or self.visuals.busy:
+                raise ValueError("Finish media jobs before restoring history.")
+            from app.desktop.history_dialog import HistoryDialog
+            from app.storage.history import compose_history
+            HistoryDialog(compose_history(self.session), self).exec()
+            if self.timeline.services is not None:
+                self.timeline.refresh()
+            self._refresh(self.selected_id)
+        self._run(action)
 
     def _section_choice_changed(self, index):
         if self.loading or self.snapshot is None:

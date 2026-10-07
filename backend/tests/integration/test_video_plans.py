@@ -23,7 +23,7 @@ def test_plan_and_selection_survive_reopen_and_chain_cannot_branch(tmp_path):
     plans = ProjectVideoPlans(session.repository, LocalArtifactStore.for_project(session.repository))
     first = VideoPlanningService(plans, Provider()).generate(project_id=project_id, language="en",
         video_format=VideoFormat.SOCIAL, target_duration_seconds=45, topic="Topic")
-    assert session.repository._connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert session.repository._connection.execute("PRAGMA user_version").fetchone()[0] == 2
     first_selection = plans.selected_id()
     second = VideoPlanningService(plans, Provider()).generate(project_id=project_id, language="en",
         video_format=VideoFormat.SOCIAL, target_duration_seconds=50, topic="Topic updated",

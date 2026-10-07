@@ -83,6 +83,8 @@ Thumbs.db
 # workspaces and local diagnostics, not deterministic test fixtures).
 /jobs.sqlite
 /project.sqlite
+/.backups/
+/.cleanup/
 /*.sqlite-journal
 /*.sqlite-wal
 /*.sqlite-shm

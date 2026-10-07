@@ -39,7 +39,7 @@ It has no SQLite, Qt, HTTP or provider imports. Composition supplies
 `app.storage.project_repository.ProjectRepository`; this repository does not
 replace or persist the existing API dictionaries.
 
-Each local workspace contains `project.sqlite` with schema `user_version = 1`
+Each local workspace contains `project.sqlite` with schema `user_version = 2`
 and application ID `0x41494353` (AICS). The single project row stores a snapshot
 of the existing `Project` metadata, a relative workspace reference `.` and the
 active script revision ID. Normalized section/script identity tables, immutable
@@ -66,7 +66,11 @@ Creation refuses an existing database. Opening never initializes a missing file,
 adopts an unversioned database or migrates an unsupported version/application ID.
 Unsupported formats are left unchanged. A failed initial creation can leave an
 empty, unversioned file; it is rejected on subsequent open and never silently
-reinitialized. Schema migrations are D042.
+reinitialized. D042 explicitly upgrades version 1 to 2 after a consistent backup
+of owned SQLite state and project files. Version 2 adds artifact pins and a
+cleanup journal; existing revision tables and artifact references are preserved.
+Backups include committed WAL state through SQLite's backup API and restore into
+a new folder only. See [project durability](../desktop/PROJECT_DURABILITY.md).
 
 ```python
 from app.application.projects import ProjectSession
@@ -274,7 +278,8 @@ and junction-race hardening remains D044.
 Standalone roots retain atomic JSON manifest sidecars. For editable projects,
 `LocalArtifactStore.for_project(repository)` uses an independently versioned index
 at `artifacts/.artifacts/index.sqlite`, tied to the open D003 session/project ID.
-This leaves D003's `project.sqlite` v1 unchanged and performs no migration. Both
+The D004 publication protocol leaves the revision schema unchanged. D042 now
+upgrades the project container to v2 independently of this protocol. Both
 catalogs reuse `ArtifactManifest`; only registered keys are readable as artifacts.
 
 The catalog commits after complete file publication; SQLite and the filesystem

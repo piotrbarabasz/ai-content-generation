@@ -49,7 +49,7 @@ def test_create_edit_close_reopen_and_move_workspace(tmp_path):
     moved = tmp_path / "Przeniesiony żółty projekt"
     shutil.move(str(workspace), str(moved))
     with sqlite3.connect(moved / "project.sqlite") as database:
-        assert database.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 2
         assert database.execute("SELECT workspace_ref FROM projects").fetchone()[0] == "."
         assert str(workspace) not in "\n".join(database.iterdump())
     with ProjectSession.open(moved, repository_factory=ProjectRepository) as reopened:

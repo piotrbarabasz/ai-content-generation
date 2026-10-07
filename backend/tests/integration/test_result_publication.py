@@ -366,7 +366,7 @@ def test_extension_keeps_base_formats_and_legacy_imports_and_refuses_unknown_ver
     for path in (index.path, jobs.path):
         with closing(sqlite3.connect(path)) as connection:
             assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
-    assert session.repository._connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert session.repository._connection.execute("PRAGMA user_version").fetchone()[0] == 2
     with closing(sqlite3.connect(index.path)) as connection, connection:
         connection.execute("UPDATE d040_format SET version=99")
     before = index.path.read_bytes()
