@@ -74,7 +74,9 @@ class ProjectSceneImages:
                                  {"scene_id": scene_id, "scene_image": metadata})
         return SceneImage.from_manifest(manifest)
 
-    def image(self, artifact_id):
+    def image(self, artifact_id, *, _visiting=frozenset()):
+        if artifact_id in _visiting:
+            raise ValueError("Cyclic image source lineage.")
         matches = [m for m in self.store.list_artifacts() if m.artifact_id == artifact_id
                    and m.artifact_type == "scene_image" and m.metadata.get("project_id") == self.project_id]
         if len(matches) != 1:
@@ -83,15 +85,21 @@ class ProjectSceneImages:
         scene = self._scene(image.acceptance_id, image.scene_id, current=False)
         if image.project_id != self.project_id or image.section_revision_id != scene.revision_id:
             raise ValueError("Image belongs to a different project scene revision.")
-        limit = 64 * 1024 * 1024 if image.provenance == "upscaled" else self.limits.max_bytes
+        limit = (64 * 1024 * 1024 if image.provenance in ("upscaled", "final", "motion_master")
+                 else self.limits.max_bytes)
         with self.store.open_artifact_id(artifact_id) as stream:
             payload = stream.read(limit + 1)
         if len(payload) != image.size_bytes or len(payload) > limit or sha256(payload).hexdigest() != image.checksum:
             raise ValueError("Image bytes differ from retained measurements.")
-        if image.provenance in ("upscaled", "final"):
-            source = self.image(image.source_artifact_id)
+        if image.provenance in ("upscaled", "final", "motion_master"):
+            source = self.image(image.source_artifact_id, _visiting=_visiting | {artifact_id})
             if (source.checksum, source.width, source.height) != (image.source_checksum, image.source_width, image.source_height):
                 raise ValueError("Upscaled source lineage differs from the retained source.")
+            if image.provenance == "motion_master" and (
+                    (source.project_id, source.acceptance_id, source.scene_id, source.section_revision_id)
+                    != (image.project_id, image.acceptance_id, image.scene_id, image.section_revision_id)
+                    or source.provenance not in ("imported", "generated")):
+                raise ValueError("Motion master must reference its original accepted scene source.")
         return image
 
     def history(self, scene_id):

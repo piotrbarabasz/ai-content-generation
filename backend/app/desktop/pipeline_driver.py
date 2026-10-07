@@ -290,6 +290,10 @@ class DesktopPipelineDriver:
             if self.cancel_requested:
                 raise AutomaticWorkflowCanceled("MOTION_MASTER")
             services.finish_motion_master(prepared, result)
+        except Exception:
+            if self.cancel_requested:
+                raise AutomaticWorkflowCanceled("MOTION_MASTER") from None
+            raise
         finally:
             self.active_upscale = None
 
@@ -323,7 +327,9 @@ class DesktopPipelineDriver:
             claim, _, generator_id = self.active_image
             self.editor.visuals.services.cancel_background_image(claim, generator_id=generator_id)
         if self.active_upscale:
-            self.active_upscale.cancel()
+            cancel_upscale = getattr(self.active_upscale, "cancel", None)
+            if callable(cancel_upscale):
+                cancel_upscale()
         cancel_script = getattr(self.active_script_provider, "cancel", None)
         if callable(cancel_script):
             cancel_script()

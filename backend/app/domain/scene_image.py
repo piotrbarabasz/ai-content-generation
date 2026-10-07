@@ -85,6 +85,19 @@ class SceneImage:
                     or (self.native_width, self.native_height) != (self.source_width * 4, self.source_height * 4)
                     or self.overscan_policy != "5:4" or self.final_resize_method not in (None, "Lanczos")):
                 raise ValueError("Invalid motion-master image lineage.")
+            profile_dimensions = {"fhd": (1080, 1920), "qhd": (1440, 2560), "uhd4k": (2160, 3840)}
+            resized = (self.native_width, self.native_height) != (self.master_width, self.master_height)
+            if (tuple(sorted((self.delivery_width, self.delivery_height))) != profile_dimensions[self.target_profile]
+                    or self.master_width * 4 != self.delivery_width * 5
+                    or self.master_height * 4 != self.delivery_height * 5
+                    or abs(self.source_width * self.delivery_height - self.source_height * self.delivery_width)
+                    > self.delivery_height
+                    or any(c not in "0123456789abcdef" for c in self.source_checksum)
+                    or self.final_resize_method != ("Lanczos" if resized else None)
+                    or not isinstance(self.upscaler, dict)
+                    or any(type(self.upscaler.get(key)) is not str or not self.upscaler[key]
+                           for key in ("provider", "model", "version", "runtime"))):
+                raise ValueError("Motion-master profile, overscan or upscaler identity is inconsistent.")
 
     def to_payload(self):
         return {"version": self.lineage_version, **asdict(self)}

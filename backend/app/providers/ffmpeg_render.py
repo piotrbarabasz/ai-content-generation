@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.domain.render_result import (RenderedVideo, render_request, delivery_profile,
-                                      resolve_motion, MOTION_POLICY_VERSION)
+                                      resolve_motion, MOTION_POLICY_VERSION, LEGACY_PROFILE)
 from app.domain.timeline import OutputTimebase, TimelineRevision
 from app.runtime.media_process import MediaProcess, RenderCanceled
 from app.storage.paths import contained_path
@@ -18,13 +18,24 @@ def checksum(path):
 
 
 class FFmpegRenderer:
-    def __init__(self, ffmpeg, ffprobe, *, process=None, proxy=False):
+    def __init__(self, ffmpeg, ffprobe, *, process=None, proxy=False, legacy=False):
         # Executables are trusted composition, never taken from job JSON.
         self.ffmpeg, self.ffprobe = Path(ffmpeg).resolve(strict=True), Path(ffprobe).resolve(strict=True)
         self.process = process if process is not None else MediaProcess()
         self.proxy = proxy
+        self.legacy = legacy
+
+    def for_request(self, algorithm_version):
+        if algorithm_version not in ("1", "2") or self.proxy:
+            raise ValueError("Unsupported final render request version.")
+        if self.legacy == (algorithm_version == "1"):
+            return self
+        return FFmpegRenderer(self.ffmpeg, self.ffprobe, process=self.process,
+                              legacy=algorithm_version == "1")
 
     def dimensions(self, timeline):
+        if self.legacy:
+            return LEGACY_PROFILE, 1280, 720
         profile, width, height = delivery_profile(timeline)
         if not self.proxy:
             return profile, width, height
@@ -32,6 +43,9 @@ class FFmpegRenderer:
         return "proxy", proxy_width, proxy_height
 
     def identity(self):
+        if self.legacy:
+            return {"provider": "ffmpeg", "adapter": "static-mp4-v1",
+                    "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
         return {"provider": "ffmpeg", "adapter": "proxy-motion-mp4-v1" if self.proxy else "motion-mp4-v1",
                 "motion_policy": MOTION_POLICY_VERSION,
                 "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
@@ -42,7 +56,8 @@ class FFmpegRenderer:
             if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
                 raise ValueError("MP4 proxy requires a D018 timeline at 25 FPS.")
         else:
-            render_request(timeline, self.identity(), captions)
+            render_request(timeline, self.identity(), captions,
+                           algorithm_version="1" if self.legacy else "2")
         root = Path(root)
         command = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-n"]
         filters, videos, audios = [], [], []
@@ -51,7 +66,7 @@ class FFmpegRenderer:
             image = contained_path(root, f"image-{i}.png")
             audio = contained_path(root, f"audio-{i}.wav")
             command.extend(("-loop", "1", "-framerate", "25", "-i", image.name, "-i", audio.name))
-            if clip.media.image.provenance == "motion_master":
+            if not self.legacy and clip.media.image.provenance == "motion_master":
                 mode = resolve_motion(clip.media.scene_id)
                 frames = clip.duration_frames
                 progress_expr = f"on/{max(1, frames - 1)}"

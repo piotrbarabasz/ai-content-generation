@@ -44,7 +44,8 @@ class RenderResultIndex(ResultArtifactIndex):
         caption_payload = json.loads(request.settings_json).get("captions")
         captions = (PublishedCaptionTrack.from_payload(caption_payload)
                     if caption_payload is not None else None)
-        expected = render_request(timeline, json.loads(request.effective_identity_json), captions)
+        expected = render_request(timeline, json.loads(request.effective_identity_json), captions,
+                                  algorithm_version=request.algorithm_version)
         artifact_edges = tuple(e for e in request.inputs if e.artifact_id is not None)
         if (artifact_edges != expected.inputs or request.algorithm_version != expected.algorithm_version
                 or request.settings_json != expected.settings_json):
