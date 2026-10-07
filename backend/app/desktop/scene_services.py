@@ -19,7 +19,7 @@ logger = logging.getLogger("aics.pipeline")
 def _image_variant_label(value, provider_identity=None):
     if value.provenance == "motion_master":
         labels = {"fhd": "FHD", "qhd": "QHD", "uhd4k": "4K UHD"}
-        return f"motion master: {labels[value.target_profile]} motion-ready · Auto subtle"
+        return f"motion master: {labels[value.target_profile]} motion-ready"
     if value.provenance == "final":
         labels = {"fhd": "Full HD", "qhd": "QHD", "uhd4k": "4K UHD"}
         return f"final: {labels[value.target_profile]} · {value.width}×{value.height}"
@@ -89,6 +89,14 @@ class ScenePlanView:
 
 class SceneServices:
     """Synchronous coordinator-thread commands; providers remain injected."""
+
+    def motion_settings(self):
+        from app.storage.scene_motion import ProjectMotionSettings
+        return ProjectMotionSettings(self.store, self.plans.repository.project().id).current()
+
+    def save_motion_settings(self, config):
+        from app.storage.scene_motion import ProjectMotionSettings
+        return ProjectMotionSettings(self.store, self.plans.repository.project().id).save(config)
 
     def __init__(self, *, plans, prompts, intake, generation, images, store, coordinator,
                  context_resolver=None, upscale=None, image_generators=(), generation_services=None,

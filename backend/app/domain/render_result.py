@@ -6,6 +6,7 @@ from fractions import Fraction
 from .caption_track import PublishedCaptionTrack
 from .dependencies import InputEdge, RequestFingerprint
 from .timeline import OutputTimebase, TimelineRevision
+from .scene_motion import MotionConfig, MOTION_CONTROLS_POLICY
 
 
 OPERATION = "timeline.render"
@@ -38,7 +39,12 @@ def resolve_motion(scene_id, policy_version=MOTION_POLICY_VERSION):
     return modes[int.from_bytes(digest[:4], "big") % len(modes)]
 
 
-def render_request(timeline, identity, captions=None, *, algorithm_version="2"):
+def render_request(timeline, identity, captions=None, *, algorithm_version=None, motion=None):
+    if motion is None and identity.get("motion_policy") == MOTION_CONTROLS_POLICY:
+        motion = MotionConfig.from_payload({k: identity[k] for k in
+                                           ("motion_policy", "zoom_intensity", "pan_intensity")})
+    if algorithm_version is None:
+        algorithm_version = "3" if motion is not None else "2"
     if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
         raise ValueError("MP4 v1 requires a D018 timeline at 25 FPS.")
     edges = []
@@ -53,10 +59,14 @@ def render_request(timeline, identity, captions=None, *, algorithm_version="2"):
         if any(c.media.image.provenance == "motion_master" for c in timeline.clips):
             raise ValueError("Historical render requests cannot contain motion masters.")
         settings = {"profile": LEGACY_PROFILE, "timeline": timeline.to_payload(), "captions": None}
-    elif algorithm_version == "2":
+    elif algorithm_version in ("2", "3"):
         profile, width, height = delivery_profile(timeline)
         settings = {"profile": PROFILE, "delivery_profile": profile, "width": width, "height": height,
                     "motion_policy": MOTION_POLICY_VERSION, "timeline": timeline.to_payload(), "captions": None}
+        if algorithm_version == "3":
+            if not isinstance(motion, MotionConfig):
+                raise ValueError("Controlled motion requests require a frozen motion configuration.")
+            settings.update(motion.to_payload())
     else:
         raise ValueError("Unsupported render request algorithm version.")
     if captions is not None:

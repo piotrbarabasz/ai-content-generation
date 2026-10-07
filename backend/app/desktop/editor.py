@@ -75,6 +75,7 @@ class ProjectEditor(QMainWindow):
         self.scene_plans.plan_changed.connect(self._scene_plan_changed)
         self.visuals = ScenePanel(self)
         self.visuals.media_changed.connect(self._visual_media_changed)
+        self.visuals.motion_changed.connect(self._motion_changed)
         self.visuals.scene_selected.connect(self._visual_scene_selected)
         self.audio.readiness_changed.connect(self._queue_diagnostics)
         self.session = self.snapshot = self.selected_id = None
@@ -295,6 +296,12 @@ class ProjectEditor(QMainWindow):
 
     def _visual_media_changed(self):
         self.preview.timeline_changed(self.timeline.edit)
+        self.diagnose_pipeline()
+
+    def _motion_changed(self):
+        self.preview.stop()
+        self.preview.timeline_changed(self.timeline.edit)
+        self._bind_regeneration()
         self.diagnose_pipeline()
 
     def _update_script_panel_progress(self):
@@ -734,7 +741,8 @@ class ProjectEditor(QMainWindow):
                     raise ValueError("Save Film Brief and Visual Style before automatic processing.")
             config = AutomaticWorkflowConfig(
                 choice, generator_id, self.visuals.orientation.currentData(),
-                resolution, "original")
+                resolution, "original", self.visuals.zoom_intensity.currentData(),
+                self.visuals.pan_intensity.currentData())
             self.automatic_driver = DesktopPipelineDriver(self, config)
             self.automatic_workflow = AutomaticWorkflow(self.automatic_driver)
             self.automatic_loop = asyncio.new_event_loop()

@@ -47,11 +47,18 @@ edge content. It explicitly prohibits visible guides, frames and crop marks.
 Historical prompt revisions remain immutable; a v2 generated prompt is stale
 under v3.
 
-Motion masters use deterministic `auto-subtle-v1` motion resolved from scene ID
-and policy version. FFmpeg supports zoom in/out and four pan directions, with
-maximum zoom 1.10 and crop travel contained by the overscan. Legacy images keep
-static rendering. Motion policy is included in final render request identity;
-proxy identity also includes the renderer executable and policy.
+Current builds use `motion-controls-v2` with independent project-wide Zoom and
+Pan controls (Off/Subtle/Medium), defaulting to Subtle/Off. Zoom strength is 3.5%
+or 7%; pan uses 25% or 50% of the safe overscan travel around the center. Family
+directions are deterministic, and smoothstep easing, a doubled sampling raster
+and delayed chroma subsampling reduce stepping. Both Off keeps the delivery
+crop static at the selected resolution. Legacy images always stay static.
+
+Retained `auto-subtle-v1` requests keep the original six-mode, linear, maximum
+1.10 zoom/edge-to-edge pan semantics and fingerprint. New algorithm-v3 requests
+include both intensities and the explicit new policy; proxies also include the
+renderer executable/configuration. See [motion controls](D066_MOTION_CONTROLS.md)
+for persistence, compatibility, regression evidence and visual acceptance.
 
 ## Rendering and compatibility
 
@@ -64,8 +71,8 @@ Portrait proxy output is 360×640; landscape proxy output is 640×360. Captions
 are applied after scene motion.
 
 No Timeline serialization or project database schema migration is required.
-There are no persistent per-scene motion controls in D066; manual overrides,
-keyframes and custom curves remain deferred.
+Compact persistent project-wide Zoom/Pan controls are an authorized D066 quality
+follow-up. Per-scene overrides, keyframes and custom curves remain deferred.
 
 ## Implementation and acceptance evidence
 

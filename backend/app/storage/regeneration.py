@@ -317,7 +317,9 @@ class ProjectRegeneration:
                     request = self._bound(render_request(timeline, self.render.renderer.identity()),
                         {c.media.section_id: self.session.repository.get_section(c.media.section_revision_id)
                          for c in timeline.clips}.values())
-                    return StageState("fresh" if self._fresh("project:video_render", request) else "missing")
+                    if self._fresh("project:video_render", request):
+                        return StageState("fresh")
+                    return StageState("stale" if "project:video_render" in self.index.selected() else "missing")
 
                 async def render():
                     timeline = self.timeline.current().timeline

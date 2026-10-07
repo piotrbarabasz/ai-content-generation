@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import inspect
 import logging
+from app.domain.scene_motion import MotionConfig
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -15,8 +16,11 @@ class AutomaticWorkflowConfig:
     orientation: str
     final_resolution: str
     audio_variant: str = "original"
+    zoom_intensity: str = "subtle"
+    pan_intensity: str = "off"
 
     def __post_init__(self):
+        MotionConfig(self.zoom_intensity, self.pan_intensity)
         if self.voice_choice is None:
             raise ValueError("Choose a TTS voice before starting the automatic workflow.")
         if self.orientation not in ("landscape", "portrait"):
@@ -81,6 +85,9 @@ class AutomaticWorkflow:
         self.cancel_requested = False
         self.skipped = 0
         try:
+            configure_motion = getattr(self.driver, "configure_motion", None)
+            if callable(configure_motion):
+                configure_motion(config)
             if self.driver.unsaved_script_draft():
                 logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="Unsaved script draft."')
                 raise AutomaticWorkflowBlocked("SCRIPT", "Save or discard the script draft before automatic processing.")

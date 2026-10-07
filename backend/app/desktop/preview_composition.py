@@ -7,6 +7,7 @@ from app.providers.ffmpeg_render import FFmpegRenderer
 from app.storage.local_store import LocalArtifactStore
 from app.storage.preview import ProjectPreviewMedia
 from app.storage.video_render import ProjectVideoRender, RenderResultIndex
+from app.storage.scene_motion import ProjectMotionSettings
 
 
 def compose_preview(session, timeline_services, *, ffmpeg=None, ffprobe=None, process=None):
@@ -19,6 +20,7 @@ def compose_preview(session, timeline_services, *, ffmpeg=None, ffprobe=None, pr
     jobs = JobRepository(session.repository)
     index = RenderResultIndex(session.repository, jobs)
     store = LocalArtifactStore(index.root, index=index)
-    renderer = FFmpegRenderer(ffmpeg, ffprobe, process=process, proxy=True)
+    settings = ProjectMotionSettings(store, session.project.id)
+    renderer = FFmpegRenderer(ffmpeg, ffprobe, process=process, proxy=True, motion_settings=settings.current)
     media = ProjectPreviewMedia(ProjectVideoRender(index, store))
     return PreviewService(timeline_services.current, media, renderer)
