@@ -172,6 +172,26 @@ class ResultArtifactIndex(ProjectArtifactIndex):
             self._check_extension(connection)
             return dict(connection.execute("SELECT output_key, artifact_id FROM d040_heads WHERE artifact_id IS NOT NULL"))
 
+    def restore(self, output_key, artifact_id, *, expected_artifact_id):
+        """Select a retained result, invalidating outstanding publication claims.
+
+        Freshness is still evaluated against the immutable declaration by consumers.
+        A restore must never make an obsolete running generation eligible again.
+        """
+        with self._transaction() as connection:
+            head = connection.execute("SELECT artifact_id FROM d040_heads WHERE output_key=?", (output_key,)).fetchone()
+            if head is None or head[0] != expected_artifact_id:
+                raise PublicationConflictError("Result selection changed; refresh history.")
+            row = connection.execute("SELECT manifest_json FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            retained = connection.execute("SELECT 1 FROM d040_results WHERE output_key=? AND artifact_id=?", (output_key, artifact_id)).fetchone()
+            if row is None or retained is None:
+                raise PublicationConflictError("Result is not retained for this output.")
+            declaration = DependencyDeclaration.from_payload(json.loads(row[0])["metadata"][DEPENDENCY_METADATA_KEY])
+            if declaration.output_key != output_key:
+                raise PublicationConflictError("Result output binding differs.")
+            connection.execute("UPDATE d040_heads SET artifact_id=?, generation_id=? WHERE output_key=?",
+                               (artifact_id, new_id("generation"), output_key))
+
     def prepare(self, claim):
         actual = self.jobs.get_attempt(claim.id)
         if (actual.job_id != claim.job_id or actual.claim_token != claim.claim_token or not claim.claim_token

@@ -368,7 +368,7 @@ def test_queue_moves_with_closed_project_and_keeps_d003_schema(tmp_path):
         assert repository.get_job(queued.job_id) == original
         assert coordinator.claim_next("worker").id == queued.id
     with sqlite3.connect(moved / "project.sqlite") as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     with sqlite3.connect(moved / "jobs.sqlite") as connection:
         assert str(origin) not in "\n".join(connection.iterdump())
 

@@ -1,4 +1,4 @@
-"""Single-session SQLite persistence for editable projects (format version 1).
+"""Single-session SQLite persistence for editable projects (format version 2).
 
 All paths are resolved from a caller-owned local workspace. An EXCLUSIVE SQLite
 connection retains its lock between transactions; close it before moving a project.
@@ -20,7 +20,7 @@ from app.domain.project import Project
 from app.domain.script import ScriptRevision
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x41494353  # AICS
 
 
@@ -132,6 +132,10 @@ Separate readers are also excluded in this minimal local single-session format.
                 for statement in _SCHEMA.split(";"):
                     if statement.strip():
                         repository._connection.execute(statement)
+                from .project_migration import DURABILITY_SCHEMA
+                for statement in DURABILITY_SCHEMA.split(";"):
+                    if statement.strip():
+                        repository._connection.execute(statement)
                 repository._connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
                 repository._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 repository._connection.execute(
@@ -146,6 +150,12 @@ Separate readers are also excluded in this minimal local single-session format.
     @classmethod
     def open(cls, workspace: Path | str) -> "ProjectRepository":
         root = storage_root(workspace)
+        from .project_migration import migrate_project
+        try:
+            migrate_project(root)
+        except BaseException as exc:
+            cls._raise_busy(exc)
+            raise
         repository = cls(root, cls._connect(root))
         try:
             # Check before requesting write access to an unsupported database.
@@ -171,8 +181,11 @@ Separate readers are also excluded in this minimal local single-session format.
         application = self._connection.execute("PRAGMA application_id").fetchone()[0]
         if version != SCHEMA_VERSION or application != APPLICATION_ID:
             raise UnsupportedSchemaError(f"Unsupported project format: schema={version}, application={application}.")
+        tables = {r[0] for r in self._connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"artifact_pins", "cleanup_items"} <= tables:
+            raise UnsupportedSchemaError("Incomplete version 2 durability schema.")
         if self._connection.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
-            raise UnsupportedSchemaError("Version 1 requires the DELETE rollback journal mode.")
+            raise UnsupportedSchemaError("Current projects require the DELETE rollback journal mode.")
 
     @contextmanager
     def _transaction(self):

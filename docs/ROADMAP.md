@@ -36,6 +36,11 @@ and [D025 evidence](desktop/D025_MVP_ACCEPTANCE.md).
 
 ## Preserved later work
 
+M11 project durability is implemented through D033/D042/D047: retained-choice
+restoration, one backed-up schema upgrade, and explicit storage cleanup. See
+[durability evidence and recovery](desktop/PROJECT_DURABILITY.md). Release
+acceptance remains governed by D025.
+
 FastAPI remains an optional adapter. Optional providers, reference voices,
 alignment/captions, publishing/localization and other output expansion remain
 tracked in the implementation plan. The roadmap is navigation, not a second

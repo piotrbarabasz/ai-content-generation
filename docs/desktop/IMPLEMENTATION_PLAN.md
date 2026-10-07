@@ -961,7 +961,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D033 — History and variant restoration UI
 
-- **Status:** Planned
+- **Status:** Completed
 - **Milestone:** M11
 - **Priority:** P2
 - **Goal:** Restore prior edits and chosen media without regenerating them.
@@ -971,6 +971,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/application/ history service, SQLite selections and app/desktop/ history view; tests.
 - **Acceptance criteria:** Restoring B1 leaves B2 available and updates only actual dependencies; selecting an older image triggers no provider call.
 - **Test strategy:** Persistence/UI round trips, expected-version conflict tests and provider call-count assertions.
+- **Implementation boundary:** Provider-free history service and compact Qt browser reuse retained D003 script/section revisions, D015 prompt choices, D016 image choices, D019/D040 audio/render heads and timeline event snapshots. Restore changes selection, retains newer revisions, compares expected tokens and preserves freshness gates; result restoration rotates generation identity to reject late publication. Missing historical timestamps/provenance are not fabricated. D024/D025 implemented offline paths are used; their external release gates are unchanged.
+- **Evidence:** [Project durability](PROJECT_DURABILITY.md): section B1/B2 retention and restart, prompt/image selection chains, unchanged media, audio freshness with unaffected A, timeline/render restoration and zero provider/renderer calls during restore. Qt history-button action is tested with real temporary SQLite projects; stale restore requests and in-flight result promotion are rejected.
+- **Validation:** Focused durability/editor/repository/timeline run: 72 passed. Final full `python -m pytest backend/tests`: 1972 passed, 11 existing optional tests skipped in 564.65 s on Windows / isolated Python 3.11 / offscreen Qt. `git diff --check`: PASS.
 
 ### D034 — Application update and rollback
 
@@ -1088,7 +1091,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D042 — Project schema migration and backup
 
-- **Status:** Planned
+- **Status:** Completed
 - **Milestone:** M11
 - **Priority:** P2
 - **Goal:** Upgrade project formats without corrupting existing work.
@@ -1098,6 +1101,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/storage/ schema/version handling and backup service; integration tests.
 - **Acceptance criteria:** Old fixture upgrades preserving IDs/media selections; newer unknown schema stays untouched; injected failure retains a restorable original.
 - **Test strategy:** Versioned database fixtures, rollback/interruption tests and backup restore checks including WAL-consistent snapshots.
+- **Implementation boundary:** One explicit project schema 1→2 upgrade adds persistent artifact pins and cleanup journal for D047. Before upgrade writes, lock owned database writers, back up SQLite/WAL-consistent project/queue/catalog state and checksum owned files. Flat backup filenames preserve original paths in a manifest to avoid Windows backup path-depth failures. Migration is transactional; restore verifies the backup and copies into a new folder only. No generic framework or silent downgrade.
+- **Evidence:** [Project durability](PROJECT_DURABILITY.md): old-format fixtures and real selected-image history preserve project/revision/artifact IDs and selections; backup restores original state; unknown newer schema remains byte-identical. Injected backup/migration failures and abrupt process exit before commit retain recoverable original state. Committed WAL data is present in the backup; corrupt backups are refused before creating a restore destination.
+- **Validation:** Latest migration/storage run: 21 passed; affected schema/queue/plan/publication run: 87 passed (overlapping suites). Final full `python -m pytest backend/tests`: 1972 passed, 11 existing optional tests skipped in 564.65 s. `git diff --check`: PASS. Existing signed-installer/clean-machine release gates remain outside this task.
 
 ### D043 — Runtime profile update and rollback
 
@@ -1160,7 +1166,7 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D047 — Reference-aware storage cleanup
 
-- **Status:** Planned
+- **Status:** Completed
 - **Milestone:** M11
 - **Priority:** P2
 - **Goal:** Recover disk space without erasing retained project history.
@@ -1170,6 +1176,9 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Main code areas:** app/storage/ reachability/cleanup service and small storage UI; tests.
 - **Acceptance criteria:** Active and retained snapshot references survive cleanup; interrupted jobs are protected; only eligible files are removed and accounting matches.
 - **Test strategy:** Temporary graph/filesystem fixtures covering pinned, historical, active-job, orphan and interrupted-cleanup cases.
+- **Implementation boundary:** Provider-free report values and project storage adapter traverse retained artifact/value/path references and job inputs. Keep retained/unknown media by default, known variants/revisions regardless of disposable hints, transitive references, pins, active/interrupted job work, models, runtimes and backups. Eligible owned orphans/disposable artifacts and completed workspaces use seven-day default grace; preview cache is removable only when unused. Qt dialog provides dry run, pins and explicit delete/resume. Quarantine precedes atomic attached catalog/journal changes; restart never silently performs destructive cleanup.
+- **Evidence:** [Project durability](PROJECT_DURABILITY.md): graph/filesystem tests cover active media, referenced history, pins, job inputs, completed/interrupted work, grace, cache, actual deletion/accounting, changed previews and idempotency. Interruptions at intent/quarantine/catalog/item boundaries resume explicitly; a new pin before catalog commit restores quarantined bytes. Qt dialog opening is nondestructive and deletion requires its explicit button action. Unknown or ambiguous data is conservatively kept; retained history is not pruned to impose a size limit.
+- **Validation:** Latest migration/storage run: 21 passed. Final full `python -m pytest backend/tests`: 1972 passed, 11 existing optional tests skipped in 564.65 s. `git diff --check`: PASS. No external/shared cache, runtime install, provider behavior or automatic cleanup was added.
 
 ### D048 — Ground a script in supplied sources
 
