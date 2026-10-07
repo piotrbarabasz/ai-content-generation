@@ -5,10 +5,11 @@ using PySide6 and UI-independent Python services. See
 [ADR 0003](../decisions/0003-desktop-first-architecture.md) and the authoritative
 [desktop implementation plan](../desktop/IMPLEMENTATION_PLAN.md).
 
-This page describes the current Python foundation: a reusable execution engine,
-deterministic modules and mocks, local artifact storage, optional real TTS adapters
-and a YouTube publishing boundary. The desktop editor, SQLite project store and
-real MP4 renderer are planned, not implemented capabilities.
+This page describes the current application: a reusable execution engine,
+deterministic modules and mocks, local artifact storage, an implemented PySide6
+desktop editor, SQLite project workspaces and a real FFmpeg MP4 renderer. The
+complete installed Windows workflow remains under acceptance; see the D025 release
+gate.
 
 ## Code boundaries
 

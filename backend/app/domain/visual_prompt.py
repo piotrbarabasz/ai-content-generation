@@ -90,12 +90,12 @@ def prompt_request(inputs: PromptInputs, identity: dict, *, version="3"):
     keys = {"scene": f"scene:{inputs.scene_id}:content", "section_context": f"section:{inputs.section_id}:context",
             "film_brief": "context:" + payload["film_brief"]["context_id"],
             "visual_style": "context:" + payload["visual_style"]["context_id"]}
+    settings = {"schema": visual_prompt_schema()["$id"]}
+    if version == "3":
+        settings["policy"] = "single-scene-motion-v1"
     return RequestFingerprint.create("visual_prompt.generate", version,
                                      inputs=[InputEdge(name, keys[name], content_fingerprint(value)) for name, value in payload.items()],
-                                     settings={"schema": visual_prompt_schema()["$id"],
-                                               "policy": "single-scene-motion-v1" if version == "3" else
-                                               ("single-scene-v1" if version == "2" else "legacy")},
-                                     effective_identity=identity)
+                                     settings=settings, effective_identity=identity)
 
 
 @dataclass(frozen=True)

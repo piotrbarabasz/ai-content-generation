@@ -2,108 +2,90 @@
 
 [![tests](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/piotrbarabasz/ai-content-generation/actions/workflows/tests.yml)
 
-AI Content Studio is being developed as a desktop-first Windows video production
-application: editable narrative sections, local TTS, scene visuals, Timeline Lite
-and MP4 export. The accepted architecture uses PySide6, UI-independent Python
-application services, SQLite plus files, isolated workers and FFmpeg.
+AI Content Studio is a desktop-first Windows application for building narrated
+videos. The PySide6 editor supports project and script editing, scene/storyboard
+work, audio controls, timeline editing, preview and export. Its local project data
+uses SQLite and files; application services keep provider and media work isolated.
 
-The current code is a Python foundation with domain models, a content workflow
-engine, artifact storage, FastAPI endpoints, deterministic mocks and optional real
-TTS/publishing adapters. The desktop editor and real video renderer are not yet
-implemented. The run API stores status records without invoking the engine;
-mock rendering produces references rather than playable video.
+## What works today
 
-Start with the [desktop implementation plan](docs/desktop/IMPLEMENTATION_PLAN.md)
-and [accepted decision](docs/decisions/0003-desktop-first-architecture.md).
-The [product roadmap](docs/ROADMAP.md) summarizes milestones without a second backlog.
+- Create and reopen project workspaces; edit, split, merge and order narrative
+  sections while retaining revisions.
+- Plan scenes, edit visual prompts, import or generate images, and manage selected
+  visuals through the editor.
+- Generate section audio through supported optional runtimes, edit a timeline,
+  preview scenes, and render playable MP4 with FFmpeg.
+- Run deterministic mock workflows and the offline automated tests without AI
+  credentials, GPU access or model downloads.
 
-## Setup and tests
+The production pipeline is still under acceptance. In particular, the complete
+installed Windows workflow, signed installer and clean-machine human acceptance
+remain release gates. AI generated output also depends on optional providers and
+their configuration. See the current state in [architecture docs](docs/architecture/overview.md)
+and the [MVP acceptance record](docs/desktop/D025_MVP_ACCEPTANCE.md).
 
-Use Python 3.11+; Python 3.11 is the CI and documented optional TTS baseline.
-Create an isolated environment and activate it using your shell's normal command.
-On Windows, `py -3.11 -m venv .venv` selects Python 3.11 explicitly; on Linux/macOS,
-use `python3.11 -m venv .venv`. An existing `.venv-ci311` is also suitable.
+## Install and run
 
-From the repository root, with that environment's `python` active:
+Use Python 3.11 or newer. From the repository root, create and activate a virtual
+environment, then install development dependencies:
 
 ```sh
-python -m pip install -e .
+python -m venv .venv
+# Activate .venv using your shell's command, then:
+python -m pip install -e ".[dev]"
+```
+
+Start the desktop editor with:
+
+```sh
+python -m app.desktop
+```
+
+Or install the `ai-content-studio` command entry point through the editable
+installation. On Windows, the project also maintains an installer build workflow;
+see [D041](docs/desktop/D041_WINDOWS_INSTALLER.md).
+
+Run the deterministic offline suite and whitespace check:
+
+```sh
 python -m pytest backend/tests
 git diff --check
 ```
 
-Alternatively, `scripts/setup-dev.ps1` or `sh scripts/setup-dev.sh` installs the
-project and runs the test suite using the active Python. Setup does not install
-Git hooks. CI performs checkout, Python setup, editable installation and pytest.
-Default tests use mocks/fakes and require no provider credentials, GPU or models.
+Qt tests use the offscreen platform in headless environments. Tests do not require
+credentials, external models or GPU access. FFmpeg based rendering acceptance uses
+local media tools and synthetic fixtures; provider smoke tests are separate.
 
-The Visuals tab can offer the configured local Stable Diffusion generator and
-OpenAI GPT Image 2. GPT Image 2 uses `quality=low` with 1280×720 Landscape and
-720×1280 Portrait source images; its key is read from `OPENAI_API_KEY`. See the
-[environment configuration guide](docs/desktop/ENVIRONMENT_CONFIGURATION.md).
+## Optional providers and API
 
-## Optional API adapter
+The desktop can use optional OpenAI text/image APIs and local image and TTS
+runtimes. API keys are read through explicit environment configuration; for
+example, OpenAI features require `OPENAI_API_KEY`. Local Chatterbox, Piper and
+image runtimes have separate setup and hardware requirements. XTTS remains
+evaluation-only. Installing the base package or dev extra does not install model
+weights or optional heavyweight runtimes.
 
-The existing HTTP entrypoint is `app.api.main:app`. FastAPI remains available for
-integration and future automation; the planned desktop does not require it.
-It is still a base package dependency today; optional packaging is planned work.
-To serve the current API locally, install
-an ASGI server in the application environment, for example:
-
-```sh
-python -m pip install uvicorn
-python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
-```
-
-OpenAPI and interactive documentation are available at `/openapi.json` and `/docs`.
-Projects, configurations, runs, approvals and localization records are currently
-in-memory. Catalog discovery and cached voice-preview routes already work through
-application services; real synthesis requires its separately configured runtime.
-See [API and storage](docs/architecture/api-and-storage.md) for exact boundaries.
-
-## Repository layout
-
-- `backend/app/domain/` ? validated entities and configuration.
-- `backend/app/workflow/` ? content execution, registries, presets and usage hooks.
-- `backend/app/modules/` ? content-processing and export modules.
-- `backend/app/providers/` ? protocols, mocks and optional adapters.
-- `backend/app/storage/` ? artifact persistence and manifests.
-- `backend/app/tts/` ? narration, cache, preview and selection services.
-- `backend/app/api/` ? HTTP schemas, routes and service dependencies.
-- `backend/app/tooling/` ? TTS smoke and provider comparison commands.
-- `backend/tests/` ? unit, integration and product static checks.
-- `scripts/` ? developer setup and explicit TTS runtime operations.
-- `experiments/tts_local/` ? isolated experiments outside the production catalog.
-- `docs/architecture/` ? current architecture; `docs/archive/` ? historical evidence.
-
-## TTS and publishing
-
-Chatterbox Multilingual V3 and curated Piper voices remain available behind the
-existing TTS contract. XTTS-v2 remains evaluation-only. Technical chunking,
-interruption/resume, PCM validation, benchmarks and provider-neutral tempo are
-implemented. Preview cache defaults to ignored `.runtime/tts-previews`.
-
-Optional runtimes stay in separate environments. Follow the documented setup
-rather than installing heavy model packages into the base test environment:
-
+- [Environment configuration](docs/desktop/ENVIRONMENT_CONFIGURATION.md)
 - [Runtime profiles](docs/tts/RUNTIME_PROFILES.md)
 - [Chatterbox setup](docs/tts/CHATTERBOX_SETUP.md)
 - [Piper setup](docs/tts/PIPER_SETUP.md)
-- [TTS catalog and voice preview API](docs/tts/TTS_SELECTION_API.md)
-- [YouTube publishing/localization handoff](docs/publishing/YOUTUBE_HANDOFF.md)
+- [YouTube publishing handoff](docs/publishing/YOUTUBE_HANDOFF.md)
 
-## Development
+FastAPI is an optional adapter for integration and automation. Install the `api`
+extra and an ASGI server such as uvicorn to run it locally:
 
-Read [AGENTS.md](AGENTS.md), select one D### task from the
-[implementation plan](docs/desktop/IMPLEMENTATION_PLAN.md), inspect existing code
-and run its tests plus full pytest. No development orchestration system or runtime
-task metadata is required. Keep source language separate from downstream localization,
-preserve artifacts and review history, and isolate providers behind contracts.
+```sh
+python -m pip install -e ".[api]" uvicorn
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
+```
 
-Use `.env.example` only as a placeholder reference; settings must be wired through
-explicit runtime configuration. Never commit secrets, private voices, weights,
-caches or generated outputs. Existing ignored data from retired tooling remains
-private and is not consumed by the application.
+The API is not required by the desktop. Some API metadata endpoints remain
+in-memory and run status does not execute the workflow engine; see
+[API and storage boundaries](docs/architecture/api-and-storage.md).
 
-See [documentation index](docs/INDEX.md), [architecture](docs/architecture/overview.md),
-[roadmap](docs/ROADMAP.md) and [historical task audit](docs/archive/legacy-task-audit.md).
+## Project guidance
+
+The [implementation plan](docs/desktop/IMPLEMENTATION_PLAN.md) is the authoritative
+D### backlog; [roadmap](docs/ROADMAP.md) provides milestone navigation. Follow
+[AGENTS.md](AGENTS.md) when changing code. The [architecture docs](docs/architecture/overview.md)
+describe inspected behavior. Historical task evidence remains in `docs/archive/`.

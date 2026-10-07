@@ -79,3 +79,18 @@ Thumbs.db
 .agents/artifacts/
 .agents/*.json
 .agents/*.log
+# Generated local project/runtime data (these exact root entries are acceptance
+# workspaces and local diagnostics, not deterministic test fixtures).
+/jobs.sqlite
+/project.sqlite
+/*.sqlite-journal
+/*.sqlite-wal
+/*.sqlite-shm
+/acceptance-social-001/
+/smoke-e2e-english-001/
+/test-gps/
+/test-gps-en/
+/test-gps-en-2/
+/chatterbox_diagnostic.txt
+/runtime_directories.txt
+/runtime_packages.txt

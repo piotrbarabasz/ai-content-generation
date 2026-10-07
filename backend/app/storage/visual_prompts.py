@@ -2,10 +2,14 @@
 
 from hashlib import sha256
 import json
+import logging
 
 from app.domain.dependencies import ArtifactDependency, DependencyDeclaration, canonical_json, content_fingerprint
 from app.domain.visual_prompt import PromptContextRevision, PromptInputs, PromptSelection, VisualPromptRevision, prompt_request
 from .scene_plans import ProjectScenePlans
+
+
+logger = logging.getLogger("aics.pipeline")
 
 
 def _section_payload(section):
@@ -127,20 +131,58 @@ class ProjectVisualPrompts:
             raise ValueError("Prompt dependency declaration differs from retained inputs.")
         return revision
 
+    def revision_is_generated(self, revision_id):
+        """Read provenance from the immutable declaration without decoding its payload."""
+        try:
+            manifest = self._manifest("visual_prompt_revision", revision_id)
+            declaration = DependencyDeclaration.from_payload(manifest.metadata["desktop_dependencies"])
+            return declaration.provenance == "generated"
+        except (ValueError, OSError, KeyError, TypeError):
+            return False
+
+    def _recovery_warning(self, *, scene_id, revision_id, reason):
+        logger.warning("[AICS][VISUAL_PROMPT][LEGACY_RECOVERY] scene_id=%s revision_id=%s reason=%s",
+                       scene_id, revision_id or "unknown", str(reason)[:240])
+
     def history(self, scene_id):
         manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
-        return tuple(self.revision(m.metadata["value_id"]) for m in manifests
-                     if m.artifact_type == "visual_prompt_revision" and m.metadata.get("scene_id") == scene_id)
+        revisions = []
+        for manifest in manifests:
+            if manifest.artifact_type != "visual_prompt_revision" or manifest.metadata.get("scene_id") != scene_id:
+                continue
+            revision_id = manifest.metadata.get("value_id")
+            try:
+                revisions.append(self.revision(revision_id))
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                if self.revision_is_generated(revision_id):
+                    self._recovery_warning(scene_id=scene_id, revision_id=revision_id, reason=exc)
+        return tuple(revisions)
 
     def selection_history(self, scene_id):
-        events = [self._read("visual_prompt_selection", m.metadata["value_id"], PromptSelection)
-                  for m in self.store.list_artifacts()
-                  if m.artifact_type == "visual_prompt_selection" and m.metadata.get("scene_id") == scene_id]
+        manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
+        events = []
+        for manifest in manifests:
+            if manifest.artifact_type != "visual_prompt_selection" or manifest.metadata.get("scene_id") != scene_id:
+                continue
+            value_id = manifest.metadata.get("value_id")
+            try:
+                event = self._read("visual_prompt_selection", value_id, PromptSelection)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                self._recovery_warning(scene_id=scene_id, revision_id=value_id,
+                                       reason=f"unreadable selection event: {exc}")
+                continue
+            if event.project_id != self.project_id or event.scene_id != scene_id:
+                self._recovery_warning(scene_id=scene_id, revision_id=event.revision_id,
+                                       reason="selection ownership mismatch")
+                continue
+            events.append(event)
+        # Selection events are still validated as a linear immutable history,
+        # but a missing/corrupt older event may create a recoverable chain gap.
         children = {}
+        ids = {event.id for event in events}
         for event in events:
-            revision = self.revision(event.revision_id)
-            if event.scene_id != scene_id or revision.inputs.scene_id != scene_id or event.parent_selection_id in children:
-                raise ValueError("Invalid or branching prompt selection history.")
+            if event.parent_selection_id in children:
+                raise ValueError("Branching prompt selection history.")
             children[event.parent_selection_id] = event
         chain, parent = [], None
         while parent in children:
@@ -148,7 +190,17 @@ class ProjectVisualPrompts:
             chain.append(event)
             parent = event.id
         if children:
-            raise ValueError("Incomplete prompt selection history.")
+            orphaned = [event for event in events if event.id in {item.id for item in children.values()}]
+            if any(event.parent_selection_id in ids for event in orphaned):
+                raise ValueError("Invalid or branching prompt selection history.")
+            # A chain whose earlier event is unreadable can still be resumed
+            # from the latest retained suffix without discarding its artifacts.
+            chain = []
+            for event in events:
+                if event.parent_selection_id is None or event.parent_selection_id not in ids:
+                    chain = [event]
+                elif chain and event.parent_selection_id == chain[-1].id:
+                    chain.append(event)
         return tuple(chain)
 
     def selected(self, scene_id):
