@@ -16,7 +16,10 @@ def compose_regeneration(session, audio, scenes, timeline, preview, audio_select
     render = None
     if preview is not None:
         from app.providers.ffmpeg_render import FFmpegRenderer
-        renderer = FFmpegRenderer(preview.renderer.ffmpeg, preview.renderer.ffprobe)
+        from app.storage.scene_motion import ProjectMotionSettings
+        settings = ProjectMotionSettings(store, session.project.id)
+        renderer = FFmpegRenderer(preview.renderer.ffmpeg, preview.renderer.ffprobe,
+                                  motion_settings=settings.current)
         render = VideoRenderService(ResultPublicationService(index, store), JobCoordinator(jobs),
                                     ProjectVideoRender(index, store), renderer)
 

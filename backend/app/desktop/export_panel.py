@@ -88,7 +88,8 @@ class ExportPanel(QWidget):
             evidence = self.manifest.metadata.get("render", {})
             duration = evidence.get("video_duration", [0, 1])
             seconds = duration[0] / duration[1] if isinstance(duration, list) and duration[1] else 0
-            self.state.setText("Final video ready")
+            self.state.setText("Final video ready" if self.render_media.motion_current(self.manifest) else
+                               "Retained final video uses older motion settings. Rebuild to apply current motion.")
             self.details.setText(f"Duration {self._clock(seconds)} · {evidence.get('width', '?')}×{evidence.get('height', '?')} · "
                                  f"{evidence.get('video_codec', 'video')}/{evidence.get('audio_codec', 'audio')} · "
                                  f"{evidence.get('profile', 'MP4')}")

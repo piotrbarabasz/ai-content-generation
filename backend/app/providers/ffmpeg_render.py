@@ -1,4 +1,4 @@
-"""Real static-image MP4 encode, independent probe and complete stream decode."""
+"""Versioned static/motion MP4 encode, independent probe and complete decode."""
 
 from fractions import Fraction
 from hashlib import file_digest
@@ -8,6 +8,7 @@ from pathlib import Path
 from app.domain.render_result import (RenderedVideo, render_request, delivery_profile,
                                       resolve_motion, MOTION_POLICY_VERSION, LEGACY_PROFILE)
 from app.domain.timeline import OutputTimebase, TimelineRevision
+from app.domain.scene_motion import MotionConfig, resolve_scene_motion
 from app.runtime.media_process import MediaProcess, RenderCanceled
 from app.storage.paths import contained_path
 
@@ -18,20 +19,31 @@ def checksum(path):
 
 
 class FFmpegRenderer:
-    def __init__(self, ffmpeg, ffprobe, *, process=None, proxy=False, legacy=False):
+    def __init__(self, ffmpeg, ffprobe, *, process=None, proxy=False, legacy=False, motion=MotionConfig(),
+                 motion_settings=None):
         # Executables are trusted composition, never taken from job JSON.
         self.ffmpeg, self.ffprobe = Path(ffmpeg).resolve(strict=True), Path(ffprobe).resolve(strict=True)
         self.process = process if process is not None else MediaProcess()
         self.proxy = proxy
         self.legacy = legacy
+        self.motion = motion
+        self.motion_settings = motion_settings
 
-    def for_request(self, algorithm_version):
-        if algorithm_version not in ("1", "2") or self.proxy:
+    def configured_motion(self):
+        return self.motion_settings() if self.motion_settings is not None else self.motion
+
+    def for_request(self, algorithm_version, settings=None):
+        if algorithm_version not in ("1", "2", "3") or self.proxy:
             raise ValueError("Unsupported final render request version.")
-        if self.legacy == (algorithm_version == "1"):
+        motion = (MotionConfig.from_payload({k: settings[k] for k in
+                  ("motion_policy", "zoom_intensity", "pan_intensity")})
+                  if algorithm_version == "3" and settings is not None else None)
+        if algorithm_version == "3" and motion is None:
+            raise ValueError("Controlled motion request settings are required.")
+        if self.motion_settings is None and self.motion == motion and self.legacy == (algorithm_version == "1"):
             return self
         return FFmpegRenderer(self.ffmpeg, self.ffprobe, process=self.process,
-                              legacy=algorithm_version == "1")
+                              legacy=algorithm_version == "1", motion=motion)
 
     def dimensions(self, timeline):
         if self.legacy:
@@ -46,18 +58,29 @@ class FFmpegRenderer:
         if self.legacy:
             return {"provider": "ffmpeg", "adapter": "static-mp4-v1",
                     "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
-        return {"provider": "ffmpeg", "adapter": "proxy-motion-mp4-v1" if self.proxy else "motion-mp4-v1",
+        identity = {"provider": "ffmpeg", "adapter": "proxy-motion-mp4-v1" if self.proxy else "motion-mp4-v1",
                 "motion_policy": MOTION_POLICY_VERSION,
                 "ffmpeg_sha256": checksum(self.ffmpeg), "ffprobe_sha256": checksum(self.ffprobe)}
+        motion = self.configured_motion()
+        if motion is not None:
+            identity.update(motion.to_payload())
+            identity["adapter"] = "proxy-motion-mp4-v2" if self.proxy else "motion-mp4-v2"
+        return identity
 
     async def render(self, timeline, root, *, captions=None, canceled, progress):
+        motion_config = self.configured_motion()
+        if self.motion_settings is not None:
+            # Freeze once. A preference change during encoding cannot alter frames.
+            return await FFmpegRenderer(self.ffmpeg, self.ffprobe, process=self.process,
+                proxy=self.proxy, legacy=self.legacy, motion=motion_config).render(
+                    timeline, root, captions=captions, canceled=canceled, progress=progress)
         profile, width, height = self.dimensions(timeline)
         if self.proxy:
             if not isinstance(timeline, TimelineRevision) or timeline.timebase != OutputTimebase(1, 25):
                 raise ValueError("MP4 proxy requires a D018 timeline at 25 FPS.")
         else:
             render_request(timeline, self.identity(), captions,
-                           algorithm_version="1" if self.legacy else "2")
+                           algorithm_version="1" if self.legacy else "3" if motion_config else "2")
         root = Path(root)
         command = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-n"]
         filters, videos, audios = [], [], []
@@ -67,17 +90,31 @@ class FFmpegRenderer:
             audio = contained_path(root, f"audio-{i}.wav")
             command.extend(("-loop", "1", "-framerate", "25", "-i", image.name, "-i", audio.name))
             if not self.legacy and clip.media.image.provenance == "motion_master":
-                mode = resolve_motion(clip.media.scene_id)
-                frames = clip.duration_frames
-                progress_expr = f"on/{max(1, frames - 1)}"
-                zoom = (f"1+0.10*{progress_expr}" if mode == "zoom_in" else
-                        f"1.10-0.10*{progress_expr}" if mode == "zoom_out" else "1.10")
-                max_x, max_y = f"(iw-iw/zoom)", f"(ih-ih/zoom)"
-                x = (f"{max_x}*{progress_expr}" if mode == "pan_right" else
-                     f"{max_x}*(1-{progress_expr})" if mode == "pan_left" else f"{max_x}/2")
-                y = (f"{max_y}*{progress_expr}" if mode == "pan_down" else
-                     f"{max_y}*(1-{progress_expr})" if mode == "pan_up" else f"{max_y}/2")
-                motion = (f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps=25")
+                if motion_config is not None:
+                    frames = clip.duration_frames
+                    if motion_config.static:
+                        # Use the central delivery crop, retaining full resolution.
+                        motion = (f"crop=iw*4/5:ih*4/5:(iw-ow)/2:(ih-oh)/2,"
+                                  f"scale={width}:{height}:flags=lanczos")
+                    else:
+                        zoom, x, y = resolve_scene_motion(clip.media.scene_id, motion_config).expressions(frames)
+                        # Double the sampling raster and keep 4:4:4 until after
+                        # cropping. Integer coordinate quantization is stable and
+                        # avoids zoompan's subsampled chroma grid snapping.
+                        motion = (f"scale=iw*2:ih*2:flags=lanczos,format=yuv444p,"
+                                  f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps=25")
+                else:
+                    mode = resolve_motion(clip.media.scene_id)
+                    frames = clip.duration_frames
+                    progress_expr = f"on/{max(1, frames - 1)}"
+                    zoom = (f"1+0.10*{progress_expr}" if mode == "zoom_in" else
+                            f"1.10-0.10*{progress_expr}" if mode == "zoom_out" else "1.10")
+                    max_x, max_y = f"(iw-iw/zoom)", f"(ih-ih/zoom)"
+                    x = (f"{max_x}*{progress_expr}" if mode == "pan_right" else
+                         f"{max_x}*(1-{progress_expr})" if mode == "pan_left" else f"{max_x}/2")
+                    y = (f"{max_y}*{progress_expr}" if mode == "pan_down" else
+                         f"{max_y}*(1-{progress_expr})" if mode == "pan_up" else f"{max_y}/2")
+                    motion = (f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps=25")
                 filters.append(f"[{2*i}:v]{motion},setsar=1,format=yuv420p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}]")
             else:
                 fit = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"

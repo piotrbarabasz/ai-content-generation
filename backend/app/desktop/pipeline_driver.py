@@ -16,6 +16,12 @@ logger = logging.getLogger("aics.pipeline")
 class DesktopPipelineDriver:
     """Keep repositories on the GUI thread; offload only provider inference calls."""
 
+    def configure_motion(self, config):
+        from app.domain.scene_motion import MotionConfig
+        save = getattr(self.editor.visuals.services, "save_motion_settings", None)
+        if callable(save):
+            save(MotionConfig(config.zoom_intensity, config.pan_intensity))
+
     def __init__(self, editor, config):
         self.editor, self.config = editor, config
         self.cancel_requested = False

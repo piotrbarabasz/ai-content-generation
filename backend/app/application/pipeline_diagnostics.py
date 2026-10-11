@@ -322,6 +322,10 @@ class PipelineDiagnostics:
         if video_render is not None:
             try:
                 final_render_ready = video_render.selected() is not None
+                motion_current = getattr(video_render, "motion_current", None)
+                if final_render_ready and callable(motion_current) and not motion_current():
+                    final_render_ready = False
+                    diagnostics.append(StageDiagnostic("EXPORT", "STALE", "Motion settings changed; rebuild final render."))
             except (ValueError, OSError, KeyError) as exc:
                 final_render_ready = False
                 message = str(exc) or type(exc).__name__

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from app.application.image_presets import (ORIENTATIONS, RESOLUTIONS, delivery_dimensions, motion_master_dimensions,
                                            aspect_label, generation_dimensions, orientation_compatible)
+from app.domain.scene_motion import MotionConfig, INTENSITIES
 
 
 class ImageGenerationThread(QThread):
@@ -41,6 +42,7 @@ class ImageUpscaleThread(QThread):
 class ScenePanel(QWidget):
     media_changed = Signal()
     scene_selected = Signal(str)
+    motion_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -121,8 +123,15 @@ class ScenePanel(QWidget):
         settings.addRow("Motion master size", self.final_size)
         self.delivery_size = QLabel()
         settings.addRow("Delivery size", self.delivery_size)
-        self.motion_policy = QLabel()
-        settings.addRow("Motion", self.motion_policy)
+        settings.addRow(QLabel("Motion (whole project)"))
+        self.zoom_intensity, self.pan_intensity = QComboBox(), QComboBox()
+        for combo, default in ((self.zoom_intensity, "subtle"), (self.pan_intensity, "off")):
+            for value in INTENSITIES:
+                combo.addItem(value.title(), value)
+            combo.setCurrentIndex(combo.findData(default))
+            combo.currentIndexChanged.connect(self._motion_changed)
+        settings.addRow("Zoom", self.zoom_intensity)
+        settings.addRow("Pan", self.pan_intensity)
         settings.addRow("Seed", self.seed)
         layout.addLayout(settings)
         self._button(layout, "Create motion master", self.create_final_image)
@@ -149,6 +158,8 @@ class ScenePanel(QWidget):
         if self.context_dirty:
             raise ValueError("Save the visual context draft before switching projects.")
         self.services, self.section, self.current = services, None, None
+        reader = getattr(services, "motion_settings", None)
+        self._show_motion(reader() if callable(reader) else MotionConfig())
         self.image_generator.blockSignals(True)
         self.image_generator.clear()
         option_reader = getattr(services, "image_generator_options", None)
@@ -289,12 +300,31 @@ class ScenePanel(QWidget):
         self.generation_size.setText(f"{gen_width} × {gen_height}")
         self.final_size.setText("—" if resolution == "draft" else f"{final_width} × {final_height}")
         self.delivery_size.setText("—" if resolution == "draft" else f"{delivery_width} × {delivery_height}")
-        self.motion_policy.setText("—" if resolution == "draft" else "Auto subtle")
         if self.current is not None:
             self._load_image(self.current.image_id)
 
     def _orientation_changed(self):
         self._update_preset_sizes()
+
+    def motion_config(self):
+        return MotionConfig(self.zoom_intensity.currentData(), self.pan_intensity.currentData())
+
+    def _show_motion(self, config):
+        for combo, value in ((self.zoom_intensity, config.zoom_intensity), (self.pan_intensity, config.pan_intensity)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(combo.findData(value))
+            combo.blockSignals(False)
+
+    def _motion_changed(self):
+        if self.loading or self.services is None:
+            return
+        try:
+            self.services.save_motion_settings(self.motion_config())
+            self.status.setText("Motion saved. Rebuild the final render or preview to apply it.")
+            self.motion_changed.emit()
+        except Exception as exc:
+            self._show_motion(self.services.motion_settings())
+            self.status.setText(str(exc))
 
     def _generator_changed(self):
         if self.services is not None and self.image_generator.currentData():
@@ -362,6 +392,9 @@ class ScenePanel(QWidget):
         self.orientation.setEnabled(not self.busy)
         self.image_generator.setEnabled(not self.busy and bool(self.image_generator_options))
         self.resolution.setEnabled(not self.busy)
+        motion_available = callable(getattr(self.services, "save_motion_settings", None))
+        self.zoom_intensity.setEnabled(motion_available and not self.busy)
+        self.pan_intensity.setEnabled(motion_available and not self.busy)
         self.buttons["Create motion master"].setEnabled(ready and configured and bool(self.current.image_id)
                                                      and self.resolution.currentData() != "draft")
         self.buttons["Cancel upscale"].setEnabled(self.upscale_worker is not None)

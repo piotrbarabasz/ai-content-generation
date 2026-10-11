@@ -314,3 +314,12 @@ def test_existing_project_automatic_resume_reuses_completed_master_with_zero_pai
         assert snapshot(editor.visuals.services.store) == before
         assert editor.timeline.services.current().timeline == timeline
         assert len(provider.calls) == 3 and paid.calls == 0
+        # Zoom/Pan changes affect render/proxy requests only: the same retained
+        # sources, masters, audio and timeline are reused by AutomaticWorkflow.
+        changed = replace(config, zoom_intensity="medium", pan_intensity="subtle")
+        asyncio.run(AutomaticWorkflow(DesktopPipelineDriver(editor, changed)).run(changed))
+        from app.domain.scene_motion import MotionConfig
+        assert editor.visuals.services.motion_settings() == MotionConfig("medium", "subtle")
+        assert editor.timeline.services.current().timeline == timeline
+        assert images.selected(sources[0].scene_id).artifact_id == first_master
+        assert len(provider.calls) == 3 and paid.calls == 0

@@ -82,7 +82,7 @@ class PreviewService:
         root = self.media.stage(timeline)
         result = await self.renderer.render(timeline, root, canceled=canceled, progress=progress)
         path = self.media.publish_proxy(key, timeline, root, result, identity)
-        current = not canceled() and self._is_current(timeline)
+        current = not canceled() and self._is_current(timeline) and identity == self.renderer.identity()
         return FilmPreview(key, timeline.id, path, current, False)
 
     def cancel(self):

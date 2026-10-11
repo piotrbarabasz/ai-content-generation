@@ -50,6 +50,12 @@ class RenderResultIndex(ResultArtifactIndex):
         if (artifact_edges != expected.inputs or request.algorithm_version != expected.algorithm_version
                 or request.settings_json != expected.settings_json):
             raise PublicationConflictError("Render inputs differ from the exact timeline.")
+        if request.algorithm_version == "3":
+            from app.storage.scene_motion import ProjectMotionSettings
+            config = ProjectMotionSettings(self.media.store, self.project_id).current()
+            settings = json.loads(request.settings_json)
+            if any(settings.get(k) != v for k, v in config.to_payload().items()):
+                return False
         for edge in artifact_edges:
             row = connection.execute("SELECT checksum FROM artifacts WHERE artifact_id=?", (edge.artifact_id,)).fetchone()
             if row is None or artifact_fingerprint(edge.artifact_id, row[0]) != edge.fingerprint:
@@ -80,6 +86,23 @@ class ProjectVideoRender:
         if not isinstance(index, RenderResultIndex) or store._index is not index:
             raise ValueError("Render publication requires the owning render-aware index/store.")
         self.index, self.store, self.media = index, store, index.media
+
+    def motion_current(self, manifest=None):
+        """Retain old videos, but expose changed project motion as stale."""
+        manifest = manifest or self.selected()
+        if manifest is None:
+            return False
+        declaration = manifest.metadata.get("desktop_dependencies")
+        if declaration is None:
+            return True  # Historical untracked media has no invented settings.
+        request = declaration["request"]
+        from app.storage.scene_motion import ProjectMotionSettings
+        settings = ProjectMotionSettings(self.store, self.index.project_id)
+        if request["algorithm_version"] == "3":
+            return all(request["settings"].get(k) == v for k, v in settings.current().to_payload().items())
+        # Opening an old project keeps its retained render. An explicit control
+        # change requests v2 motion for subsequent rendering, without rewriting it.
+        return not any(m.artifact_type == "project_motion_settings" for m in self.store.list_artifacts())
 
     def selected(self, expected_artifact_id=None, *, verify_bytes=False):
         """Resolve and verify only the immutable render selected for this project."""

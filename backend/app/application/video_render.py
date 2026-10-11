@@ -30,7 +30,7 @@ class VideoRenderService:
         if existing is not None:
             return existing
         job = self.coordinator.repository.get_job(claim.job_id)
-        if job.request.operation != OPERATION or job.request.algorithm_version not in ("1", "2"):
+        if job.request.operation != OPERATION or job.request.algorithm_version not in ("1", "2", "3"):
             raise ValueError("Video service requires a timeline render job.")
 
         def canceled():
@@ -47,7 +47,8 @@ class VideoRenderService:
                         if settings.get("captions") is not None else None)
             identity = json.loads(job.request.effective_identity_json)
             factory = getattr(self.renderer, "for_request", None)
-            renderer = factory(job.request.algorithm_version) if callable(factory) else self.renderer
+            renderer = (factory(job.request.algorithm_version, settings) if job.request.algorithm_version == "3"
+                        else factory(job.request.algorithm_version)) if callable(factory) else self.renderer
             if renderer.identity() != identity:
                 raise ValueError("Renderer executable identity changed after enqueue.")
             root = self.artifacts.stage(timeline, captions=captions)
