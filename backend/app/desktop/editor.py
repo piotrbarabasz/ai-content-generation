@@ -27,6 +27,7 @@ from app.desktop.project_outline import ProjectOutline
 from app.desktop.storyboard_panel import StoryboardPanel
 from app.desktop.export_panel import ExportPanel
 from app.desktop.script_panel import ScriptPanel
+from app.desktop.publish_panel import PublishPanel
 
 
 class GenerationThread(QThread):
@@ -55,13 +56,14 @@ class GenerationThread(QThread):
 
 class ProjectEditor(QMainWindow):
     def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
-                 preview_factory=None, regeneration_factory=None, workflow_mode="manual"):
+                 preview_factory=None, regeneration_factory=None, workflow_mode="manual", publishing_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
         self.timeline_factory = timeline_factory
         self.preview_factory = preview_factory
         self.regeneration_factory = regeneration_factory
+        self.publishing_factory = publishing_factory
 
         self.regeneration = RegenerationPanel(self)
         self.regeneration.before_start = self._regeneration_ready
@@ -209,6 +211,10 @@ class ProjectEditor(QMainWindow):
         export_layout.addWidget(self.advanced_regeneration)
         export_layout.addWidget(self.advanced_content, 1)
         self.tabs.addTab(self.export_tab, "Export")
+        self.publish_panel = PublishPanel(self)
+        self.tabs.addTab(self.publish_panel, "Publish")
+        self.tabs.currentChanged.connect(lambda index: self.publish_panel.run(self.publish_panel.activate)
+                                        if self.tabs.widget(index) is self.publish_panel else None)
 
         workspace = QSplitter(Qt.Horizontal)
         workspace.addWidget(self.outline)
@@ -354,6 +360,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.publish_panel.busy:
+            raise ValueError("Wait for publishing preparation cleanup before changing project inputs.")
         if self.export_panel.branding.busy or self.export_panel.delivery.busy:
             raise ValueError("Wait for finishing or delivery export to complete or cancel it.")
         if self.automatic_busy:
@@ -396,6 +404,8 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
+            if self.publish_panel.busy:
+                raise ValueError("Wait for publishing preparation cleanup before changing projects.")
             if self.export_panel.branding.busy or self.export_panel.delivery.busy:
                 raise ValueError("Wait for finishing or delivery cleanup before changing projects.")
             if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
@@ -420,6 +430,9 @@ class ProjectEditor(QMainWindow):
             self.video_plan.bind(candidate)
             self.storyboard.bind(scene_services)
             self.export_panel.bind(candidate, timelines=timeline_services)
+            from app.desktop.publishing_composition import compose_publishing
+            self.publish_panel.bind((self.publishing_factory or compose_publishing)(
+                candidate, self.export_panel, timeline_services, llm=self.provider), defer_sources=True)
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
@@ -813,6 +826,11 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.publish_panel.busy:
+            self.publish_panel.cancel()
+            self.status.setText("Waiting for publishing preparation cleanup before closing.")
+            event.ignore()
+            return
         if self.export_panel.delivery.busy:
             self.export_panel.delivery.cancel()
             self.status.setText("Canceling delivery export; wait for cleanup before closing.")

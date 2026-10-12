@@ -1474,9 +1474,21 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Source copy is byte-identical; HQ preserves source resolution/FPS/layout and valid SDR; post-AAC metrics visibly PASS or REVIEW; missing/truncated/discontinuous output never publishes; source and previous delivery histories survive failure, cancellation and reopening.
 - **Test strategy:** Fake-process/options/status/storage tests, offscreen Export regressions, short synthetic CPU FFmpeg audio/video tests and D068 source integration; full backend suite and diff check.
 
+### D070 — YouTube Publishing Package
+
+- **Status:** Implemented — validation and manual review limits recorded in [D070 publishing package](D070_PUBLISHING_PACKAGE.md).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Prepare a reviewed local package for deliberate manual YouTube Studio publication.
+- **Scope:** Publish tab, verified original/branded/delivery selection, explicit structured LLM candidates or honest deterministic drafts, immutable review revisions, exact Timeline chapters, existing synchronized captions, local thumbnails and verified ZIP export.
+- **Out of scope:** Upload/OAuth, localization, TTS/images/video regeneration, renderer or Timeline redesign, database migrations and new alignment-model installation.
+- **Dependencies:** D004, D019, D031, D032, D063, D064, D065, D068, D069. Implemented contracts were inspected; D067–D069 exist on the local stacked base, not verified origin/master.
+- **Acceptance criteria:** Approved edits survive generation/reopening; timed output fails closed on missing/ambiguous mapping or alignment; packaging uses checksum-pinned assets only; missing optional components are documented; title/thumbnail/chapter edits affect publishing artifacts only; no uploader is constructed or invoked.
+- **Test strategy:** Fake LLMs, temporary SQLite projects, existing caption services, offscreen review/copy flows, short CPU FFmpeg frame tests, full backend suite and an isolated snapshot of the existing acceptance project.
+
 ## Backlog provenance and deferred scope
 
-There are **69 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **70 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1485,7 +1497,8 @@ connects it to resumable script generation, D065 composes the editor shell and
 D066 adds motion-ready visuals and local motion rendering. D067 adds a measured
 Standard narration duration gate before automatic visual generation. D068 adds
 optional post-render branding and video finishing. D069 adds separate delivery
-encoding and measured audio mastering.
+encoding and measured audio mastering. D070 adds manual publishing preparation
+and a local publishing ZIP.
 None is
 completed merely by publishing this plan.
 

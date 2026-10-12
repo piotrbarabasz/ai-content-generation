@@ -7,13 +7,14 @@ from PySide6.QtCore import QIODevice, QSaveFile
 from PySide6.QtWidgets import QFileDialog
 
 
-def copy_artifact(parent, store, manifest, *, title, suggested, revalidate):
-    destination, _ = QFileDialog.getSaveFileName(parent, title, suggested, "MP4 video (*.mp4)")
+def copy_artifact(parent, store, manifest, *, title, suggested, revalidate,
+                  suffix=".mp4", file_filter="MP4 video (*.mp4)"):
+    destination, _ = QFileDialog.getSaveFileName(parent, title, suggested, file_filter)
     if not destination:
         return None
     path = Path(destination)
-    if path.suffix.lower() != ".mp4":
-        path = path.with_suffix(".mp4")
+    if path.suffix.lower() != suffix:
+        path = path.with_suffix(suffix)
     try:
         path.resolve().relative_to(store.root.resolve())
     except ValueError:
