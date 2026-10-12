@@ -28,6 +28,7 @@ from app.desktop.storyboard_panel import StoryboardPanel
 from app.desktop.export_panel import ExportPanel
 from app.desktop.script_panel import ScriptPanel
 from app.desktop.publish_panel import PublishPanel
+from app.desktop.shorts_panel import ShortsPanel
 
 
 class GenerationThread(QThread):
@@ -213,6 +214,10 @@ class ProjectEditor(QMainWindow):
         self.tabs.addTab(self.export_tab, "Export")
         self.publish_panel = PublishPanel(self)
         self.tabs.addTab(self.publish_panel, "Publish")
+        self.shorts_panel = ShortsPanel(self)
+        self.tabs.addTab(self.shorts_panel, "Shorts")
+        self.tabs.currentChanged.connect(lambda index: self.shorts_panel.run(self.shorts_panel.activate)
+                                        if self.tabs.widget(index) is self.shorts_panel else None)
         self.tabs.currentChanged.connect(lambda index: self.publish_panel.run(self.publish_panel.activate)
                                         if self.tabs.widget(index) is self.publish_panel else None)
 
@@ -360,6 +365,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.shorts_panel.busy:
+            raise ValueError("Wait for Shorts cleanup before changing project state.")
         if self.publish_panel.busy:
             raise ValueError("Wait for publishing preparation cleanup before changing project inputs.")
         if self.export_panel.branding.busy or self.export_panel.delivery.busy:
@@ -404,6 +411,8 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
+            if self.shorts_panel.busy:
+                raise ValueError("Wait for Shorts cleanup before changing projects.")
             if self.publish_panel.busy:
                 raise ValueError("Wait for publishing preparation cleanup before changing projects.")
             if self.export_panel.branding.busy or self.export_panel.delivery.busy:
@@ -433,6 +442,8 @@ class ProjectEditor(QMainWindow):
             from app.desktop.publishing_composition import compose_publishing
             self.publish_panel.bind((self.publishing_factory or compose_publishing)(
                 candidate, self.export_panel, timeline_services, llm=self.provider), defer_sources=True)
+            from app.desktop.shorts_composition import compose_shorts
+            self.shorts_panel.bind(compose_shorts(self.publish_panel.service))
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
@@ -826,6 +837,12 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.shorts_panel.busy:
+            self.shorts_panel.cancel()
+            self.status.setText("Waiting for Shorts process cleanup before closing.")
+            event.ignore()
+            return
+        self.shorts_panel.player.stop()
         if self.publish_panel.busy:
             self.publish_panel.cancel()
             self.status.setText("Waiting for publishing preparation cleanup before closing.")

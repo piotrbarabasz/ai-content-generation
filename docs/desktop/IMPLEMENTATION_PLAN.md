@@ -1486,9 +1486,21 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Approved edits survive generation/reopening; timed output fails closed on missing/ambiguous mapping or alignment; packaging uses checksum-pinned assets only; missing optional components are documented; title/thumbnail/chapter edits affect publishing artifacts only; no uploader is constructed or invoked.
 - **Test strategy:** Fake LLMs, temporary SQLite projects, existing caption services, offscreen review/copy flows, short CPU FFmpeg frame tests, full backend suite and an isolated snapshot of the existing acceptance project.
 
+### D071 - Shorts & Repurposing Engine
+
+- **Status:** Implemented MVP ? automated checks and remaining human acceptance are recorded in [D071 Shorts](D071_SHORTS.md).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Derive reviewed vertical excerpts from a completed Standard documentary without regenerating parent assets.
+- **Scope:** Verified original/branded/delivery lineage, exact contiguous sentence/scene intervals, structured reference-only LLM analysis or labeled heuristics, immutable decisions/edits, per-shot crop or fit/blur, synchronized caption reuse, optional hook, validated H.264/AAC Shorts and local packages, responsive render/cancel desktop workspace.
+- **Out of scope:** Upload, new narration/images/motion masters, arbitrary sentence remixing, parent Timeline edits, new alignment-model installation and virality prediction.
+- **Dependencies:** D018, D019, D023, D031, D032, D063, D064, D067, D068, D069, D070. D067-D070 are inspected local stacked commits; they are not integrated into verified origin/master.
+- **Acceptance criteria:** Exact verified boundaries and source ownership; independent revisions/output identity; no invalid or partial selected output; three distinct decoded Shorts from the existing documentary; per-Short rebuilding and reopen persistence; parent bytes unchanged. Human audible/editorial review remains required.
+- **Test strategy:** Offline mock analysis, deterministic domain/storage/desktop tests, real CPU FFmpeg 30-second fill/fit and audio timing smoke, complete backend suite, and an isolated verified acceptance-project snapshot.
+
 ## Backlog provenance and deferred scope
 
-There are **70 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **71 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1498,7 +1510,7 @@ D066 adds motion-ready visuals and local motion rendering. D067 adds a measured
 Standard narration duration gate before automatic visual generation. D068 adds
 optional post-render branding and video finishing. D069 adds separate delivery
 encoding and measured audio mastering. D070 adds manual publishing preparation
-and a local publishing ZIP.
+and a local publishing ZIP. D071 adds retained vertical Shorts derived from verified final media.
 None is
 completed merely by publishing this plan.
 

@@ -57,7 +57,7 @@ class PublishingPackageService:
         # catalog, selections and script remain unchanged. MP4 bytes are always
         # reverified above; publishing edits never regenerate/recompile media.
         catalog = [[m.artifact_id, m.checksum] for m in self.store.list_artifacts()
-                   if not m.artifact_type.startswith("publishing_") and m.artifact_type not in {
+                   if not m.artifact_type.startswith(("publishing_", "shorts_")) and m.artifact_type not in {
                        "desktop_speech_alignment", "desktop_caption_track", "desktop_caption_srt", "desktop_caption_ass"}]
         heads = self.renders.index.selected() if hasattr(self.renders, "index") else {}
         key = content_fingerprint([source.artifact_id, source.checksum, timeline.id, self.session.active_script.id, catalog, heads])

@@ -282,7 +282,7 @@ def test_generation_replacement_requires_confirmation(editor, monkeypatch):
 
 def test_stage_tabs_own_existing_workflow_panels(editor):
     assert [editor.tabs.tabText(i) for i in range(editor.tabs.count())] == [
-        "Plan", "Script", "Storyboard", "Timeline", "Export", "Publish",
+        "Plan", "Script", "Storyboard", "Timeline", "Export", "Publish", "Shorts",
     ]
     assert editor.script_tab.isAncestorOf(editor.sections)
     assert editor.storyboard_inspector.widget(0) is editor.audio
