@@ -1450,16 +1450,29 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Standard passes at 540/600/660 seconds; 489/700 seconds block before scenes/images/timeline; unavailable or stale audio stays pending; corrected sections resume while valid artifacts and historical selections remain retained.
 - **Test strategy:** Deterministic PCM playback/measurement, orchestration ordering/resume/cancellation, Social/legacy regression and offscreen existing-summary tests; full backend suite and diff check.
 
+### D068 — Branding & Video Finishing MVP
+
+- **Status:** Implemented — offline validation recorded in [D068 finishing evidence](D068_BRANDING_FINISHING.md); interactive acceptance pending.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Add optional branded intro/outro to a verified final MP4 without rebuilding narrative or media artifacts.
+- **Scope:** Immutable project branding/logo/result artifacts, local cinematic cards, verified cold-open insertion, dedicated FFmpeg finishing service, existing Export-tab controls, cache/cancel/retry and separate narrative/delivery durations.
+- **Out of scope:** Timeline migration, narrative scenes, TTS/images, publishing, music, AI branding and complex editing.
+- **Dependencies:** D004, D019, D063, D064, D065, D067. Existing storage, render validation, script bindings and duration guardrail were inspected; D067 is present on the feature branch but not merged in origin/master.
+- **Acceptance criteria:** Original MP4 stays selected and unchanged; enabled card durations/order are validated; stale/ambiguous mappings never split narration; identity changes affect finishing only; settings/output survive reopening; original and branded outputs remain independently exportable.
+- **Test strategy:** Fake-process unit tests, temporary-project retention, offscreen Export controls and short synthetic FFmpeg color/tone/duration/frame tests; full backend suite and diff check.
+
 ## Backlog provenance and deferred scope
 
-There are **67 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **68 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
 development configuration bootstrap; D063 adds video-format planning, D064
 connects it to resumable script generation, D065 composes the editor shell and
 D066 adds motion-ready visuals and local motion rendering. D067 adds a measured
-Standard narration duration gate before automatic visual generation.
+Standard narration duration gate before automatic visual generation. D068 adds
+optional post-render branding and video finishing.
 None is
 completed merely by publishing this plan.
 

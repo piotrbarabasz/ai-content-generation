@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QIODevice, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QPushButton, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 
 class ExportPanel(QWidget):
@@ -37,8 +37,14 @@ class ExportPanel(QWidget):
         self.folder_button.clicked.connect(self.open_folder)
         self.copy_button.clicked.connect(self.save_copy_as)
         self._enable(False)
+        from app.desktop.branding_panel import BrandingPanel
+        self.branding = BrandingPanel(self)
+        self.branding_scroll = QScrollArea()
+        self.branding_scroll.setWidgetResizable(True)
+        self.branding_scroll.setWidget(self.branding)
+        root.addWidget(self.branding_scroll)
 
-    def bind(self, session, *, index=None, store=None):
+    def bind(self, session, *, index=None, store=None, timelines=None):
         self.session, self.index, self.store = session, index, store
         if session is not None and not hasattr(session, "repository") and self.index is None:
             self.session = None
@@ -53,9 +59,26 @@ class ExportPanel(QWidget):
         elif self.render_media is None and self.index is not None and self.store is not None:
             from app.storage.video_render import ProjectVideoRender
             self.render_media = ProjectVideoRender(self.index, self.store)
+        finishing = None
+        if self.session is not None and hasattr(self.session, "repository"):
+            from app.application.video_finishing import VideoFinishingService
+            from app.desktop.deployment import media_executables
+            from app.providers.ffmpeg_finishing import FFmpegFinisher
+            from app.storage.branding import ProjectBranding
+            from app.storage.video_plans import ProjectVideoPlans
+            from app.storage.plan_script import ProjectPlanScripts
+            ffmpeg, ffprobe = media_executables()
+            if ffmpeg and ffprobe:
+                plans = ProjectVideoPlans(self.session.repository, self.store)
+                finishing = VideoFinishingService(self.session, ProjectBranding(self.store, self.session.project.id),
+                    self.render_media, FFmpegFinisher(ffmpeg, ffprobe), video_plans=plans,
+                    plan_scripts=ProjectPlanScripts(self.session.repository, self.store, plans), timelines=timelines)
+        self.branding.bind(finishing)
         self.refresh()
 
     def refresh(self):
+        if not self.branding.busy:
+            self.branding.refresh()
         self.manifest = None
         if self.session is None or self.index is None or self.store is None:
             self.state.setText("No project is open.")
