@@ -1438,15 +1438,28 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Implementation evidence:** [D066 motion-ready scenes](D066_MOTION_READY_SCENES.md) records 39 added regression cases, zero paid image calls through interruption/reopen/resume, historical request compatibility, synthetic real-FFmpeg/caption acceptance and offscreen desktop startup. Focused runs: 137 and 36 passed; full backend suite: 1,943 passed, 11 existing D044 skips; `git diff --check` PASS. Real hardware/provider and interactive acceptance remain outstanding with a documented operator procedure.
 - **Controls follow-up (2026-10-07):** [Independent Zoom/Pan controls](D066_MOTION_CONTROLS.md) records `motion-controls-v2`, Subtle/Off defaults, persistent project-wide choices, render/proxy-only invalidation, preserved historical requests and 40 new offline cases. Focused: 59 passed; full: 2,012 passed, 11 existing D044 skips; diff check PASS. Same-image visual comparisons and the existing D066 manual gates remain pending; status stays Partial.
 
+### D067 — Standard Duration Guardrail
+
+- **Status:** Implemented — offline validation recorded in [D067 duration guardrail](D067_STANDARD_DURATION_GUARDRAIL.md); interactive acceptance remains pending.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Stop Standard Automatic processing before visual generation when current measured narration falls outside 540–660 seconds.
+- **Scope:** Complete/reuse all current narration first; validate selected PCM, revision and voice; exact frame/sample-rate duration checks; controlled PLAN_DURATION blocking; existing summary widgets; selective resume.
+- **Out of scope:** Script expansion, provider changes, Social/legacy ordering changes, media/render changes and database migrations.
+- **Dependencies:** D010, D021, D058, D063, D064, D065. Existing SectionAudio, validated playback, plan-driven script and Automatic driver implementations were inspected.
+- **Acceptance criteria:** Standard passes at 540/600/660 seconds; 489/700 seconds block before scenes/images/timeline; unavailable or stale audio stays pending; corrected sections resume while valid artifacts and historical selections remain retained.
+- **Test strategy:** Deterministic PCM playback/measurement, orchestration ordering/resume/cancellation, Social/legacy regression and offscreen existing-summary tests; full backend suite and diff check.
+
 ## Backlog provenance and deferred scope
 
-There are **66 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **67 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
 development configuration bootstrap; D063 adds video-format planning, D064
 connects it to resumable script generation, D065 composes the editor shell and
-D066 adds motion-ready visuals and local motion rendering.
+D066 adds motion-ready visuals and local motion rendering. D067 adds a measured
+Standard narration duration gate before automatic visual generation.
 None is
 completed merely by publishing this plan.
 

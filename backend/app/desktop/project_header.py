@@ -65,7 +65,11 @@ class ProjectHeader(QWidget):
             profile = plan.format.value.upper()
             target = self._clock(plan.target_duration_seconds)
         actual = "—"
-        if report.narration_duration_review:
+        duration = getattr(report, "plan_duration", None)
+        if duration is not None:
+            actual = (f"{float(duration.actual):.1f}s · {duration.state}"
+                      if duration.actual is not None else "PENDING")
+        elif report.narration_duration_review:
             text = report.narration_duration_review
             actual = text.split("measured ", 1)[-1].split("s", 1)[0] + "s" if "measured " in text else text
         self.project_summary.setText(

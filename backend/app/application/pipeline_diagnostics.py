@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import json
 import logging
 
-from app.domain.section_audio import SectionAudio
-from app.domain.video_plan import VIDEO_FORMATS
+from app.domain.video_plan import VIDEO_FORMATS, VideoFormat
+from app.application.plan_duration import PlanDurationResult, plan_duration_result, selected_narration
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -41,6 +41,7 @@ class PipelineReport:
     script_group_progress: str = "NOT USED"
     narration_duration_review: str | None = None
     final_render_ready: bool | None = None
+    plan_duration: PlanDurationResult | None = None
 
     @property
     def summary(self):
@@ -98,6 +99,7 @@ class PipelineDiagnostics:
             _emit("SCRIPT", "BLOCKED", message)
 
         measured_total_duration, measured_sections = 0.0, 0
+        measurements = []
         for section in sections:
             audio_value = None
             audio_reason = None
@@ -105,18 +107,7 @@ class PipelineDiagnostics:
                 audio_reason = "Audio services are not configured."
             else:
                 try:
-                    playback = audio.services.playback(section, audio_variant, audio_choice)
-                    if playback.stale:
-                        audio_reason = f"Selected {audio_variant} narration is stale for the current section revision or voice."
-                    heads = audio.services.index.selected()
-                    key = "raw" if audio_variant == "original" else "processed"
-                    artifact_id = heads.get(f"section:{section.section_id}:audio:{key}")
-                    if artifact_id:
-                        manifest = next(item for item in audio.services.index.manifests()
-                                        if item.artifact_id == artifact_id)
-                        audio_value = SectionAudio.from_manifest(manifest)
-                        if audio_value.revision_id != section.id:
-                            audio_reason = "Selected narration belongs to an older section revision."
+                    audio_value = selected_narration(audio.services, section, audio_choice, audio_variant)
                 except (ValueError, OSError, KeyError, StopIteration) as exc:
                     audio_reason = str(exc)
             if audio_value is None and audio_reason is None:
@@ -130,6 +121,7 @@ class PipelineDiagnostics:
                 voice_ready += 1
                 measured_total_duration += audio_value.duration_seconds
                 measured_sections += 1
+                measurements.append(audio_value)
                 boundary = audio_value.speech_boundary_map
                 quality = boundary.quality if boundary else "unavailable"
                 message = (f"section={json.dumps(section.title, ensure_ascii=False)} variant={audio_variant} "
@@ -289,6 +281,7 @@ class PipelineDiagnostics:
               f"timing={scenes_ready}/{len(sections)} visuals={visuals_ready}/{visual_count} "
               f"timeline_candidates={timeline_accepted}/{timeline_expected}")
         plan_summary, group_progress, duration_review = "LEGACY / NOT USED", "NOT USED", None
+        duration = None
         selected_plan = None
         if video_plans is not None:
             try:
@@ -308,8 +301,21 @@ class PipelineDiagnostics:
                         states = plan_script.progress(selected_plan) if plan_script is not None else ("pending",) * len(selected_plan.groups)
                         group_progress = f"{sum(value == 'complete' for value in states)}/{len(states)}"
                     _emit("SCRIPT_GROUPS", "OK" if "BLOCKED" not in group_progress else "BLOCKED", group_progress)
-                    _emit("PLAN", "OK", f"format={selected_plan.format.value} target={selected_plan.target_duration_seconds} groups={len(states)}")
-                    if sections and measured_sections == len(sections):
+                    _emit("PLAN", "OK", f"format={selected_plan.format.value} target={selected_plan.target_duration_seconds} groups={len(selected_plan.groups)}")
+                    if selected_plan.format == VideoFormat.STANDARD:
+                        pending_reason = None
+                        if audio_choice is None:
+                            pending_reason = "Choose a narration voice to validate current audio."
+                        elif "BLOCKED" in group_progress or (plan_script is not None and any(value != "complete" for value in states)):
+                            pending_reason = "Complete the current plan-driven script before validating duration."
+                        duration = plan_duration_result(selected_plan, measurements, len(sections),
+                                                        pending_reason=pending_reason)
+                        duration_review = duration.summary
+                        diagnostics.append(StageDiagnostic("PLAN_DURATION", duration.state, duration.summary,
+                                                           reason=duration.pending_reason))
+                        _emit("PLAN_DURATION", duration.state, duration.summary)
+                        ready_for_timeline &= duration.state == "OK"
+                    elif sections and measured_sections == len(sections):
                         if not VIDEO_FORMATS[selected_plan.format].min_duration_seconds <= measured_total_duration <= VIDEO_FORMATS[selected_plan.format].max_duration_seconds:
                             duration_review = f"REVIEW · measured {measured_total_duration:.1f}s outside {VIDEO_FORMATS[selected_plan.format].min_duration_seconds}–{VIDEO_FORMATS[selected_plan.format].max_duration_seconds}s"
                             _emit("PLAN_DURATION", "REVIEW", f"measured={measured_total_duration:.1f}s")
@@ -334,4 +340,4 @@ class PipelineDiagnostics:
         return PipelineReport(tuple(diagnostics), len(sections), voice_ready, scenes_ready,
                               scene_count, visuals_ready, visual_count, timeline_accepted,
                               timeline_rejected, timeline_expected, export_ready, ready_for_timeline,
-                              plan_summary, group_progress, duration_review, final_render_ready)
+                              plan_summary, group_progress, duration_review, final_render_ready, duration)

@@ -1,6 +1,8 @@
 """Offline Qt user flows with fake ports and actual temporary SQLite projects."""
 
 import os
+import asyncio
+from fractions import Fraction
 import threading
 import subprocess
 import sys
@@ -16,6 +18,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDockWidget, QMessageBox
 
 from app.application.script_generation import ScriptGenerationService
+from app.application.automatic_workflow import AutomaticWorkflowBlocked
+from app.application.plan_duration import PlanDurationResult
 from app.desktop.__main__ import LocalProjects
 from app.desktop.editor import ProjectEditor
 from app.domain.script import ScriptRevision
@@ -58,6 +62,22 @@ def wait_for_generation(window, qt):
             return
         QTest.qWait(10)
     pytest.fail("Generation did not finish")
+
+
+def test_duration_block_uses_existing_workflow_status_and_summary(editor):
+    result = PlanDurationResult(600, 540, 660, Fraction(489))
+    loop = asyncio.new_event_loop()
+    task = loop.create_future()
+    task.set_exception(AutomaticWorkflowBlocked("PLAN_DURATION", result.summary))
+    editor.automatic_loop, editor.automatic_task = loop, task
+    editor.automatic_busy = True
+    editor._automatic_tick()
+    assert "PLAN_DURATION" in editor.workflow_status.text()
+    assert "PLAN_DURATION BLOCKED" in editor.workflow_summary.text()
+    assert "Measured narration: 489s (8:09)" in editor.workflow_summary.text()
+    assert "Minimum additional narration needed: 51s" in editor.workflow_summary.text()
+    assert "Run / Resume" in editor.workflow_summary.text()
+    assert not editor.automatic_busy
 
 
 def test_create_edit_split_merge_reorder_and_reopen(editor, tmp_path, qt):
