@@ -4,6 +4,10 @@
 VIDEO_PLAN_SCHEMA_ID = "urn:aics:video-plan:v1"
 
 
+class MissingStandardPlanGroupsError(ValueError):
+    """A structurally parsed Standard response lacks introduction or conclusion."""
+
+
 def video_plan_schema(video_format=None):
     from app.domain.video_plan import VideoFormat
     fmt = VideoFormat(video_format) if video_format is not None else None
@@ -12,7 +16,9 @@ def video_plan_schema(video_format=None):
                "properties": {"title": text, "role": text, "purpose": text, "weight": {"type": "integer", "minimum": 1}}}
     group = {"type": "object", "additionalProperties": False,
              "required": ["kind", "title", "purpose", "weight", "sections"],
-             "properties": {"kind": text, "title": text, "purpose": text,
+             "properties": {"kind": {"type": "string", "enum": ["cold_open", "opening", "introduction", "chapter", "conclusion"]}
+                            if fmt is VideoFormat.STANDARD else text,
+                            "title": text, "purpose": text,
                             "weight": {"type": "integer", "minimum": 1},
                             "sections": {"type": "array", "minItems": 1,
                                          **({"maxItems": 1} if fmt is VideoFormat.SOCIAL else {}),
@@ -65,5 +71,5 @@ def validate_video_plan_output(payload, video_format):
     if fmt is VideoFormat.STANDARD:
         kinds = [g["kind"] for g in clean]
         if "introduction" not in kinds or "conclusion" not in kinds:
-            raise ValueError("Standard plan requires an introduction and conclusion.")
+            raise MissingStandardPlanGroupsError("Standard plan requires an introduction and conclusion.")
     return {**payload, "groups": clean}
