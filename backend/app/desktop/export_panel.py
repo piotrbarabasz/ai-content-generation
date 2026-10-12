@@ -38,10 +38,16 @@ class ExportPanel(QWidget):
         self.copy_button.clicked.connect(self.save_copy_as)
         self._enable(False)
         from app.desktop.branding_panel import BrandingPanel
+        from app.desktop.delivery_panel import DeliveryPanel
         self.branding = BrandingPanel(self)
+        self.delivery = DeliveryPanel(self)
+        self.export_options = QWidget()
+        options_layout = QVBoxLayout(self.export_options)
+        options_layout.addWidget(self.branding)
+        options_layout.addWidget(self.delivery)
         self.branding_scroll = QScrollArea()
         self.branding_scroll.setWidgetResizable(True)
-        self.branding_scroll.setWidget(self.branding)
+        self.branding_scroll.setWidget(self.export_options)
         root.addWidget(self.branding_scroll)
 
     def bind(self, session, *, index=None, store=None, timelines=None):
@@ -74,11 +80,23 @@ class ExportPanel(QWidget):
                     self.render_media, FFmpegFinisher(ffmpeg, ffprobe), video_plans=plans,
                     plan_scripts=ProjectPlanScripts(self.session.repository, self.store, plans), timelines=timelines)
         self.branding.bind(finishing)
+        delivery = None
+        if self.session is not None and hasattr(self.session, "repository"):
+            from app.application.delivery_export import DeliveryExportService
+            from app.storage.delivery import ProjectDelivery
+            from app.providers.ffmpeg_delivery import FFmpegDeliveryExporter
+            ffmpeg, ffprobe = media_executables()
+            exporter = FFmpegDeliveryExporter(ffmpeg, ffprobe) if ffmpeg and ffprobe else None
+            delivery = DeliveryExportService(self.session, ProjectDelivery(self.store, self.session.project.id),
+                                             self.render_media, exporter, finishing=finishing)
+        self.delivery.bind(delivery)
         self.refresh()
 
     def refresh(self):
         if not self.branding.busy:
             self.branding.refresh()
+        if not self.delivery.busy:
+            self.delivery.refresh()
         self.manifest = None
         if self.session is None or self.index is None or self.store is None:
             self.state.setText("No project is open.")

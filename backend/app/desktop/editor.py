@@ -354,8 +354,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
-        if self.export_panel.branding.busy:
-            raise ValueError("Wait for branding finishing to complete or cancel it.")
+        if self.export_panel.branding.busy or self.export_panel.delivery.busy:
+            raise ValueError("Wait for finishing or delivery export to complete or cancel it.")
         if self.automatic_busy:
             raise ValueError("Wait for the automatic workflow to finish or stop.")
         if self.regeneration.busy:
@@ -396,8 +396,8 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
-            if self.export_panel.branding.busy:
-                raise ValueError("Wait for branding finishing cleanup before changing projects.")
+            if self.export_panel.branding.busy or self.export_panel.delivery.busy:
+                raise ValueError("Wait for finishing or delivery cleanup before changing projects.")
             if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
@@ -813,6 +813,11 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.export_panel.delivery.busy:
+            self.export_panel.delivery.cancel()
+            self.status.setText("Canceling delivery export; wait for cleanup before closing.")
+            event.ignore()
+            return
         if self.export_panel.branding.busy:
             self.export_panel.branding.cancel()
             self.status.setText("Canceling finishing; wait for cleanup before closing.")

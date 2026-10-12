@@ -2,10 +2,9 @@
 
 import asyncio
 from fractions import Fraction
-from hashlib import sha256
 from pathlib import Path
 
-from PySide6.QtCore import QIODevice, QSaveFile, QTimer, QUrl, Signal
+from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
@@ -219,33 +218,11 @@ class BrandingPanel(QWidget):
     def save_copy(self):
         try:
             manifest = self.verified_output()
-            destination, _ = QFileDialog.getSaveFileName(self, "Save branded video copy", "branded.mp4", "MP4 video (*.mp4)")
-            if not destination:
+            from app.desktop.artifact_export import copy_artifact
+            path = copy_artifact(self, self.service.branding.store, manifest,
+                title="Save branded video copy", suggested="branded.mp4", revalidate=self.verified_output)
+            if path is None:
                 return None
-            path = Path(destination)
-            if path.suffix.lower() != ".mp4":
-                path = path.with_suffix(".mp4")
-            # Never replace an immutable source or artifact through an export dialog.
-            try:
-                path.resolve().relative_to(self.service.branding.store.root.resolve())
-            except ValueError:
-                pass
-            else:
-                raise ValueError("Save exported copies outside the immutable artifact directory.")
-            output = QSaveFile(str(path))
-            if not output.open(QIODevice.WriteOnly):
-                raise OSError(output.errorString())
-            try:
-                digest, size = sha256(), 0
-                with self.service.branding.store.open_artifact_id(manifest.artifact_id) as stream:
-                    while block := stream.read(1024 * 1024):
-                        digest.update(block); size += len(block)
-                        if output.write(block) != len(block):
-                            raise OSError("Short write copying branded video.")
-                if digest.hexdigest() != manifest.checksum or size != manifest.size_bytes or not output.commit():
-                    raise ValueError("Branded copy could not be verified or committed.")
-            except Exception:
-                output.cancelWriting(); raise
             self.status.setText(f"Branded video copy saved: {path}")
             return path
         except (ValueError, OSError) as exc:

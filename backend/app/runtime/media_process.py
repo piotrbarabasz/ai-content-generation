@@ -17,7 +17,8 @@ class MediaProcess:
             raise ValueError("Media process deadline must be finite and positive.")
         self.timeout = timeout
 
-    async def run(self, command, *, cwd, canceled=lambda: False, on_line=lambda _: None):
+    async def run(self, command, *, cwd, canceled=lambda: False, on_line=lambda _: None,
+                  capture_stderr=False, capture_stdout=True):
         if canceled():
             raise RenderCanceled("Render canceled before process launch.")
         process = await asyncio.create_subprocess_exec(*map(str, command), cwd=cwd,
@@ -27,7 +28,8 @@ class MediaProcess:
 
         async def stdout():
             while line := await process.stdout.readline():
-                output.extend(line)
+                if capture_stdout:
+                    output.extend(line)
                 if len(output) > 1024 * 1024:
                     raise ValueError("Media process stdout exceeded 1 MiB.")
                 on_line(line.decode("utf-8", errors="replace").strip())
@@ -65,7 +67,7 @@ class MediaProcess:
                 raise RenderCanceled("Render canceled at process completion.")
             if process.returncode != 0:
                 raise RuntimeError(f"Media process exited {process.returncode}: {tail.decode('utf-8', errors='replace')}")
-            return bytes(output)
+            return bytes(tail if capture_stderr else output)
         finally:
             if owned is not None:
                 owned.close()
