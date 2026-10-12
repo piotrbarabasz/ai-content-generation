@@ -365,6 +365,7 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        self.shorts_panel.director.require_saved()
         if self.shorts_panel.busy:
             raise ValueError("Wait for Shorts cleanup before changing project state.")
         if self.publish_panel.busy:
@@ -411,6 +412,7 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
+            self.shorts_panel.director.require_saved()
             if self.shorts_panel.busy:
                 raise ValueError("Wait for Shorts cleanup before changing projects.")
             if self.publish_panel.busy:
@@ -432,6 +434,7 @@ class ProjectEditor(QMainWindow):
                 candidate.close()
                 raise
             if self.session:
+                self.shorts_panel.director.close_service()
                 self.audio.stop()
                 self.preview.stop()
                 self.session.close()
@@ -444,6 +447,11 @@ class ProjectEditor(QMainWindow):
                 candidate, self.export_panel, timeline_services, llm=self.provider), defer_sources=True)
             from app.desktop.shorts_composition import compose_shorts
             self.shorts_panel.bind(compose_shorts(self.publish_panel.service))
+            from app.desktop.director_composition import compose_director
+            def director(shorts, identity, language):
+                provider = scene_services._generation_for(self.visuals.image_generator.currentData()).provider if scene_services else None
+                return compose_director(shorts, identity, audio_factory=self.audio_factory, image_provider=provider, language=language)
+            self.shorts_panel.director_factory = director
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
@@ -837,6 +845,8 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.shorts_panel.director.unsaved:
+            self.status.setText('Save or explicitly discard director script/scene edits before closing.');event.ignore();return
         if self.shorts_panel.busy:
             self.shorts_panel.cancel()
             self.status.setText("Waiting for Shorts process cleanup before closing.")
@@ -865,6 +875,7 @@ class ProjectEditor(QMainWindow):
         if self.session:
             self.audio.stop()
             self.preview.stop()
+            self.shorts_panel.director.close_service()
             self.session.close()
             self.session = None
         event.accept()

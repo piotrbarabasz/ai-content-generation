@@ -73,6 +73,23 @@ class ShortsPanel(QWidget):
             (self.margin,"valueChanged"),(self.accent,"textChanged"),(self.hook_on,"toggled"),(self.hook,"textChanged"),(self.hook_seconds,"valueChanged")]:
             getattr(widget,signal).connect(self.changed)
         self.body.setEnabled(False)
+        from app.desktop.director_panel import DirectorPanel
+        self.original_scroll=scroll;self.director_factory=None;self.director=DirectorPanel(self)
+        self.production_mode=QComboBox();self.production_mode.addItems(['Original Excerpt','AI Director']);layout.insertWidget(0,self.production_mode)
+        layout.insertWidget(2,self.director);self.director.hide()
+        self.production_mode.currentIndexChanged.connect(self.change_production_mode)
+        create=QPushButton('Create AI-directed version of accepted candidate');create.clicked.connect(lambda:self.run(self.create_directed));form.addRow(create)
+
+    @property
+    def busy(self):return getattr(self,'_excerpt_busy',False) or bool(getattr(self,'director',None) and self.director.busy)
+    @busy.setter
+    def busy(self,value):self._excerpt_busy=value
+    def change_production_mode(self,index):
+        if self.busy:
+            self.production_mode.blockSignals(True);self.production_mode.setCurrentIndex(0 if self._excerpt_busy else 1);self.production_mode.blockSignals(False);return
+        self.player.stop();self.director.player.stop();self.original_scroll.setVisible(index==0);self.director.setVisible(index==1)
+    def create_directed(self):
+        self.production_mode.setCurrentIndex(1);self.director.create()
 
     def run(self,callback):
         try:return callback()
@@ -80,7 +97,7 @@ class ShortsPanel(QWidget):
     def changed(self,*_):
         if not self.loading:self.dirty=True; self.status.setText("Unsaved Short edits; save before export.")
     def bind(self,service):
-        self.player.stop(); self.service=service; self.revision=self.value=None; self.body.setEnabled(False)
+        self.player.stop(); self.director.close_service(); self.service=service; self.revision=self.value=None; self.body.setEnabled(False)
         self.status.setText("Open Shorts to verify the final source and restore retained edits.")
     def activate(self):
         if not self.service or self.busy:return
@@ -201,7 +218,9 @@ class ShortsPanel(QWidget):
         if self.busy:coroutine.close();return
         self.player.stop(); self.busy=True; self.canceled=False; self.body.setEnabled(False); self.cancel_button.setEnabled(True)
         self.loop=asyncio.new_event_loop();self.task=self.loop.create_task(coroutine);self.timer.start()
-    def cancel(self):self.canceled=True;self.status.setText("Cancellation requested; completed Shorts retained.")
+    def cancel(self):
+        if self.director.busy:self.director.cancel();return
+        self.canceled=True;self.status.setText("Cancellation requested; completed Shorts retained.")
     def tick(self):
         self.loop.call_soon(self.loop.stop);self.loop.run_forever()
         if not self.task.done():return
