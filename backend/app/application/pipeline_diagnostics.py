@@ -45,6 +45,9 @@ class PipelineReport:
 
     @property
     def summary(self):
+        warnings = [d for d in self.diagnostics if d.stage == "HISTORY" and d.state == "WARNING"]
+        history = (f"\nHistory: {len(warnings)} unavailable reference(s).\n{warnings[0].reason}"
+                   "\nInspect Project history and a verified backup; current inputs remain subject to validation." if warnings else "")
         return (f"Plan: {self.plan_summary}\nScript groups: {self.script_group_progress}"
                 + (f"\nNarration duration: {self.narration_duration_review}" if self.narration_duration_review else "")
                 + f"\nScript: {'OK' if self.section_count else 'BLOCKED'}\n"
@@ -52,7 +55,7 @@ class PipelineReport:
                 f"Scenes/timing: {self.scenes_ready}/{self.section_count}\n"
                 f"Visuals: {self.visuals_ready}/{self.visual_count}\n"
                 f"Timeline candidates: {self.timeline_accepted}/{self.timeline_expected}\n"
-                f"Export: {'READY' if (self.final_render_ready if self.final_render_ready is not None else self.export_ready) else 'BLOCKED'}")
+                f"Export: {'READY' if (self.final_render_ready if self.final_render_ready is not None else self.export_ready) else 'BLOCKED'}" + history)
 
 
 def _emit(stage, state, message, *, level=logging.INFO):
@@ -232,11 +235,18 @@ class PipelineDiagnostics:
 
         candidate_diagnostics = ()
         if timeline is not None:
-            candidate_diagnostics = timeline.current_candidate_diagnostics(audio_variant=audio_variant)
-        timeline_expected = len(candidate_diagnostics)
-        timeline_accepted = sum(item.accepted for item in candidate_diagnostics)
+            candidate_diagnostics = timeline.current_candidate_diagnostics(audio_variant=audio_variant, include_history=True)
+        current_candidates = tuple(item for item in candidate_diagnostics if not getattr(item, "historical", False))
+        timeline_expected = len(current_candidates)
+        timeline_accepted = sum(item.accepted for item in current_candidates)
         timeline_rejected = timeline_expected - timeline_accepted
         for item in candidate_diagnostics:
+            if getattr(item, "historical", False):
+                message = f"timing={item.timing_id} reason={json.dumps(item.reason, ensure_ascii=False)}"
+                diagnostics.append(StageDiagnostic("HISTORY", "WARNING", message, item.section_id,
+                                                   item.section_title, reason=item.reason))
+                _emit("HISTORY", "WARNING", message, level=logging.WARNING)
+                continue
             if item.accepted:
                 _emit("TIMELINE", "OK", f"section={json.dumps(item.section_title, ensure_ascii=False)} "
                       f"scene={item.scene_id} variant={item.audio_variant} timing={item.timing_id}")

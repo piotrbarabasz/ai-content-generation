@@ -2,10 +2,13 @@
 
 from hashlib import sha256
 import json
+import logging
 
 from app.domain.scene_plan import AcceptedScenePlan, ScenePlan, SceneTimingSet
 from app.domain.section_audio import SectionAudio
 from app.tts.assembly import inspect_pcm_wav
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectScenePlans:
@@ -48,9 +51,37 @@ class ProjectScenePlans:
 
     def _save(self, kind, value):
         payload = json.dumps(value.to_payload(), ensure_ascii=False, sort_keys=True)
+        plan = (value.plan if isinstance(value, AcceptedScenePlan) else value if isinstance(value, ScenePlan)
+                else self.acceptance(value.acceptance_id).plan)
         return self.store.save_artifact(kind + ".json", payload,
                                         {"artifact_type": kind, "project_id": self.project_id, "value_id": value.id,
+                                         "section_id": plan.section_id, "revision_id": plan.revision_id,
+                                         **({"acceptance_id": value.acceptance_id} if isinstance(value, SceneTimingSet) else {}),
                                          "module_name": "desktop_scene_planning"})
+
+    def history_records(self, kind, value_type):
+        """Read individual immutable headers without resolving historical dependencies."""
+        for m in sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id)):
+            if m.artifact_type != kind: continue
+            try:
+                value = self._read(kind, m.metadata["value_id"], value_type)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                yield m, None, f"Unavailable {m.artifact_id}: {exc}. Inspect project history or restore a verified backup."
+            else: yield m, value, None
+
+    def _history(self, kind, value_type, load, *, section_id=None, revision_id=None, acceptance_id=None):
+        values = []
+        for m, value, error in self.history_records(kind, value_type):
+            plan = value.plan if isinstance(value, AcceptedScenePlan) else value
+            scope = {"section_id": getattr(plan, "section_id", None), "revision_id": getattr(plan, "revision_id", None),
+                     "acceptance_id": getattr(value, "acceptance_id", None)} if value else m.metadata
+            filters = {"section_id": section_id, "revision_id": revision_id, "acceptance_id": acceptance_id}
+            if any(expected is not None and scope.get(key) is not None and scope[key] != expected for key, expected in filters.items()):
+                if error: logger.warning(error)
+                continue
+            if error: raise ValueError(error)  # Unknown/current corruption must never select an older fallback.
+            values.append(load(value.id))
+        return tuple(values)
 
     def save_plan(self, section, plan):
         self.current(section)
@@ -64,10 +95,8 @@ class ProjectScenePlans:
         plan.validate_section(self.repository.get_section(plan.revision_id))
         return plan  # Historical proposals remain readable, but cannot be accepted as current.
 
-    def proposals(self, section_id):
-        manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
-        plans = (self.plan(m.metadata["value_id"]) for m in manifests if m.artifact_type == "desktop_scene_plan")
-        return tuple(plan for plan in plans if plan.section_id == section_id)
+    def proposals(self, section_id, *, revision_id=None):
+        return self._history("desktop_scene_plan", ScenePlan, self.plan, section_id=section_id, revision_id=revision_id)
 
     def save_acceptance(self, acceptance):
         plan = self.plan(acceptance.plan.id)
@@ -82,10 +111,11 @@ class ProjectScenePlans:
             raise ValueError("Accepted scene plan differs from the retained proposal.")
         return accepted
 
-    def acceptances(self, section_id):
-        manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
-        values = (self.acceptance(m.metadata["value_id"]) for m in manifests if m.artifact_type == "desktop_scene_acceptance")
-        return tuple(value for value in values if value.plan.section_id == section_id)
+    def acceptances(self, section_id, *, revision_id=None):
+        return self._history("desktop_scene_acceptance", AcceptedScenePlan, self.acceptance, section_id=section_id, revision_id=revision_id)
+
+    def timings(self, acceptance_id):
+        return self._history("desktop_scene_timing", SceneTimingSet, self.timing, acceptance_id=acceptance_id)
 
     def save_timing(self, section, timing):
         self.current(section)

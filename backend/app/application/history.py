@@ -16,6 +16,7 @@ class HistoryChoice:
     expected: str | None
     script_revision_id: str
     freshness: str = "Current provider settings are checked by the pipeline."
+    unavailable_reason: str | None = None
 
 
 class HistoryService:
@@ -35,6 +36,8 @@ class HistoryService:
                         (choice.kind, choice.scope, choice.identity)), None)
         if current is None or current.expected != choice.expected:
             raise ValueError("Selection changed; refresh history before restoring.")
+        if current.unavailable_reason:
+            raise ValueError("History entry is unavailable: " + current.unavailable_reason)
         if choice.kind == "script":
             self.session.repository.select_script(choice.identity, expected_active_revision_id=active.id)
         elif choice.kind == "section":
