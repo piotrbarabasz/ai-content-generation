@@ -40,7 +40,7 @@ class HistoryDialog(QDialog):
 
     def show_choice(self, item, *_):
         choice = item.data(Qt.UserRole) if item else None
-        self.restore_button.setEnabled(bool(choice and not choice.selected))
+        self.restore_button.setEnabled(bool(choice and not choice.selected and not choice.unavailable_reason))
         self.details.setPlainText((f"{choice.title}\nCreated: {choice.created}\nSource: {choice.source}\n"
                                    f"{'Currently selected' if choice.selected else 'Retained history'}\n\n"
                                    f"{choice.freshness}\n\n"

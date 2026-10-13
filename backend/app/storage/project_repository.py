@@ -249,8 +249,10 @@ Separate readers are also excluded in this minimal local single-session format.
         return ScriptRevision(**dict(row), sections=tuple(self.get_section(item[0]) for item in selection))
 
     def script_history(self) -> tuple[ScriptRevision, ...]:
-        rows = self._connection.execute("SELECT id FROM script_revisions ORDER BY rowid").fetchall()
-        return tuple(self.get_script(row[0]) for row in rows)
+        return tuple(self.get_script(identity) for identity in self.script_revision_ids())
+
+    def script_revision_ids(self) -> tuple[str, ...]:
+        return tuple(row[0] for row in self._connection.execute("SELECT id FROM script_revisions ORDER BY rowid"))
 
     def section_history(self, section_id: str) -> tuple[SectionRevision, ...]:
         rows = self._connection.execute(

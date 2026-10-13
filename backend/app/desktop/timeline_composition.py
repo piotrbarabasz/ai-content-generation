@@ -6,6 +6,7 @@ from app.application.timeline import TimelineSceneInput
 from app.application.timeline_editing import TimelineEditingService
 from app.application.timeline import TimelineCompiler
 from app.domain.timeline import OutputTimebase
+from app.domain.scene_plan import SceneTimingSet, ScenePlan
 from app.jobs.repository import JobRepository
 from app.storage.local_store import LocalArtifactStore
 from app.storage.result_publication import ResultArtifactIndex
@@ -25,6 +26,7 @@ class TimelineServices(TimelineEditingService):
         accepted: bool
         reason: str | None = None
         media: object | None = None
+        historical: bool = False
 
     def _diagnose(self, source, *, section_id=None, section_title=""):
         try:
@@ -45,34 +47,40 @@ class TimelineServices(TimelineEditingService):
     def candidate_diagnostics(self):
         """Diagnose all retained candidates through the same resolver used by compilation."""
         diagnostics = []
-        manifests = sorted(self.media.store.list_artifacts(), key=lambda item: (item.created_at, item.artifact_id))
-        for manifest in manifests:
-            if manifest.artifact_type != "desktop_scene_timing":
+        for manifest, raw, error in self.media.plans.history_records("desktop_scene_timing", SceneTimingSet):
+            try:
+                if error: raise ValueError(error)
+                timing = self.media.plans.timing(raw.id)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                diagnostics.append(self.CandidateDiagnostic(None, None, "Unavailable retained timing", manifest.metadata.get("value_id"),
+                    "", "original", False, f"{manifest.artifact_id}: {exc}. Inspect Project history or a verified backup.", historical=True))
                 continue
-            timing = self.media.plans.timing(manifest.metadata["value_id"])
             for scene in timing.scenes:
                 for variant in ("original", "processed"):
                     source = TimelineSceneInput(timing.id, scene.scene_id, variant)
                     diagnostics.append(self._diagnose(source))
         return tuple(diagnostics)
 
-    def current_candidate_diagnostics(self, *, audio_variant="original"):
+    def current_candidate_diagnostics(self, *, audio_variant="original", include_history=False):
         """Return current accepted scenes in saved-script and accepted-plan order."""
         if audio_variant not in ("original", "processed"):
             raise ValueError("Choose original or processed audio explicitly.")
         diagnostics = []
         snapshot = self.media.repository.active_script()
-        manifests = sorted(self.media.store.list_artifacts(), key=lambda item: (item.created_at, item.artifact_id))
-        timings = [self.media.plans.timing(item.metadata["value_id"]) for item in manifests
-                   if item.artifact_type == "desktop_scene_timing"]
+        used = set()
         for section in snapshot.sections:
-            accepted = [value for value in self.media.plans.acceptances(section.section_id)
-                        if value.plan.revision_id == section.id]
+            try:
+                accepted = self.media.plans.acceptances(section.section_id, revision_id=section.id)
+                plan = accepted[-1] if accepted else None
+                current_timings = self.media.plans.timings(plan.id) if plan else ()
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                diagnostics.append(self.CandidateDiagnostic(None, section.section_id, section.title, None, "", audio_variant,
+                    False, f"Current scene dependencies are unavailable: {exc}. Inspect the section's accepted plan and timing."))
+                continue
             if not accepted:
                 continue
-            plan = accepted[-1]
-            current_timings = [value for value in timings if value.acceptance_id == plan.id]
             timing = current_timings[-1] if current_timings else None
+            used.update(t.id for t in current_timings)
             for scene in plan.plan.scenes:
                 if timing is None:
                     diagnostics.append(self.CandidateDiagnostic(
@@ -82,6 +90,23 @@ class TimelineServices(TimelineEditingService):
                 source = TimelineSceneInput(timing.id, scene.id, audio_variant)
                 diagnostics.append(self._diagnose(source, section_id=section.section_id,
                                                   section_title=section.title))
+        if not include_history:
+            return tuple(diagnostics)
+        # Historical failures are reported individually, after current relevance
+        # is established. They never become current compilation candidates.
+        active_ids = {s.id for s in snapshot.sections}
+        revisions = {p.id: p.revision_id for _, p, error in self.media.plans.history_records("desktop_scene_plan", ScenePlan) if p and not error}
+        for manifest, raw, error in self.media.plans.history_records("desktop_scene_timing", SceneTimingSet):
+            if raw and raw.id in used: continue
+            revision = revisions.get(raw.plan_id) if raw else manifest.metadata.get("revision_id")
+            historical = not active_ids or bool(revision and revision not in active_ids)
+            try:
+                if error: raise ValueError(error)
+                self.media.plans.timing(raw.id)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                diagnostics.append(self.CandidateDiagnostic(None, manifest.metadata.get("section_id"), "Unavailable retained timing",
+                    manifest.metadata.get("value_id"), "", audio_variant, False,
+                    f"{manifest.artifact_id}: {exc}. Inspect Project history or restore a verified project backup.", historical=historical))
         return tuple(diagnostics)
 
     def candidates(self):

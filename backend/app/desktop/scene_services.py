@@ -113,30 +113,24 @@ class SceneServices:
         self.section = self.acceptance = None
 
     def _current_acceptance(self, section):
-        values = [value for value in self.plans.acceptances(section.section_id)
+        values = [value for value in self.plans.acceptances(section.section_id, revision_id=section.id)
                   if value.plan.revision_id == section.id]
         return values[-1] if values else None
 
     def _timing(self, acceptance):
-        values = []
-        for manifest in sorted(self.store.list_artifacts(), key=lambda item: (item.created_at, item.artifact_id)):
-            if manifest.artifact_type != "desktop_scene_timing":
-                continue
-            timing = self.plans.timing(manifest.metadata["value_id"])
-            if timing.acceptance_id == acceptance.id:
-                values.append(timing)
+        values = self.plans.timings(acceptance.id)
         return values[-1] if values else None
 
     def _selected_audio(self, section):
         return SectionTempoArtifacts(self.store._index, self.store).selected(section, "original")
 
     def plan_state(self, section):
-        proposals = tuple(plan for plan in self.plans.proposals(section.section_id)
+        proposals = tuple(plan for plan in self.plans.proposals(section.section_id, revision_id=section.id)
                           if plan.revision_id == section.id)
         if not proposals:
             return ScenePlanView("none", None, None, ())
         plan = proposals[-1]
-        accepted = next((value for value in reversed(self.plans.acceptances(section.section_id))
+        accepted = next((value for value in reversed(self.plans.acceptances(section.section_id, revision_id=section.id))
                          if value.plan.id == plan.id), None)
         timing = self._timing(accepted) if accepted else None
         measured = ({value.scene_id: value for value in timing.scenes} if timing else {})
