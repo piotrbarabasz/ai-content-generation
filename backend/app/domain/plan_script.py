@@ -73,6 +73,8 @@ class GeneratedScriptGroup:
     group_id: str
     cache_key: str
     sections: tuple[GeneratedGroupSection, ...]
+    source_revisions: tuple[str, ...] = ()
+    policy: str | None = None
 
     def __post_init__(self):
         for key in ("id", "project_id", "video_plan_revision_id", "group_id", "cache_key"):
@@ -82,18 +84,32 @@ class GeneratedScriptGroup:
         object.__setattr__(self, "sections", tuple(self.sections))
         if any(type(section) is not GeneratedGroupSection for section in self.sections):
             raise ValueError("Invalid generated group section value.")
+        if type(self.source_revisions) not in (list, tuple):
+            raise ValueError("Invalid narrative source revisions.")
+        for revision in self.source_revisions:
+            _text(revision, "source revision")
+        object.__setattr__(self, "source_revisions", tuple(self.source_revisions))
+        if self.policy not in (None, "narrative-context-v2"):
+            raise ValueError("Unsupported group context policy.")
         ids = [section.planned_section_id for section in self.sections]
         if len(ids) != len(set(ids)):
             raise ValueError("Generated group contains duplicate planned section IDs.")
 
     def to_payload(self):
-        return {"version": 1, "id": self.id, "project_id": self.project_id,
+        return {**({"source_revisions": list(self.source_revisions), "policy": self.policy} if self.policy else {}), "version": 1, "id": self.id, "project_id": self.project_id,
                 "video_plan_revision_id": self.video_plan_revision_id, "group_id": self.group_id,
                 "cache_key": self.cache_key,
                 "sections": [{"planned_section_id": s.planned_section_id, "text": s.text} for s in self.sections]}
 
     @classmethod
     def from_payload(cls, payload):
+        if type(payload) is dict and "policy" in payload:
+            if payload["policy"] != "narrative-context-v2" or "source_revisions" not in payload:
+                raise ValueError("Unsupported generated group context.")
+            extra = {k: payload[k] for k in ("policy", "source_revisions")}
+            payload = {k: v for k, v in payload.items() if k not in extra}
+        else:
+            extra = {}
         expected = {"version", "id", "project_id", "video_plan_revision_id", "group_id", "cache_key", "sections"}
         if type(payload) is not dict or set(payload) != expected or type(payload["version"]) is not int or payload["version"] != 1 or type(payload["sections"]) is not list:
             raise ValueError("Malformed generated group payload.")
@@ -102,4 +118,4 @@ class GeneratedScriptGroup:
             if type(section) is not dict or set(section) != {"planned_section_id", "text"}:
                 raise ValueError("Malformed generated group section.")
             sections.append(GeneratedGroupSection(**section))
-        return cls(**{k: v for k, v in payload.items() if k not in {"version", "sections"}}, sections=tuple(sections))
+        return cls(**{k: v for k, v in payload.items() if k not in {"version", "sections"}}, sections=tuple(sections), **extra)

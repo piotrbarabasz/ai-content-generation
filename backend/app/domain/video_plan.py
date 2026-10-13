@@ -6,6 +6,42 @@ from enum import StrEnum
 from app.domain.base import DomainValidationError
 
 WORDS_PER_SECOND = 2.2  # Editorial estimate (~132 words/minute), not measured TTS duration.
+NARRATIVE_POLICY = "standard-narrative-v2"
+
+
+def validate_standard_order(groups):
+    kinds = [g.kind if hasattr(g, "kind") else g["kind"] for g in groups]
+    if kinds != ["cold_open", "introduction", *(["chapter"] * (len(kinds) - 3)), "conclusion"] or not 8 <= len(kinds) <= 10:
+        raise ValueError("New Standard plans require cold_open, exactly one introduction, five to seven chapters, then exactly one conclusion.")
+
+
+@dataclass(frozen=True, slots=True)
+class NarrativeMetadata:
+    central_question: str
+    narrative_promise: str
+    opening_hook_goal: str
+    introduction_goal: str
+    chapter_progression: tuple[str, ...]
+    conclusion_goal: str
+    final_takeaway: str
+
+    def __post_init__(self):
+        for field in ("central_question", "narrative_promise", "opening_hook_goal", "introduction_goal", "conclusion_goal", "final_takeaway"):
+            _text(getattr(self, field), field)
+        if type(self.chapter_progression) not in (tuple, list) or not 5 <= len(self.chapter_progression) <= 7:
+            raise DomainValidationError("Narrative progression requires five to seven chapter contributions.")
+        for value in self.chapter_progression:
+            _text(value, "chapter contribution")
+        object.__setattr__(self, "chapter_progression", tuple(self.chapter_progression))
+
+    def to_payload(self):
+        return {**asdict(self), "chapter_progression": list(self.chapter_progression)}
+
+    @classmethod
+    def from_payload(cls, payload):
+        if type(payload) is not dict or set(payload) != set(cls.__dataclass_fields__):
+            raise DomainValidationError("Malformed narrative metadata.")
+        return cls(**payload)
 
 
 class VideoFormat(StrEnum):
@@ -92,6 +128,7 @@ class VideoPlanRevision:
     visual_style: str
     groups: tuple[VideoPlanGroup, ...]
     parent_revision_id: str | None = None
+    narrative: NarrativeMetadata | None = None
 
     def __post_init__(self):
         for field in ("id", "project_id", "language", "topic", "working_title", "film_brief", "visual_style"):
@@ -121,6 +158,12 @@ class VideoPlanRevision:
             if not 7 <= len(self.groups) <= 10 or not 5 <= chapters <= 7 or kinds[0] not in {"cold_open", "opening"} or "introduction" not in kinds or "conclusion" not in kinds:
                 raise DomainValidationError("Standard plans require an opening, introduction, five to seven chapters and conclusion.")
         gids, sids = [g.id for g in self.groups], [s.id for g in self.groups for s in g.sections]
+        if self.narrative is not None:
+            if type(self.narrative) is not NarrativeMetadata or fmt is not VideoFormat.STANDARD:
+                raise DomainValidationError("Narrative policy requires Standard editorial metadata.")
+            validate_standard_order(self.groups)
+            if len(self.narrative.chapter_progression) != chapters:
+                raise DomainValidationError("Narrative contributions must match the chapter count.")
         if len(set(gids + sids)) != len(gids + sids):
             raise DomainValidationError("Video plan identities must be unique.")
         if sum(g.target_duration_seconds for g in self.groups) != self.target_duration_seconds:
@@ -139,7 +182,8 @@ class VideoPlanRevision:
         return sum(s.target_scene_count for g in self.groups for s in g.sections)
 
     def to_payload(self):
-        return {"version": 1, "id": self.id, "project_id": self.project_id,
+        return {**({"narrative_policy": NARRATIVE_POLICY, "narrative": self.narrative.to_payload()} if self.narrative else {}),
+                "version": 1, "id": self.id, "project_id": self.project_id,
                 "language": self.language, "format": self.format.value,
                 "target_duration_seconds": self.target_duration_seconds, "topic": self.topic,
                 "working_title": self.working_title, "film_brief": self.film_brief,
@@ -151,6 +195,12 @@ class VideoPlanRevision:
 
     @classmethod
     def from_payload(cls, payload):
+        narrative = None
+        if type(payload) is dict and "narrative_policy" in payload:
+            if payload["narrative_policy"] != NARRATIVE_POLICY or "narrative" not in payload:
+                raise DomainValidationError("Unsupported narrative planning policy.")
+            narrative = NarrativeMetadata.from_payload(payload["narrative"])
+            payload = {k: v for k, v in payload.items() if k not in {"narrative_policy", "narrative"}}
         if type(payload) is not dict or set(payload) != {"version", "id", "project_id", "language", "format", "target_duration_seconds", "topic", "working_title", "film_brief", "visual_style", "groups", "parent_revision_id"}:
             raise DomainValidationError("Malformed video plan payload.")
         if type(payload["version"]) is not int or payload["version"] != 1:
@@ -168,7 +218,7 @@ class VideoPlanRevision:
                     raise DomainValidationError("Malformed planned section.")
                 sections.append(PlannedSection(**section))
             parsed.append(VideoPlanGroup(**{**group, "sections": tuple(sections)}))
-        return cls(**{k: v for k, v in payload.items() if k not in ("version", "groups")}, groups=tuple(parsed))
+        return cls(**{k: v for k, v in payload.items() if k not in ("version", "groups")}, groups=tuple(parsed), narrative=narrative)
 
 
 @dataclass(frozen=True, slots=True)

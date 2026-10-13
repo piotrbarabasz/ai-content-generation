@@ -108,6 +108,10 @@ class ProjectPlanScripts:
             raise ValueError("Generated group belongs to a different project.")
         if self.video_plans.revision(result.video_plan_revision_id).project_id != result.project_id:
             raise ValueError("Generated group plan belongs to a different project.")
+        for revision_id in result.source_revisions:
+            source = self.repository.get_section(revision_id)
+            if source.project_id != self.project_id:
+                raise ValueError("Generated group context belongs to another project.")
         if self.cached_group(result.cache_key) is not None:
             raise ValueError("Validated generated group cache already exists.")
         self._write(self.GROUP, result, {"plan_id": result.video_plan_revision_id,
