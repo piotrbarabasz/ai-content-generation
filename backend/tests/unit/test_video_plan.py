@@ -14,6 +14,19 @@ def test_video_plan_schema_section_count_matches_format_contract():
     assert "maxItems" not in standard_sections
 
 
+def test_video_plan_schema_kind_and_group_limits_preserve_format_contract():
+    standard_groups = video_plan_schema(VideoFormat.STANDARD)["properties"]["groups"]
+    assert (standard_groups["minItems"], standard_groups["maxItems"]) == (7, 10)
+    assert standard_groups["items"]["properties"]["kind"] == {
+        "type": "string", "enum": ["cold_open", "opening", "introduction", "chapter", "conclusion"],
+    }
+    social_groups = video_plan_schema(VideoFormat.SOCIAL)["properties"]["groups"]
+    assert (social_groups["minItems"], social_groups["maxItems"]) == (4, 8)
+    assert social_groups["items"]["properties"]["kind"] == {
+        "type": "string", "minLength": 1, "pattern": r"\S",
+    }
+
+
 def test_social_plan_rejects_multiple_sections_in_group():
     payload = {
         "working_title": "Title", "film_brief": "Brief", "visual_style": "Style",
