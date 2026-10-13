@@ -150,7 +150,7 @@ def test_busy_controls_disable_navigational_surfaces_and_project_switch_resets_s
         assert editor.storyboard.scene_count == 0
         assert editor.audio.section is None
         assert [editor.tabs.tabText(i) for i in range(editor.tabs.count())] == [
-            "Plan", "Script", "Storyboard", "Timeline", "Export", "Publish", "Shorts"]
+            "Plan", "Script", "Storyboard", "Timeline", "Export", "Quality", "Publish", "Shorts"]
         assert editor.minimumSizeHint().height() <= 768
         assert editor.storyboard.scroll.widgetResizable()
     finally:

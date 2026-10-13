@@ -18,7 +18,7 @@ class MediaProcess:
         self.timeout = timeout
 
     async def run(self, command, *, cwd, canceled=lambda: False, on_line=lambda _: None,
-                  capture_stderr=False, capture_stdout=True):
+                  capture_stderr=False, capture_stdout=True, on_stderr_line=None):
         if canceled():
             raise RenderCanceled("Render canceled before process launch.")
         process = await asyncio.create_subprocess_exec(*map(str, command), cwd=cwd,
@@ -35,9 +35,20 @@ class MediaProcess:
                 on_line(line.decode("utf-8", errors="replace").strip())
 
         async def stderr():
+            pending = bytearray()
             while block := await process.stderr.read(4096):
                 tail.extend(block)
                 del tail[:-65536]
+                if on_stderr_line is not None:
+                    pending.extend(block)
+                    while b"\n" in pending:
+                        line, _, rest = pending.partition(b"\n")
+                        pending[:] = rest
+                        on_stderr_line(line.decode("utf-8", errors="replace").strip())
+                    if len(pending) > 65536:
+                        raise ValueError("Media process stderr line exceeded 64 KiB.")
+            if pending and on_stderr_line is not None:
+                on_stderr_line(pending.decode("utf-8", errors="replace").strip())
 
         async def watch_cancel():
             while not canceled():

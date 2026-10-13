@@ -29,6 +29,7 @@ class PublishPanel(QWidget):
         form = section("Source Video")
         self.source = QComboBox(); form.addRow("Verified source", self.source)
         self.source_details = QLabel(); self.source_details.setWordWrap(True); form.addRow(self.source_details)
+        self.qa_status = QLabel("Production QA: NOT_RUN"); self.qa_status.setWordWrap(True); form.addRow(self.qa_status)
         self.rebase_button = button("Review these edits for the selected source / context", self.rebase, form)
         self.source.currentIndexChanged.connect(lambda: self.run(self.source_changed))
         form = section("Metadata — editorial review required")
@@ -140,6 +141,7 @@ class PublishPanel(QWidget):
         self.source_changed()
 
     def source_changed(self, *_):
+        self.quality_changed()
         if not self.service or not self.source.currentData():
             message = "MISSING: no current verified final video. Build/select a render for the saved Timeline."
             if self.service and not self.deferred_sources:
@@ -316,12 +318,27 @@ class PublishPanel(QWidget):
         self.status.setText("READY: validated publishing ZIP retained. Save a copy for manual YouTube Studio publication.")
     def verified_package(self):
         self.validate()
+        identity = self.service.validate(self.revision)[-1]
+        if self.package and self.package.metadata.get("identity") != identity:
+            self.package = None
         if not self.package:
-            identity = self.service.validate(self.revision)[-1]
             from app.domain.dependencies import content_fingerprint
             self.package = self.service.artifacts.cached(content_fingerprint(identity))
         if not self.package: raise ValueError("MISSING: build the current publishing ZIP.")
         return self.service.artifacts.verify_package(self.package)
+
+    def quality_changed(self):
+        self.package = None
+        quality = getattr(self.service, "quality", None)
+        if not quality or not self.source.currentData():
+            self.qa_status.setText("Production QA: NOT_RUN; QA approved: False")
+            return
+        try:
+            source, _, _ = self.service.source(self.source.currentData())
+            value = quality.current(source.artifact_id, source.checksum)
+            self.qa_status.setText(f"Production QA: {value['state']} | {value.get('mode', 'no scan')} | QA approved: {value['approved']} | report: {value.get('report_id')}")
+        except (ValueError, OSError, KeyError):
+            self.qa_status.setText("Production QA: STALE; QA approved: False")
     def open_folder(self):
         m = self.verified_package()
         return QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.service.store._artifact_path(m.storage_key).parent)))

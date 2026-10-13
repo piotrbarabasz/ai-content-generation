@@ -31,13 +31,14 @@ from app.storage.publishing_package import ProjectPublishing
 
 class PublishingPackageService:
     def __init__(self, session, store, renders, timelines, plans, plan_scripts, thumbnail_builder,
-                 *, delivery=None, finishing=None, llm=None, alignment=None):
+                 *, delivery=None, finishing=None, llm=None, alignment=None, quality=None):
         self.session, self.store, self.renders, self.timelines = session, store, renders, timelines
         self.plans, self.plan_scripts, self.thumbnails = plans, plan_scripts, thumbnail_builder
         self.delivery, self.finishing, self.llm, self.alignment = delivery, finishing, llm, alignment
         self.artifacts = ProjectPublishing(store, session.project.id)
         self.captions = ProjectCaptionTracks(session.repository, store)
         self._original_verification = None
+        self.quality = quality
 
     def original(self):
         source = self.renders.selected(verify_bytes=True)
@@ -57,7 +58,7 @@ class PublishingPackageService:
         # catalog, selections and script remain unchanged. MP4 bytes are always
         # reverified above; publishing edits never regenerate/recompile media.
         catalog = [[m.artifact_id, m.checksum] for m in self.store.list_artifacts()
-                   if not m.artifact_type.startswith(("publishing_", "shorts_")) and m.artifact_type not in {
+                   if not m.artifact_type.startswith(("publishing_", "shorts_", "quality_")) and m.artifact_type not in {
                        "desktop_speech_alignment", "desktop_caption_track", "desktop_caption_srt", "desktop_caption_ass"}]
         heads = self.renders.index.selected() if hasattr(self.renders, "index") else {}
         key = content_fingerprint([source.artifact_id, source.checksum, timeline.id, self.session.active_script.id, catalog, heads])
@@ -376,6 +377,8 @@ class PublishingPackageService:
             "chapters": draft["chapters"] if draft["chapters_enabled"] else [],
             "thumbnail_id": thumb.artifact_id, "thumbnail_checksum": thumb.checksum,
             "subtitle_id": subtitle.artifact_id if subtitle else None, "subtitle_checksum": subtitle.checksum if subtitle else None}
+        if self.quality:
+            identity["qa"] = self.quality.publishing(source.artifact_id, source.checksum)
         return draft, source, evidence, thumb, subtitle, identity
 
     def build_package(self, draft_manifest, *, canceled=lambda: False):
@@ -396,6 +399,7 @@ class PublishingPackageService:
             "video_duration": evidence["video_duration"], "duration_seconds": float(Fraction(*evidence["video_duration"])),
             "revision_id": draft_manifest.artifact_id, "candidate_id": draft["candidate_id"], "validation_status": "READY — machine checks passed; editorial review approved",
             "source_status": evidence.get("status", "verified original/branded"), "created_at": draft_manifest.created_at.isoformat(), "dependencies": identity}
+        metadata["qa"] = identity.get("qa", {"state": "NOT_RUN", "approved": False, "report_id": None})
         missing = []
         description = metadata["description"]
         if chapters: description += "\n\nChapters\n" + chapter_text(chapters)
@@ -411,6 +415,7 @@ class PublishingPackageService:
             "metadata.json": canonical_json(metadata).encode("utf-8"),
             "README.txt": ("Manual YouTube publishing package. No upload performed.\nUse selected_title from metadata.json.\n"
                 "Review factual accuracy, thumbnail relevance, accessibility and source licensing before publishing.\n"
+                + "Production QA: " + metadata["qa"]["state"] + "; QA approved: " + str(metadata["qa"]["approved"]) + ".\n"
                 + "\n".join(missing) + "\n").encode("utf-8")}
         if metadata["keywords"]: payloads["tags.txt"] = ", ".join(metadata["keywords"]).encode("utf-8")
         if chapters: payloads["chapters.txt"] = chapter_text(chapters).encode("utf-8")

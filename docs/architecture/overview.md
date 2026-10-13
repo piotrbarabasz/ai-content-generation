@@ -86,6 +86,15 @@ clean-machine acceptance boundary.
 
 ## Documentation
 
+Completed desktop media can be inspected explicitly through the Quality tab.
+Quick QA verifies source bytes, frozen production mappings and container metadata;
+Deep QA adds CPU decoding, signal measurements and bounded shot/evidence analysis.
+Only `quality_*` artifacts are appended; production heads and generation identities
+are preserved. Editorial decisions remain separate from immutable measurements.
+Publishing packages record exact QA identity/state and never claim QA approval for
+blocked, stale or incomplete reports. See [D073 QA](../desktop/D073_PRODUCTION_QA.md)
+for actual acceptance evidence, thresholds and unsupported semantic review.
+
 - [Domain model](domain-model.md)
 - [Provider contracts](provider-contracts.md)
 - [Module contracts](module-contracts.md)

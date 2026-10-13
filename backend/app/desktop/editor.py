@@ -28,6 +28,7 @@ from app.desktop.storyboard_panel import StoryboardPanel
 from app.desktop.export_panel import ExportPanel
 from app.desktop.script_panel import ScriptPanel
 from app.desktop.publish_panel import PublishPanel
+from app.desktop.quality_panel import QualityPanel
 from app.desktop.shorts_panel import ShortsPanel
 
 
@@ -213,6 +214,9 @@ class ProjectEditor(QMainWindow):
         export_layout.addWidget(self.advanced_content, 1)
         self.tabs.addTab(self.export_tab, "Export")
         self.publish_panel = PublishPanel(self)
+        self.quality_panel = QualityPanel(self)
+        self.quality_panel.changed = self.publish_panel.quality_changed
+        self.tabs.addTab(self.quality_panel, "Quality")
         self.tabs.addTab(self.publish_panel, "Publish")
         self.shorts_panel = ShortsPanel(self)
         self.tabs.addTab(self.shorts_panel, "Shorts")
@@ -220,6 +224,8 @@ class ProjectEditor(QMainWindow):
                                         if self.tabs.widget(index) is self.shorts_panel else None)
         self.tabs.currentChanged.connect(lambda index: self.publish_panel.run(self.publish_panel.activate)
                                         if self.tabs.widget(index) is self.publish_panel else None)
+        self.tabs.currentChanged.connect(lambda index: self.quality_panel.run(self.quality_panel.activate)
+                                        if self.tabs.widget(index) is self.quality_panel else None)
 
         workspace = QSplitter(Qt.Horizontal)
         workspace.addWidget(self.outline)
@@ -365,6 +371,8 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.quality_panel.busy:
+            raise ValueError("Wait for QA cleanup before changing project state.")
         self.shorts_panel.director.require_saved()
         if self.shorts_panel.busy:
             raise ValueError("Wait for Shorts cleanup before changing project state.")
@@ -412,6 +420,8 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
+            if self.quality_panel.busy:
+                raise ValueError("Wait for QA cleanup before changing projects.")
             self.shorts_panel.director.require_saved()
             if self.shorts_panel.busy:
                 raise ValueError("Wait for Shorts cleanup before changing projects.")
@@ -445,6 +455,10 @@ class ProjectEditor(QMainWindow):
             from app.desktop.publishing_composition import compose_publishing
             self.publish_panel.bind((self.publishing_factory or compose_publishing)(
                 candidate, self.export_panel, timeline_services, llm=self.provider), defer_sources=True)
+            from app.desktop.quality_composition import compose_quality
+            quality = compose_quality(self.publish_panel.service)
+            self.publish_panel.service.quality = quality
+            self.quality_panel.bind(quality)
             from app.desktop.shorts_composition import compose_shorts
             self.shorts_panel.bind(compose_shorts(self.publish_panel.service))
             from app.desktop.director_composition import compose_director
@@ -845,6 +859,12 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.quality_panel.busy:
+            self.quality_panel.cancel()
+            self.status.setText("Waiting for QA process cleanup before closing.")
+            event.ignore()
+            return
+        self.quality_panel.player.stop()
         if self.shorts_panel.director.unsaved:
             self.status.setText('Save or explicitly discard director script/scene edits before closing.');event.ignore();return
         if self.shorts_panel.busy:

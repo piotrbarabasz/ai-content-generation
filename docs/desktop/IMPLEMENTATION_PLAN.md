@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D072 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1510,9 +1510,21 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** New independently reviewed narration and measured 30-60 second duration; verified imagery and exact selective approval; new speech-timed captions; decoded 1080x1920 output; own history/cache/reopen/selective rebuild; original documentary bytes and script unchanged. The payments/banking mechanical run passed with real Chatterbox and manual source-reviewed fixtures; live LLM generation and human audible/editorial review remain pending.
 - **Test strategy:** Deterministic fake LLM/TTS/image providers using real child SQLite/audio publication, desktop editing/cancellation tests, CPU FFmpeg vertical preview/render/probe/full decode and complete backend suite.
 
+### D073 - Production QA & Acceptance Suite
+
+- **Status:** Partial - implemented local QA and automated acceptance; human editorial/playback acceptance remains pending. See [D073 production QA](D073_PRODUCTION_QA.md).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Inspect completed productions with honest, reproducible technical measurements and separately reviewed editorial findings.
+- **Scope:** Provider-independent Quick/Deep validators, actual original/branded/delivery/excerpt/director mappings, streaming CPU media checks, bounded evidence, append-only reports/reviews/export, responsive Quality tab and exact QA status in manual publishing packages.
+- **Out of scope:** Repair, regeneration, upload, new multimodal provider contracts, OCR, factual/virality guarantees, generation-cache changes and GPU requirements.
+- **Dependencies:** D018, D019, D023, D031, D032, D063, D064, D067, D068, D069, D070, D071, D072. Local stacked implementation evidence was inspected; separate upstream integration and human/hardware gates remain uncompleted.
+- **Acceptance criteria:** Verify exact source bytes and mappings; separate planned/actual narration from branding; block deterministic failures; keep uncertain findings advisory; never claim READY for important unavailable checks; retain evidence/reviews/export/history; source replacement makes old QA stale; production bytes/heads stay unchanged.
+- **Test strategy:** Offline contract/state/adapter/publishing/desktop tests, real short CPU FFmpeg media and D019/D040 source replacement, copied acceptance-project Quick/Deep scans, complete backend suite and whitespace checks. Results and remaining human review are recorded in the linked note.
+
 ## Backlog provenance and deferred scope
 
-There are **72 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **73 implementation tasks**: D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1524,6 +1536,7 @@ optional post-render branding and video finishing. D069 adds separate delivery
 encoding and measured audio mastering. D070 adds manual publishing preparation
 and a local publishing ZIP. D071 adds retained vertical Shorts derived from verified final media.
 D072 adds independently narrated and directed Shorts without replacing Original Excerpt mode.
+D073 adds read-only production QA, separate review history and publishing status.
 None is
 completed merely by publishing this plan.
 
