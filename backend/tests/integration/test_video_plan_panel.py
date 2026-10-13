@@ -23,7 +23,8 @@ class Provider:
         standard = schema["properties"]["groups"]["maxItems"] == 10
         kinds = (["cold_open", "introduction", "chapter", "chapter", "chapter", "chapter", "chapter", "conclusion"]
                  if standard else ["hook", "body", "explanation", "payoff"])
-        return {"working_title": "Plan title", "film_brief": "Plan brief", "visual_style": "Plan style",
+        from backend.tests.unit.test_video_planning import narrative_metadata
+        return {**({"narrative": narrative_metadata()} if standard else {}), "working_title": "Plan title", "film_brief": "Plan brief", "visual_style": "Plan style",
                 "groups": [{"kind": k, "title": k.title(), "purpose": "Purpose", "weight": 1,
                             "sections": [{"title": k.title(), "role": k, "purpose": "Purpose", "weight": 1}]}
                            for k in kinds]}
@@ -96,3 +97,77 @@ def test_plan_panel_resumes_group_script_and_explicit_replace_uses_cached_groups
         assert len(provider.group_calls) == len(plan.groups)
     finally:
         editor.close()
+
+
+def wait_for_narrative(qt, panel):
+    for _ in range(800):
+        qt.processEvents()
+        if not panel.busy:
+            break
+        QTest.qWait(10)
+    assert not panel.busy
+
+
+def test_narrative_panel_preview_review_regenerate_approve_and_no_open_paid_calls(tmp_path):
+    qt = QApplication.instance() or QApplication([])
+    class EditorialProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.editorial_calls = 0
+        def generate_structured(self, prompt, schema):
+            if schema["$id"] == "urn:aics:narrative-review:v1":
+                self.editorial_calls += 1
+                import json
+                source = json.loads(prompt)["sources"][0]
+                return {"findings": [{"issue_type": "repetition", "severity": "REVIEW",
+                    "group_id": source["group_id"], "section_id": source["section_id"],
+                    "revision_id": source["revision_id"], "supporting_excerpt": "word",
+                    "explanation": "Consider a more engaging opening.", "suggested_correction": "Edit the hook."}]}
+            return super().generate_structured(prompt, schema)
+    provider = EditorialProvider()
+    editor = ProjectEditor(LocalProjects(), provider=provider)
+    editor.load_project(tmp_path / "project", create=True)
+    try:
+        panel = editor.video_plan
+        assert provider.group_calls == [] and provider.editorial_calls == 0
+        panel.format.setCurrentIndex(panel.format.findData("standard"))
+        panel.topic.setPlainText("Internet outage")
+        panel.generate()
+        assert "Narrative promise" in panel.details.text()
+        panel.resume_script_generation()
+        wait_for_narrative(qt, panel)
+        before = editor.session.active_script
+        assert "word" in panel.narrative_preview.toPlainText()
+        panel.review_narrative()
+        assert provider.editorial_calls == 0
+        panel.review_editorial()
+        wait_for_narrative(qt, panel)
+        assert provider.editorial_calls == 1
+        assert "repetition" in panel.continuity_findings.toPlainText()
+        assert editor.session.active_script == before
+        panel.approve_selected_group()
+        assert "APPROVED" in panel.outline.toPlainText()
+        panel.group_selection.setCurrentIndex(panel.group_selection.count() - 1)
+        panel.regenerate_selected_group()
+        wait_for_narrative(qt, panel)
+        assert editor.session.active_script.sections[:-1] == before.sections[:-1]
+        assert editor.session.active_script.sections[-1].id != before.sections[-1].id
+        assert "STALE" in panel.continuity_findings.toPlainText()
+        assert len(provider.group_calls) == len(panel.plan.groups) + 1
+        # Editing in the existing Script editor refreshes the narrative overview.
+        editor.session.edit_section(before.sections[0].section_id, text="An edited hook.")
+        editor._refresh()
+        assert "CONTEXT STALE" in panel.outline.toPlainText()
+        paid_calls = provider.editorial_calls
+    finally:
+        editor.close()
+    reopened = ProjectEditor(LocalProjects(), provider=provider)
+    reopened.load_project(tmp_path / "project")
+    try:
+        assert provider.editorial_calls == paid_calls
+        assert "STALE" in reopened.video_plan.continuity_findings.toPlainText()
+        reopened.video_plan.resume_script_generation()
+        wait_for_narrative(qt, reopened.video_plan)
+        assert len(provider.group_calls) == 9
+    finally:
+        reopened.close()

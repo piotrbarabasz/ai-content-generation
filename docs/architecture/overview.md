@@ -107,3 +107,9 @@ for actual acceptance evidence, thresholds and unsupported semantic review.
 
 These pages describe inspected code, replacing early design drafts. Historical
 assumptions and remaining gaps are recorded in the [task audit](../archive/legacy-task-audit.md).
+
+D075 adds a versioned Standard narrative planning policy and retained-revision
+continuity context to the existing plan-driven generator. Selected-group rewrites
+preserve other section revisions; append-only editorial review and approval
+records remain separate from media dependency edges. Paid editorial review is
+explicit and source referenced. See [D075 behavior and acceptance limits](../desktop/D075_NARRATIVE_CONTINUITY.md).

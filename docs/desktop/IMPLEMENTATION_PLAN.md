@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1522,9 +1522,22 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Verify exact source bytes and mappings; separate planned/actual narration from branding; block deterministic failures; keep uncertain findings advisory; never claim READY for important unavailable checks; retain evidence/reviews/export/history; source replacement makes old QA stale; production bytes/heads stay unchanged.
 - **Test strategy:** Offline contract/state/adapter/publishing/desktop tests, real short CPU FFmpeg media and D019/D040 source replacement, copied acceptance-project Quick/Deep scans, complete backend suite and whitespace checks. Results and remaining human review are recorded in the linked note.
 
+### D075 — Narrative Structure & Story Continuity
+
+- **Status:** Partial - implementation and offline acceptance complete; real LLM narrative quality and local TTS/listening acceptance pending. See [D075 evidence](D075_NARRATIVE_CONTINUITY.md).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Produce a coherent Standard documentary with an intentional hook, introduction, chapter development and narrative resolution.
+- **Scope:** Canonical new Standard planning, validated editorial metadata and role budgets; retained revision context in the existing D064 generator; selective group regeneration; optional deterministic and explicitly requested structured editorial review; compact controls in the existing Plan panel. Preserve legacy artifacts and D067 measured narration gates. Channel assets remain outside this task (D076).
+- **Out of scope:** Reusable channel assets (D076), new providers, publishing, fact-checking search, image changes and automatic rewrites.
+- **Dependencies:** D001, D003, D004, D005, D063, D064, D065, D067, D068. Inspected immutable editing/storage, planning/script generation, desktop composition, measured duration and opening mapping on integrated master `6477e1a`; D073 separate review history also informed the boundary. D067–D073 are integrated; no D074 implementation was found or assumed.
+- **Main code areas:** Video Plan domain/schema/service, existing plan-script generator/cache, narrative review application/storage and Plan/Script desktop integration.
+- **Acceptance criteria:** Offline fake-provider narrative project, canonical ordering and budgets, exact retained context/cache freshness, conclusion completeness, selective revision preservation, review/approval persistence and desktop controls; focused/full backend tests and diff check. Real editorial quality and measured local TTS require separate acceptance evidence.
+- **Test strategy:** Deterministic fake structured providers, temporary project/reopen/cache/approval tests, offscreen desktop behavior, retained media freshness and measured PCM regressions; full backend suite and diff check.
+
 ## Backlog provenance and deferred scope
 
-There are **73 implementation tasks**: D001-D037 preserve the 37 subjects from the
+There are **74 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1537,6 +1550,7 @@ encoding and measured audio mastering. D070 adds manual publishing preparation
 and a local publishing ZIP. D071 adds retained vertical Shorts derived from verified final media.
 D072 adds independently narrated and directed Shorts without replacing Original Excerpt mode.
 D073 adds read-only production QA, separate review history and publishing status.
+D075 adds narrative planning, retained script continuity and explicit editorial review.
 None is
 completed merely by publishing this plan.
 

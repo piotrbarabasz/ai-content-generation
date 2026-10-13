@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QThread, Signal, QTimer
 from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox,
-                               QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                               QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from app.application.video_planning import VideoPlanningService
 from app.domain.video_plan import VIDEO_FORMATS, VideoFormat
@@ -35,7 +35,15 @@ class VideoPlanPanel(QWidget):
         self._script_plan = self._script_group = self._prepared_group = None
         self._expected_script_revision_id = None
         self._cancel_script_requested = False
-        layout = QVBoxLayout(self)
+        self._regeneration_id = self._editorial_prepared = None
+        self.continuity = None
+        outer = QVBoxLayout(self)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        content = QWidget()
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+        layout = QVBoxLayout(content)
         form = QFormLayout()
         self.format = QComboBox()
         self.format.addItem("Social — 30–60 sec", VideoFormat.SOCIAL.value)
@@ -71,6 +79,31 @@ class VideoPlanPanel(QWidget):
         layout.addLayout(script_actions)
         self.script_progress = QLabel("Script groups: 0/0")
         layout.addWidget(self.script_progress)
+        narrative_actions = QHBoxLayout()
+        self.group_selection = QComboBox()
+        self.group_selection.currentIndexChanged.connect(self.preview_group)
+        self.regenerate_group_button = QPushButton("Regenerate selected group")
+        self.review_button = QPushButton("Review Narrative")
+        self.editorial_review_button = QPushButton("Request AI editorial review (paid)")
+        self.approve_group_button = QPushButton("Approve selected text")
+        self.regenerate_group_button.clicked.connect(self.regenerate_selected_group)
+        self.review_button.clicked.connect(self.review_narrative)
+        self.editorial_review_button.clicked.connect(self.review_editorial)
+        self.approve_group_button.clicked.connect(self.approve_selected_group)
+        for widget in (self.group_selection, self.regenerate_group_button, self.review_button,
+                       self.editorial_review_button, self.approve_group_button):
+            narrative_actions.addWidget(widget)
+        layout.addLayout(narrative_actions)
+        self.narrative_preview = QPlainTextEdit()
+        self.narrative_preview.setReadOnly(True)
+        self.narrative_preview.setMaximumHeight(150)
+        self.narrative_preview.setPlaceholderText("Preview selected group's current retained text")
+        layout.addWidget(self.narrative_preview)
+        self.continuity_findings = QPlainTextEdit()
+        self.continuity_findings.setReadOnly(True)
+        self.continuity_findings.setMaximumHeight(110)
+        layout.addWidget(self.continuity_findings)
+        layout.addWidget(QLabel("Narrative hook and conclusion are story content. Reusable channel branding is separate in Export."))
         self.details = QLabel("Choose a format and describe a topic.")
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
@@ -97,12 +130,15 @@ class VideoPlanPanel(QWidget):
         self.script_artifacts = ProjectPlanScripts(session.repository, self.store, self.plans)
         from app.application.planned_script_generation import PlanScriptGenerationService
         self.script_service = PlanScriptGenerationService(session, self.provider, self.plans, self.script_artifacts)
+        from app.application.narrative_continuity import NarrativeContinuityService
+        self.continuity = NarrativeContinuityService(self.script_service)
         self.context_service = VisualPromptService(
             _ContextPort(session, self.store), self.provider,
             generation_identity={"provider": "video_plan_apply"})
         self.plan = self.plans.selected()
         self._render()
         self._script_progress()
+        self.show_continuity_findings()
 
     @property
     def busy(self):
@@ -118,6 +154,7 @@ class VideoPlanPanel(QWidget):
             editor._ready()
 
     def resume_script_generation(self):
+        self._regeneration_id = None
         self._start_script_generation(replace_current=False)
 
     def confirm_start_new_script(self):
@@ -192,6 +229,7 @@ class VideoPlanPanel(QWidget):
                 self.parent().set_plan_script_busy(False)
             self.status.setText("All plan script groups are complete.")
         except Exception as exc:
+            self._editorial_prepared = self._regeneration_id = None
             self._script_running = False
             if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
                 self.parent().set_plan_script_busy(False)
@@ -204,9 +242,18 @@ class VideoPlanPanel(QWidget):
         try:
             if error:
                 raise ValueError(error)
+            if self._editorial_prepared is not None:
+                prepared, self._editorial_prepared = self._editorial_prepared, None
+                if not self._cancel_script_requested:
+                    self.continuity.finish_editorial(self.plan, prepared, payload)
+                    self.show_continuity_findings()
+                    self.status.setText("Editorial findings retained; inspect suggestions and edit selected text deliberately.")
+                self._finish_narrative_operation()
+                return
             result = self.script_service.validate_and_cache(self.plan, self._script_group,
                                                              self._prepared_group, payload)
             if self._cancel_script_requested:
+                self._regeneration_id = None
                 self._script_running = False
                 if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
                     self.parent().set_plan_script_busy(False)
@@ -215,7 +262,13 @@ class VideoPlanPanel(QWidget):
                 self._update_script_buttons()
                 return
             self.script_service.commit_group(self.plan, self._script_group, result,
-                expected_active_revision_id=self._expected_script_revision_id)
+                expected_active_revision_id=self._expected_script_revision_id, regeneration_id=self._regeneration_id)
+            if self._regeneration_id is not None:
+                self._regeneration_id = None
+                self._finish_narrative_operation()
+                self._refresh_narrative()
+                self.status.setText("Selected group replaced; other section revisions retained.")
+                return
             self._render()
             self._script_progress()
             if self.parent() is not None and hasattr(self.parent(), "_refresh"):
@@ -223,6 +276,7 @@ class VideoPlanPanel(QWidget):
             self._script_progress()
             QTimer.singleShot(0, self._run_next_script_group)
         except Exception as exc:
+            self._editorial_prepared = self._regeneration_id = None
             self._script_running = False
             if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
                 self.parent().set_plan_script_busy(False)
@@ -249,6 +303,11 @@ class VideoPlanPanel(QWidget):
         self.resume_script_button.setEnabled(has_plan and not self.busy and self.provider is not None)
         self.new_script_button.setEnabled(has_plan and not self.busy and self.provider is not None)
         self.cancel_script_button.setEnabled(self.busy)
+        for button in (self.regenerate_group_button, self.review_button, self.approve_group_button):
+            button.setEnabled(has_plan and not self.busy)
+        self.editorial_review_button.setEnabled(has_plan and not self.busy and self.provider is not None)
+        self.regenerate_group_button.setEnabled(has_plan and not self.busy and self.provider is not None)
+        self.group_selection.setEnabled(not self.busy)
         for button in (self.generate_button, self.regenerate_button, self.apply_button):
             button.setEnabled(not self.busy)
 
@@ -287,6 +346,8 @@ class VideoPlanPanel(QWidget):
         if self.plan is None:
             self.details.setText("No Video Plan is selected. Existing project workflows remain available.")
             self.outline.clear()
+            self.group_selection.clear()
+            self.narrative_preview.clear()
             self.plan_changed.emit(None)
             return
         plan = self.plan
@@ -296,17 +357,136 @@ class VideoPlanPanel(QWidget):
         self.details.setText(f"{plan.working_title}\n{plan.format.value.title()} · {plan.target_duration_seconds} sec · "
                              f"~{plan.target_word_count} words · ~{plan.target_scene_count} visuals\n\n"
                              f"Film Brief\n{plan.film_brief}\n\nVisual Style\n{plan.visual_style}")
+        if plan.narrative:
+            self.details.setText(self.details.text() + "\n\nNarrative promise: " + plan.narrative.narrative_promise
+                                 + "\nCentral question: " + plan.narrative.central_question
+                                 + "\nConclusion goal: " + plan.narrative.conclusion_goal)
+        selected_group = self.group_selection.currentData()
+        self.group_selection.blockSignals(True)
+        self.group_selection.clear()
+        for group in plan.groups:
+            self.group_selection.addItem(group.kind.title() + ": " + group.title, group.id)
+        selection_index = self.group_selection.findData(selected_group)
+        self.group_selection.setCurrentIndex(max(0, selection_index))
+        self.group_selection.blockSignals(False)
+        self.preview_group()
         lines = []
         try:
             states = self.script_service.progress(plan) if self.script_service else ("pending",) * len(plan.groups)
         except Exception:
             states = ("pending",) * len(plan.groups)
         for group, state in zip(plan.groups, states):
-            lines.append(f"[{state}] {group.kind.title()}: {group.title} ({group.target_duration_seconds}s)")
+            try:
+                review = self.continuity.group_status(plan, group) if self.continuity else "NOT REVIEWED"
+            except ValueError:
+                review = "REVIEW"
+            lines.append(f"[{state}; {review}] {group.kind.title()}: {group.title} ({group.target_duration_seconds}s)")
             for section in group.sections:
                 lines.append(f"  • {section.title} — {section.purpose} ({section.target_duration_seconds}s, ~{section.target_word_count} words, ~{section.target_scene_count} visuals)")
         self.outline.setPlainText("\n".join(lines))
         self.plan_changed.emit(plan)
+
+    def selected_group(self):
+        if self.plan is None:
+            raise ValueError("Select a Video Plan first.")
+        return next(g for g in self.plan.groups if g.id == self.group_selection.currentData())
+
+    def preview_group(self, *_):
+        if self.plan is None or self.session is None:
+            self.narrative_preview.clear()
+            return
+        try:
+            group = self.selected_group()
+            ids = {self.script_service.section_id(self.plan.project_id, p.id) for p in group.sections}
+            self.narrative_preview.setPlainText("\n\n".join(s.text for s in self.session.active_script.sections if s.section_id in ids))
+        except (ValueError, StopIteration):
+            self.narrative_preview.clear()
+
+    def _finish_narrative_operation(self):
+        self._script_running = False
+        if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
+            self.parent().set_plan_script_busy(False)
+        self._update_script_buttons()
+
+    def _refresh_narrative(self):
+        self._render()
+        self._script_progress()
+        self.show_continuity_findings()
+        if self.parent() is not None and hasattr(self.parent(), "_refresh"):
+            self.parent()._refresh()
+
+    def regenerate_selected_group(self):
+        try:
+            self._script_ready()
+            if self.busy:
+                raise ValueError("Wait for the current narrative operation.")
+            from app.domain.base import new_id
+            group = self.selected_group()
+            self.script_service.start_or_resume(self.plan)
+            self._expected_script_revision_id = self.session.active_script.id
+            self._regeneration_id = new_id("group_regeneration")
+            self._script_group = group
+            self._prepared_group = self.script_service.prepare_group(self.plan, group, regeneration_id=self._regeneration_id)
+            self._cancel_script_requested = False
+            self._script_running = True
+            if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
+                self.parent().set_plan_script_busy(True)
+            self.script_worker = PlanGroupThread(self.provider, self._prepared_group, self)
+            self.script_worker.outcome.connect(self._script_group_ready)
+            self.script_worker.start()
+            self._update_script_buttons()
+        except Exception as exc:
+            self._regeneration_id = None
+            self._finish_narrative_operation()
+            self.status.setText(str(exc))
+
+    def review_narrative(self):
+        try:
+            self.continuity.review(self.plan)
+            self.show_continuity_findings()
+            self.status.setText("Deterministic review retained. Measured narration duration remains a separate gate.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def review_editorial(self):
+        try:
+            self._script_ready()
+            self._editorial_prepared = self.continuity.prepare_editorial(self.plan)
+            self._cancel_script_requested = False
+            self._script_running = True
+            if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
+                self.parent().set_plan_script_busy(True)
+            self.script_worker = PlanGroupThread(self.provider, self._editorial_prepared, self)
+            self.script_worker.outcome.connect(self._script_group_ready)
+            self.script_worker.start()
+            self._update_script_buttons()
+            self.status.setText("Running explicitly requested AI editorial review.")
+        except Exception as exc:
+            self._editorial_prepared = None
+            self._finish_narrative_operation()
+            self.status.setText(str(exc))
+
+    def approve_selected_group(self):
+        try:
+            self.continuity.approve_group(self.plan, self.selected_group())
+            self._refresh_narrative()
+            self.status.setText("Approval retained for the exact selected text revisions.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def show_continuity_findings(self):
+        try:
+            review = self.continuity.latest_review(self.plan) if self.plan and self.continuity else None
+            if review is None:
+                self.continuity_findings.setPlainText("Narrative review has not been run.")
+                return
+            _, value, stale = review
+            self.continuity_findings.setPlainText(("STALE — source revisions changed\n" if stale else "Current review\n") +
+                ("\n".join(f"{f['severity']} {f['issue_type']} [{f['group_id']} / {f['revision_id']}]: "
+                           f"{f['explanation']} {f['supporting_excerpt']} {f['suggested_correction']}"
+                           for f in value['findings']) or "No findings."))
+        except Exception as exc:
+            self.continuity_findings.setPlainText("Review unavailable: " + str(exc))
 
 
 class _ContextPort:

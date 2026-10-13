@@ -505,6 +505,8 @@ class ProjectEditor(QMainWindow):
         self.dirty = False
         self._select(row)
         self._update_script_panel_progress()
+        self.video_plan._render()
+        self.video_plan.show_continuity_findings()
         selected_plan = self.video_plan.plans.selected() if self.video_plan.plans else None
         self.outline.populate(self.snapshot.sections, selected_plan,
                               self._last_report.diagnostics if getattr(self, "_last_report", None) else (),

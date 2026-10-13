@@ -8,7 +8,7 @@ class MissingStandardPlanGroupsError(ValueError):
     """A structurally parsed Standard response lacks introduction or conclusion."""
 
 
-def video_plan_schema(video_format=None):
+def video_plan_schema(video_format=None, *, narrative_policy=False):
     from app.domain.video_plan import VideoFormat
     fmt = VideoFormat(video_format) if video_format is not None else None
     text = {"type": "string", "minLength": 1, "pattern": r"\S"}
@@ -23,17 +23,30 @@ def video_plan_schema(video_format=None):
                             "sections": {"type": "array", "minItems": 1,
                                          **({"maxItems": 1} if fmt is VideoFormat.SOCIAL else {}),
                                          "items": section}}}
-    return {"$id": VIDEO_PLAN_SCHEMA_ID, "type": "object", "additionalProperties": False,
+    schema = {"$id": VIDEO_PLAN_SCHEMA_ID, "type": "object", "additionalProperties": False,
             "required": ["working_title", "film_brief", "visual_style", "groups"],
             "properties": {"working_title": text, "film_brief": text, "visual_style": text,
                            "groups": {"type": "array", "minItems": 4 if fmt is not VideoFormat.STANDARD else 7,
                                       "maxItems": 8 if fmt is not VideoFormat.STANDARD else 10, "items": group}}}
+    if fmt is VideoFormat.STANDARD and narrative_policy:
+        from app.domain.video_plan import NarrativeMetadata
+        fields = list(NarrativeMetadata.__dataclass_fields__)
+        schema["required"].append("narrative")
+        schema["properties"]["narrative"] = {"type": "object", "additionalProperties": False,
+            "required": fields, "properties": {key: (text if key != "chapter_progression" else
+                {"type": "array", "minItems": 5, "maxItems": 7, "items": text}) for key in fields}}
+        schema["properties"]["groups"]["minItems"] = 8
+        schema["properties"]["groups"]["items"]["properties"]["kind"]["enum"].remove("opening")
+    return schema
 
 
-def validate_video_plan_output(payload, video_format):
+def validate_video_plan_output(payload, video_format, *, narrative_policy=False):
     from app.domain.video_plan import VideoFormat
     fmt = VideoFormat(video_format)
-    if type(payload) is not dict or set(payload) != {"working_title", "film_brief", "visual_style", "groups"}:
+    expected = {"working_title", "film_brief", "visual_style", "groups"}
+    if fmt is VideoFormat.STANDARD and narrative_policy:
+        expected.add("narrative")
+    if type(payload) is not dict or set(payload) != expected:
         raise ValueError("Video plan response has unknown or missing fields.")
     for key in ("working_title", "film_brief", "visual_style"):
         if type(payload[key]) is not str or not payload[key].strip():
@@ -72,4 +85,10 @@ def validate_video_plan_output(payload, video_format):
         kinds = [g["kind"] for g in clean]
         if "introduction" not in kinds or "conclusion" not in kinds:
             raise MissingStandardPlanGroupsError("Standard plan requires an introduction and conclusion.")
+    if fmt is VideoFormat.STANDARD and narrative_policy:
+        from app.domain.video_plan import NarrativeMetadata, validate_standard_order
+        validate_standard_order(clean)
+        narrative = NarrativeMetadata.from_payload(payload["narrative"])
+        if len(narrative.chapter_progression) != kinds.count("chapter"):
+            raise ValueError("Narrative contributions must match the chapter count.")
     return {**payload, "groups": clean}

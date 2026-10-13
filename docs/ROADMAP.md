@@ -45,3 +45,7 @@ FastAPI remains an optional adapter. Optional providers, reference voices,
 alignment/captions, publishing/localization and other output expansion remain
 tracked in the implementation plan. The roadmap is navigation, not a second
 backlog. Historical evidence is retained in [docs/archive](archive/).
+
+M7 also includes [D075 narrative structure and continuity](desktop/D075_NARRATIVE_CONTINUITY.md):
+canonical new Standard plans, retained-script context, selective group rewriting
+and explicit editorial review in the existing Plan/Script workspace.

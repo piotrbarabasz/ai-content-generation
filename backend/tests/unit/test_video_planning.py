@@ -11,6 +11,17 @@ from app.storage.project_repository import ProjectRepository
 from app.storage.video_plans import ProjectVideoPlans
 
 
+def narrative_metadata():
+    return {"central_question": "What happens when the internet disappears?",
+        "narrative_promise": "Discover how a 24-hour outage affects everyday life.",
+        "opening_hook_goal": "Raise curiosity about unseen consequences.",
+        "introduction_goal": "Define a worldwide 24-hour outage and its assumptions.",
+        "chapter_progression": ["Communications", "Payments build on lost connections",
+            "Logistics depend on payments", "Emergency response", "Recovery draws on earlier dependencies"],
+        "conclusion_goal": "Resolve the question using established consequences.",
+        "final_takeaway": "Offline resilience matters."}
+
+
 def semantic(fmt):
     if fmt == "social":
         kinds = ["hook", "body", "explanation", "payoff", "fact"]
@@ -23,7 +34,7 @@ def semantic(fmt):
                    "sections": [{"title": k.title(), "role": k, "purpose": "Cover beat", "weight": 1},
                                 *([{"title": "Detail", "role": "detail", "purpose": "Add depth", "weight": 1}] if k == "chapter" else [])]}
                   for i, k in enumerate(kinds)]
-    return {"working_title": "Working title", "film_brief": "Educational", "visual_style": "Documentary",
+    return {**({"narrative": narrative_metadata()} if fmt == "standard" else {}), "working_title": "Working title", "film_brief": "Educational", "visual_style": "Documentary",
             "groups": groups}
 
 
@@ -160,7 +171,7 @@ def test_standard_corrective_failure_never_retries_again_or_persists(tmp_path, f
             replacement = RuntimeError("Provider unavailable")
         elif failure == "allocation":
             replacement = semantic("standard")
-            replacement["groups"][0]["weight"] = 1_000_000
+            replacement["groups"][0]["sections"] *= 21
         provider = SequenceProvider(missing_standard_groups({"introduction"}), replacement)
         with pytest.raises((ValueError, RuntimeError)):
             generate_standard(session, plans, provider)

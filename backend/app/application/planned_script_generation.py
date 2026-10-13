@@ -81,29 +81,94 @@ class PlanScriptGenerationService:
                               "target_duration_seconds": s.target_duration_seconds,
                               "target_word_count": s.target_word_count} for s in group.sections]}
 
-    def prepare_group(self, plan, group):
+    def prepare_group(self, plan, group, *, regeneration_id=None):
         self._selected_plan(plan)
+        if group not in plan.groups:
+            raise ValueError("Group does not belong to the selected plan.")
+        from app.domain.video_plan import VideoFormat
+        context = self.narrative_context(plan, group) if plan.format is VideoFormat.STANDARD else None
         identity = self._identity()
         plan_fingerprint = content_fingerprint(plan.to_payload())
         group_value = self._group_payload(group)
         key = content_fingerprint({"version": 1, "plan_id": plan.id, "plan": plan_fingerprint,
                                    "group": group_value, "language": plan.language,
-                                   "provider_identity": identity})
+                                   "provider_identity": identity, **({"policy": "narrative-context-v2", "context": context} if context else {}),
+                                   **({"regeneration_id": regeneration_id} if regeneration_id else {})})
         cached = self.artifacts.cached_group(key)
         expected = tuple(section.id for section in group.sections)
         if cached is not None:
             self._validate_cached(cached, plan, group, key)
-            return {"cache_key": key, "cached": cached, "prompt": None, "schema": None}
+            self._validate_context_result(cached, context)
+            return {"cache_key": key, "cached": cached, "prompt": None, "schema": None, "regeneration_id": regeneration_id, "source_revisions": tuple(context["source_revisions"]) if context else (), "policy": "narrative-context-v2" if context else None}
         index = next(i for i, item in enumerate(plan.groups) if item.id == group.id)
         neighbors = {"previous": self._neighbor(plan, index - 1), "next": self._neighbor(plan, index + 1)}
         prompt = canonical_json({"task": "generate_planned_script_group", "language": plan.language,
             "video_format": plan.format.value, "target_duration_seconds": plan.target_duration_seconds,
             "working_title": plan.working_title, "topic": plan.topic, "film_brief": plan.film_brief,
             "group": group_value, "neighboring_group_summaries": neighbors,
-            "instruction": "Return only the planned sections in their supplied order. Target word counts are guidance."})
+            **({"narrative_context": context} if context else {}),
+            "instruction": ("Return only the planned sections in their supplied order. Target word counts are guidance." if context is None else
+                "Return only the planned sections in their supplied order. Target word counts are guidance. "
+                "Use natural transitions, consistent terminology and established assumptions. Build on retained text; "
+                "avoid repeating definitions or restarting the topic. No artificial chapter announcements, greetings, "
+                "channel advertising or subscription requests. Hook: create curiosity without revealing the ending. "
+                "Introduction: explain the subject, context, scenario and assumptions, then transition into the chapters. "
+                "Conclusion: resolve the original promise, explain implications and deliver the requested takeaway; "
+                "do not introduce a major new topic or manufacture certainty. Excerpts are partial evidence, not summaries of omitted claims.")})
         return {"cache_key": key, "cached": None, "prompt": prompt,
                 "schema": planned_script_group_schema(len(expected)), "expected_ids": expected,
-                "identity": identity}
+                "identity": identity, "source_revisions": tuple(context["source_revisions"]) if context else (),
+                "policy": "narrative-context-v2" if context else None, "regeneration_id": regeneration_id}
+
+    def narrative_context(self, plan, group):
+        """Deterministic extraction only: excerpts and literal tokens, no invented facts."""
+        import re
+        index = plan.groups.index(group)
+        script = self.session.active_script
+        by_id = {s.section_id: s for s in script.sections}
+        previous, sources, full_opening, tokens, questions = [], [], {}, [], []
+        context_groups = (tuple(g for g in plan.groups if g.id != group.id)
+                          if group.kind == "conclusion" else plan.groups[:index])
+        for prior in context_groups:
+            if self.group_state(plan, prior, script) != "complete":
+                if group.kind == "conclusion":
+                    raise ValueError("Complete all preceding plan groups before generating the conclusion.")
+                continue
+            extracts = []
+            for planned in prior.sections:
+                section = by_id[self.section_id(plan.project_id, planned.id)]
+                sources.append(section.id)
+                words = section.text.split()
+                extracts.append({"section_id": section.section_id, "revision_id": section.id,
+                    "text_fingerprint": content_fingerprint(section.text),
+                    "opening_excerpt": " ".join(words[:60]), "ending_excerpt": " ".join(words[-60:])})
+                # Literal candidate names/terms and questions; no semantic assertions.
+                tokens.extend(re.findall(r"\b[A-Z][\w-]{2,}\b", section.text))
+                questions.extend(re.findall(r"[^.!?]*\?", section.text))
+            previous.append({"group_id": prior.id, "kind": prior.kind, "retained_excerpts": extracts})
+            if prior.kind in {"cold_open", "opening", "introduction"}:
+                full_opening[prior.kind] = [{"revision_id": by_id[self.section_id(plan.project_id, p.id)].id,
+                    "text": " ".join(by_id[self.section_id(plan.project_id, p.id)].text.split()[:200])}
+                    for p in prior.sections]
+        preceding = plan.groups[index - 1] if index else None
+        ending = None
+        if preceding and self.group_state(plan, preceding, script) == "complete":
+            section = by_id[self.section_id(plan.project_id, preceding.sections[-1].id)]
+            ending = {"revision_id": section.id, "text": " ".join(section.text.split()[-100:])}
+        narrative = plan.narrative.to_payload() if plan.narrative else None
+        return {"extraction_policy": "literal-excerpts-v1", "source_revisions": sources,
+            "narrative": narrative, "full_plan_outline": [self._group_payload(g) for g in plan.groups],
+            "current_objective": group.purpose, "film_brief_assumptions": plan.film_brief,
+            "committed_previous_groups": previous, "preceding_ending": ending,
+            "opening_material": full_opening, "literal_terminology_candidates": list(dict.fromkeys(tokens))[:80],
+            "question_excerpts_to_review": [q.strip()[:300] for q in questions[:20]],
+            "next_contribution": self._neighbor(plan, index + 1)}
+
+    @staticmethod
+    def _validate_context_result(result, context):
+        if context is not None and (result.policy != "narrative-context-v2" or
+                                    result.source_revisions != tuple(context["source_revisions"])):
+            raise ValueError("Generated group does not match the exact narrative context revisions.")
 
     @staticmethod
     def _neighbor(plan, index):
@@ -128,7 +193,8 @@ class PlanScriptGenerationService:
                 raise ValueError(f"Generated section {section.title!r} has {count} words; target {target} allows ±25%.")
         result = GeneratedScriptGroup(new_id("generated_script_group"), plan.project_id, plan.id, group.id,
             prepared["cache_key"], tuple(GeneratedGroupSection(section_id, text)
-                                         for section_id, text in zip(expected, texts)))
+                                         for section_id, text in zip(expected, texts)),
+            prepared.get("source_revisions", ()), prepared.get("policy"))
         self.artifacts.save_group(result)
         return result
 
@@ -175,7 +241,7 @@ class PlanScriptGenerationService:
         # Non-plan manual additions are retained and allowed; they are kept after the ordered plan sections.
         return planned, active
 
-    def commit_group(self, plan, group, result, *, expected_active_revision_id):
+    def commit_group(self, plan, group, result, *, expected_active_revision_id, regeneration_id=None):
         self._selected_plan(plan)
         binding = self.artifacts.active_binding()
         current = self.session.active_script
@@ -183,34 +249,57 @@ class PlanScriptGenerationService:
             raise ValueError("Active script changed during group generation; cached output was retained without selection.")
         if binding is None or binding.video_plan_revision_id != plan.id or binding.script_id != current.script_id:
             raise ValueError("Active plan-script binding changed during group generation.")
-        prepared = self.prepare_group(plan, group)
+        prepared = self.prepare_group(plan, group, regeneration_id=regeneration_id)
         if prepared["cache_key"] != result.cache_key:
             raise ValueError("Generated group cache key no longer matches current provider or plan inputs.")
+        if result.policy != prepared["policy"] or result.source_revisions != prepared["source_revisions"]:
+            raise ValueError("Generated group does not match the exact narrative context revisions.")
         retained = self.artifacts.cached_group(result.cache_key)
         if retained != result:
             raise ValueError("Generated group is not the exact retained cache artifact.")
         self._validate_cached(result, plan, group, prepared["cache_key"])
         state = self.group_state(plan, group, current)
-        if state == "complete":
+        if state == "complete" and regeneration_id is None:
             return current
-        if state != "pending":
+        if state not in {"pending", "complete"}:
             raise ValueError("Active script contains an inconsistent partial plan group.")
         by_id = {section.section_id: section for section in current.sections}
         for planned, generated in zip(group.sections, result.sections):
             section = SectionRevision.create_for_plan(project_id=plan.project_id,
                 planned_section_id=planned.id, title=planned.title, role=planned.role, text=generated.text)
             if section.section_id in by_id:
-                raise ValueError("Planned section identity already exists with inconsistent progress.")
+                if regeneration_id is None:
+                    raise ValueError("Planned section identity already exists with inconsistent progress.")
+                section = by_id[section.section_id].revise(text=generated.text)
             by_id[section.section_id] = section
         ordered_ids = [self.section_id(plan.project_id, item.id)
                        for parent in plan.groups for item in parent.sections]
-        selected = [by_id[key] for key in ordered_ids if key in by_id]
-        known = set(ordered_ids)
-        selected.extend(section for section in current.sections if section.section_id not in known)
+        if regeneration_id is not None and state == "complete":
+            selected = [by_id[s.section_id] for s in current.sections]
+        else:
+            selected = [by_id[key] for key in ordered_ids if key in by_id]
+            known = set(ordered_ids)
+            selected.extend(section for section in current.sections if section.section_id not in known)
         revision = replace(current, id=new_id("script_revision"), parent_revision_id=current.id,
                            sections=tuple(selected))
+        if result.policy:
+            from app.storage.narrative_reviews import ProjectNarrativeRecords
+            ids = {self.section_id(plan.project_id, p.id) for p in group.sections}
+            ProjectNarrativeRecords(self.session.repository, self.artifacts.store).save("generation", {
+                "version": 1, "plan_id": plan.id, "group_id": group.id, "generated_group_id": result.id,
+                "section_revisions": [s.id for s in revision.sections if s.section_id in ids],
+                "source_revisions": list(result.source_revisions)})
         self.session.save_script(revision, expected_active_revision_id=current.id)
         return revision
+
+    def regenerate_group(self, plan, group):
+        """Explicit replacement of one group, preserving every other section revision."""
+        self.start_or_resume(plan)
+        before = self.session.active_script.id
+        request = new_id("group_regeneration")
+        prepared = self.prepare_group(plan, group, regeneration_id=request)
+        result = self.validate_and_cache(plan, group, prepared, self.generate_payload(prepared))
+        return self.commit_group(plan, group, result, expected_active_revision_id=before, regeneration_id=request)
 
     def run_next_group(self, plan):
         """Synchronous application helper for non-UI callers; commits each group."""
