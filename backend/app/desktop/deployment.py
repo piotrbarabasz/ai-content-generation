@@ -24,6 +24,11 @@ class UserDataPaths:
     cache: Path
     logs: Path
 
+    @property
+    def channels(self):
+        from app.storage.paths import contained_path
+        return contained_path(self.root.parent.resolve(), self.root.name+"/channels")
+
     @classmethod
     def discover(cls, environment: dict[str, str] | None = None) -> "UserDataPaths":
         environment = os.environ if environment is None else environment
@@ -73,3 +78,15 @@ def media_executables(*, root: Path | None = None, path_lookup=shutil.which) -> 
 
 __all__ = ["APP_DIRECTORY", "APPLICATION_VERSION", "MEDIA_EXECUTABLES", "UserDataPaths",
            "installed_root", "media_executables"]
+
+
+def channel_library_root(environment=None):
+    """Windows app-owned library, with an XDG fallback for source/test hosts."""
+    environment=os.environ if environment is None else environment
+    if environment.get("LOCALAPPDATA") or os.name=="nt":
+        return UserDataPaths.discover(environment).channels
+    base=Path(environment.get("XDG_DATA_HOME",str(Path.home()/".local/share"))).expanduser()
+    if not base.is_absolute(): raise ValueError("XDG_DATA_HOME must be absolute.")
+    from app.storage.paths import contained_path,storage_root
+    root=storage_root(base)
+    return contained_path(root,APP_DIRECTORY+"/channels")

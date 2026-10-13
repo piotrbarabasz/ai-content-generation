@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1535,9 +1535,23 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Offline fake-provider narrative project, canonical ordering and budgets, exact retained context/cache freshness, conclusion completeness, selective revision preservation, review/approval persistence and desktop controls; focused/full backend tests and diff check. Real editorial quality and measured local TTS require separate acceptance evidence.
 - **Test strategy:** Deterministic fake structured providers, temporary project/reopen/cache/approval tests, offscreen desktop behavior, retained media freshness and measured PCM regressions; full backend suite and diff check.
 
+### D076 — Reusable Channel Intro & Outro Library
+
+- **Status:** In progress.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Reuse immutable channel clips across projects through the existing D068 finishing path.
+- **Scope:** Application user-data Channel Library, profile and asset revisions, validated import and one-time local clip creation, explicit project selections/overrides, reusable finishing mode, verified rendered timing map and existing timed-export consumers, compact desktop management and finishing controls.
+- **Out of scope:** AI generation, new narration/TTS, uploads/OAuth, animation editor, bulk migration and historical asset deletion.
+- **Dependencies:** D004, D019, D063, D064, D065, D067, D068, D069, D070, D071, D073. Inspected implementations are integrated in master `6477e1a`.
+- **Integration base:** This branch preserves local D075 commit `407bcec`, which is not integrated into fetched origin/master. Its live narrative/TTS acceptance remains separate.
+- **Main code areas:** Branding domain/storage/service/FFmpeg adapter, application user-data storage, Export controls and publishing/Shorts/quality timing consumers.
+- **Acceptance criteria:** Shared bytes and pinned versions survive project switches/restart; legacy settings/output caches remain readable; source narrative stays complete and byte-identical; exact insertion mapping drives timed exports; missing/corrupt assets and cancellation preserve prior outputs; no paid providers are invoked.
+- **Test strategy:** Temporary injected library roots, deterministic contracts/reopen/overrides/cache tests, short real CPU FFmpeg fixtures, offscreen desktop checks, full backend suite and diff check.
+
 ## Backlog provenance and deferred scope
 
-There are **74 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **75 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1551,6 +1565,7 @@ and a local publishing ZIP. D071 adds retained vertical Shorts derived from veri
 D072 adds independently narrated and directed Shorts without replacing Original Excerpt mode.
 D073 adds read-only production QA, separate review history and publishing status.
 D075 adds narrative planning, retained script continuity and explicit editorial review.
+D076 adds the shared reusable channel library and verified clip finishing maps.
 None is
 completed merely by publishing this plan.
 
