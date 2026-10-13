@@ -6,6 +6,7 @@ import shutil
 from uuid import uuid4
 
 from app.domain.dependencies import content_fingerprint
+from app.domain.channel_library import ReusableBrandingConfig
 from app.domain.plan_script import planned_section_identity
 from app.domain.video_plan import VIDEO_FORMATS, VideoFormat
 from app.runtime.media_process import RenderCanceled
@@ -43,9 +44,17 @@ def cold_open_boundary(plan, binding, sections, timeline, render_request, sample
 
 
 class VideoFinishingService:
-    def __init__(self, session, branding, renders, renderer, *, video_plans=None, plan_scripts=None, timelines=None):
+    def __init__(self, session, branding, renders, renderer, *, video_plans=None, plan_scripts=None, timelines=None, channel_library=None, channel_library_factory=None):
         self.session, self.branding, self.renders, self.renderer = session, branding, renders, renderer
         self.video_plans, self.plan_scripts, self.timelines = video_plans, plan_scripts, timelines
+        self._channel_library = channel_library
+        self.channel_library_factory = channel_library_factory
+
+    @property
+    def channel_library(self):
+        if self._channel_library is None and self.channel_library_factory:
+            self._channel_library=self.channel_library_factory()
+        return self._channel_library
 
     def boundary(self, source):
         plan = self.video_plans.selected() if self.video_plans is not None else None
@@ -66,9 +75,14 @@ class VideoFinishingService:
             raise ValueError("Build and select an original final MP4 first.")
         if not config.enabled:
             return source, None, None
-        if not config.channel_name.strip() or not config.logo_id:
-            raise ValueError("Enter a channel name and import a PNG logo before finishing.")
-        logo, _ = self.branding.logo(config.logo_id)
+        reusable=isinstance(config,ReusableBrandingConfig)
+        if reusable:
+            if self.channel_library is None: raise ValueError("Channel Library unavailable; restore its shared assets or select legacy cards.")
+            assets=self.channel_library.resolve_selection(config)
+        else:
+            if not config.channel_name.strip() or not config.logo_id:
+                raise ValueError("Enter a channel name and import a PNG logo before finishing.")
+            logo, _ = self.branding.logo(config.logo_id)
         evidence = source.metadata["render"]
         plan = self.video_plans.selected() if self.video_plans is not None else None
         if plan is not None and plan.format == VideoFormat.STANDARD:
@@ -81,8 +95,8 @@ class VideoFinishingService:
         if config.intro and config.placement == "after_cold_open":
             boundary = self.boundary(source)
         identity = {"source_id": source.artifact_id, "source_checksum": source.checksum,
-                    "settings": config.to_payload(), "logo_checksum": logo.checksum, "boundary": boundary,
-                    "renderer": self.renderer.identity()}
+                    "settings": config.to_payload(), **({"assets": assets, "audio_handling":"preserve_source_layout", "algorithm":"reusable-finishing-v2"} if reusable else {"logo_checksum":logo.checksum}), "boundary": boundary,
+                    "renderer": (getattr(self.renderer,"reusable_identity",self.renderer.identity)() if reusable else self.renderer.identity())}
         return source, identity, content_fingerprint(identity)
 
     async def build(self, config, *, canceled=lambda: False, progress=lambda *_: None):
@@ -102,10 +116,16 @@ class VideoFinishingService:
         with (root / "source.mp4").open("rb") as stream:
             if file_digest(stream, "sha256").hexdigest() != source.checksum:
                 raise ValueError("Original MP4 changed while staging.")
-        _, logo = self.branding.logo(config.logo_id)
-        (root / "logo.png").write_bytes(logo)
-        evidence = await self.renderer.finish(root, source.metadata["render"], config, identity["boundary"],
-                                              canceled=canceled, progress=progress)
+        if isinstance(config,ReusableBrandingConfig):
+            clips={kind:{**value,"path":self.channel_library.path(value["version_id"])} for kind,value in identity["assets"].items()
+                   if kind in {"intro","outro"} and getattr(config,kind)}
+            evidence=await self.renderer.finish(root,source.metadata["render"],config,identity["boundary"],
+                canceled=canceled,progress=progress,clips=clips)
+        else:
+            _, logo = self.branding.logo(config.logo_id)
+            (root / "logo.png").write_bytes(logo)
+            evidence = await self.renderer.finish(root, source.metadata["render"], config, identity["boundary"],
+                                                  canceled=canceled, progress=progress)
         if canceled():
             raise RenderCanceled("Finishing canceled before publication.")
         if self.branding.current() != config or self.prepare(config)[1] != identity:

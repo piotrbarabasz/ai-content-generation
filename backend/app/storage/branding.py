@@ -7,6 +7,7 @@ import json
 from PIL import Image
 
 from app.domain.branding import BrandingConfig
+from app.domain.channel_library import ReusableBrandingConfig, branding_config
 from app.domain.dependencies import canonical_json
 
 
@@ -26,10 +27,10 @@ class ProjectBranding:
 
     def current(self):
         history = self.history("branding_settings")
-        return BrandingConfig.from_payload(json.loads(self.verified_bytes(history[-1]))) if history else BrandingConfig()
+        return branding_config(json.loads(self.verified_bytes(history[-1]))) if history else BrandingConfig()
 
     def save(self, config):
-        if not isinstance(config, BrandingConfig):
+        if not isinstance(config, (BrandingConfig, ReusableBrandingConfig)):
             raise ValueError("Expected branding settings.")
         if config.logo_id:
             self.logo(config.logo_id)

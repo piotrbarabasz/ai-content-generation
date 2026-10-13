@@ -113,3 +113,9 @@ continuity context to the existing plan-driven generator. Selected-group rewrite
 preserve other section revisions; append-only editorial review and approval
 records remain separate from media dependency edges. Paid editorial review is
 explicit and source referenced. See [D075 behavior and acceptance limits](../desktop/D075_NARRATIVE_CONTINUITY.md).
+
+D076 retains channel profiles and reusable clips in application user data, outside
+project workspaces. Projects pin exact profile/asset revisions; the existing D068
+finisher reads shared bytes and emits a verified frame/sample map consumed by
+publishing, Shorts and quality checks. Legacy cards remain compatible. See
+[D076 workflow and boundaries](../desktop/D076_REUSABLE_CHANNEL_BRANDING.md).

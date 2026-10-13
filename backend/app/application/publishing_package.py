@@ -112,10 +112,15 @@ class PublishingPackageService:
             settings = identity.get("settings", {})
             if identity.get("source_id") != original.artifact_id or identity.get("source_checksum") != original.checksum:
                 raise ValueError("BLOCKED: missing verified branding composition source.")
-            from app.domain.branding import BrandingConfig
-            config = BrandingConfig.from_payload(settings)
+            from app.domain.channel_library import branding_config, ReusableBrandingConfig
+            config = branding_config(settings)
             intro = Fraction(config.intro_seconds if config.intro else 0)
             outro = Fraction(config.outro_seconds if config.outro else 0)
+            if isinstance(config,ReusableBrandingConfig):
+                from app.domain.branding_timing import verified_timing_map
+                mapped=verified_timing_map(underlying,original,timeline)
+                intro=Fraction(*mapped["intro"]["duration"]) if mapped["intro"] else Fraction(0)
+                outro=Fraction(*mapped["outro"]["duration"]) if mapped["outro"] else Fraction(0)
             if intro and config.placement == "after_cold_open":
                 boundary = identity.get("boundary")
                 if not boundary or boundary.get("timeline_id") != timeline.id:

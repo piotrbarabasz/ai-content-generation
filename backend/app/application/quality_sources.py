@@ -6,6 +6,7 @@ import json
 import re
 
 from app.domain.branding import BrandingConfig
+from app.domain.channel_library import branding_config, ReusableBrandingConfig
 from app.domain.caption_track import PublishedCaptionTrack, build_synchronized_caption_track, serialize_srt, validate_caption_segments
 from app.domain.delivery import DeliveryConfig, DELIVERY_PRESETS
 from app.domain.production_quality import QAContext
@@ -130,10 +131,16 @@ class ProjectQualitySources:
             if config.normalize: facts["delivery_targets"] = {"target_lufs": config.target_lufs, "target_peak": config.target_peak}
             return facts, timeline, captions, timing
         if kind != "branded": raise ValueError("Unsupported long-form derivation mapping.")
-        config = BrandingConfig.from_payload(identity["settings"])
+        config = branding_config(identity["settings"])
         current = self.publishing.finishing.branding.current() if self.publishing.finishing else None
         facts["stale"] |= current != config
         intro, outro = config.intro_seconds if config.intro else 0, config.outro_seconds if config.outro else 0
+        mapped=None
+        if isinstance(config,ReusableBrandingConfig):
+            from app.domain.branding_timing import verified_timing_map
+            mapped=verified_timing_map(m,source,timeline)
+            intro=Fraction(*mapped["intro"]["duration"]) if mapped["intro"] else Fraction(0)
+            outro=Fraction(*mapped["outro"]["duration"]) if mapped["outro"] else Fraction(0)
         insertion = Fraction(0)
         if intro and config.placement == "after_cold_open":
             boundary = identity["boundary"]
@@ -146,9 +153,12 @@ class ProjectQualitySources:
         expected_frames = timeline.total_frames + round((intro + outro) * facts["expected"]["fps"])
         if evidence["frame_count"] != expected_frames: raise ValueError("Branding frame count differs from composition mapping.")
         for s in facts["shots"]:
-            if s["start"] >= insertion: s["start"] += intro; s["end"] += intro
-        cards = ([[insertion, insertion + intro]] if intro else []) + ([[seconds(evidence["video_duration"]) - outro, seconds(evidence["video_duration"])]] if outro else [])
-        facts["branding_intervals"] = cards; facts["intentional_silence"] = cards
+            if s["start"] >= insertion: s["start"] += float(intro); s["end"] += float(intro)
+        cards = ([[insertion, insertion + float(intro)]] if intro else []) + ([[seconds(evidence["video_duration"]) - float(outro), seconds(evidence["video_duration"])]] if outro else [])
+        facts["branding_intervals"] = cards
+        facts["intentional_silence"] = cards if mapped is None else (
+            ([[insertion,insertion+float(intro)]] if intro and mapped["intro"].get("silent") else []) +
+            ([[seconds(evidence["video_duration"])-float(outro),seconds(evidence["video_duration"])]] if outro and mapped["outro"].get("silent") else []))
         facts["expected"].update(frame_count=expected_frames, video_duration=seconds(evidence["video_duration"]), audio_duration=seconds(evidence["audio_duration"]))
         facts["durations"]["branded_video_seconds"] = seconds(evidence["video_duration"])
         return facts, timeline, captions, timing
