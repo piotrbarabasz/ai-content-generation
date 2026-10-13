@@ -8,9 +8,7 @@ from app.storage.scene_plans import ProjectScenePlans
 from app.tts.scene_sources import sentence_sources
 
 
-PROJECT = Path(
-    r"D:\Projects\ai-content-generation\test-gps-en-2"
-)
+PROJECT = Path(__file__).resolve().parent / "projects" / "test-gps-en-2"
 
 
 with ProjectSession.open(

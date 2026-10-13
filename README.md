@@ -32,6 +32,14 @@ See [project durability](docs/desktop/PROJECT_DURABILITY.md) for backup recovery
 retention rules and cleanup limitations. Older application versions refuse the
 new project schema; backups restore into a new folder, without silent downgrade.
 
+**Create project** saves to `projects/<project-name>/` in the source checkout,
+independently of the launch directory. Installed builds use
+`%LOCALAPPDATA%/AI Content Studio/projects/`. Choose a different name when a
+folder already exists; **Open project** starts in `projects` and can still open
+existing workspaces elsewhere. Project databases, media and history are local
+data excluded from Git. Storage/application APIs retain explicit workspace paths
+for imports, recovery and isolated tests.
+
 ## Install and run
 
 Use Python 3.11 or newer. From the repository root, create and activate a virtual
