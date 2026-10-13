@@ -49,3 +49,7 @@ backlog. Historical evidence is retained in [docs/archive](archive/).
 M7 also includes [D075 narrative structure and continuity](desktop/D075_NARRATIVE_CONTINUITY.md):
 canonical new Standard plans, retained-script context, selective group rewriting
 and explicit editorial review in the existing Plan/Script workspace.
+
+M7 includes [D076 reusable channel branding](desktop/D076_REUSABLE_CHANNEL_BRANDING.md):
+shared immutable channel profiles/clips, explicit project selections and verified
+finishing/caption offsets, alongside the legacy card mode.

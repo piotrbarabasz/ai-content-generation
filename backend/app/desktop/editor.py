@@ -240,6 +240,21 @@ class ProjectEditor(QMainWindow):
         self.automatic_timer.setInterval(10)
         self.automatic_timer.timeout.connect(self._automatic_tick)
         self._update_workflow_controls()
+        self.channel_library_dialog=None
+        self.channel_library_action=self.menuBar().addAction("Channel Library...")
+        self.channel_library_action.triggered.connect(self.show_channel_library)
+
+    def show_channel_library(self):
+        try:
+            from app.desktop.channel_library_panel import ChannelLibraryDialog
+            from app.desktop.deployment import media_executables
+            from app.providers.ffmpeg_finishing import FFmpegFinisher
+            if self.channel_library_dialog is None:
+                ffmpeg,ffprobe=media_executables()
+                renderer=FFmpegFinisher(ffmpeg,ffprobe) if ffmpeg and ffprobe else None
+                self.channel_library_dialog=ChannelLibraryDialog(self.export_panel._channel_library(),renderer,self)
+            self.channel_library_dialog.show();self.channel_library_dialog.raise_()
+        except Exception as exc:self.status.setText(str(exc))
 
     def show_storage(self):
         def action():
@@ -866,6 +881,18 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        application_dialog=getattr(self,"channel_library_dialog",None)
+        if application_dialog is not None and application_dialog.busy:
+            application_dialog.cancel()
+            self.status.setText("Waiting for shared channel operation cleanup before closing.")
+            event.ignore()
+            return
+        library_dialog=getattr(self.export_panel.branding,"library_dialog",None)
+        if library_dialog is not None and library_dialog.busy:
+            library_dialog.cancel()
+            self.status.setText("Waiting for Channel Library operation cleanup before closing.")
+            event.ignore()
+            return
         if self.quality_panel.busy:
             self.quality_panel.cancel()
             self.status.setText("Waiting for QA process cleanup before closing.")

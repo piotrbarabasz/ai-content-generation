@@ -10,10 +10,11 @@ from PySide6.QtWidgets import (QFileDialog, QFormLayout, QHBoxLayout, QLabel,
 
 
 class ExportPanel(QWidget):
-    def __init__(self, parent=None, *, render_resolver=None):
+    def __init__(self, parent=None, *, render_resolver=None, channel_library=None):
         super().__init__(parent)
         self.session = self.store = self.index = None
         self.render_media = render_resolver
+        self.channel_library = channel_library
         self.manifest = None
         root = QVBoxLayout(self)
         self.state = QLabel("No selected final render.")
@@ -78,7 +79,8 @@ class ExportPanel(QWidget):
                 plans = ProjectVideoPlans(self.session.repository, self.store)
                 finishing = VideoFinishingService(self.session, ProjectBranding(self.store, self.session.project.id),
                     self.render_media, FFmpegFinisher(ffmpeg, ffprobe), video_plans=plans,
-                    plan_scripts=ProjectPlanScripts(self.session.repository, self.store, plans), timelines=timelines)
+                    plan_scripts=ProjectPlanScripts(self.session.repository, self.store, plans), timelines=timelines,
+                    channel_library_factory=self._channel_library)
         self.branding.bind(finishing)
         delivery = None
         if self.session is not None and hasattr(self.session, "repository"):
@@ -91,6 +93,13 @@ class ExportPanel(QWidget):
                                              self.render_media, exporter, finishing=finishing)
         self.delivery.bind(delivery)
         self.refresh()
+
+    def _channel_library(self):
+        from app.desktop.deployment import channel_library_root
+        from app.storage.channel_library import ChannelLibrary
+        if not hasattr(self,"channel_library") or self.channel_library is None:
+            self.channel_library=ChannelLibrary(channel_library_root())
+        return self.channel_library
 
     def refresh(self):
         if not self.branding.busy:
