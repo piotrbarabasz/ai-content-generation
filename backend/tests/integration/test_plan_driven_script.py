@@ -1,5 +1,6 @@
 import asyncio
 import json
+from fractions import Fraction
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from app.application.automatic_workflow import (AutomaticWorkflow, AutomaticWorkflowCanceled,
                                                 AutomaticWorkflowConfig)
 from app.application.planned_script_generation import PlanScriptGenerationService
+from app.application.plan_duration import PlanDurationResult
 from app.application.projects import ProjectSession
 from app.application.visual_prompts import VisualPromptService
 from app.desktop.pipeline_driver import DesktopPipelineDriver
@@ -276,6 +278,8 @@ def test_standard_automatic_cancel_resume_skips_three_committed_groups(tmp_path)
                                                                      "landscape", "draft"))
     driver.plan_state = lambda section: SimpleNamespace(state="accepted", acceptance_id="accepted")
     driver.voice_ready = lambda *_: True
+    # This script-resume fixture supplies already validated 600-second narration.
+    driver.measure_plan_duration = lambda *_: PlanDurationResult(600, 540, 660, Fraction(600))
     driver.timing_ready = lambda *_: True
     driver.scenes = lambda *_: ()
     driver.timeline_candidates = lambda *_: ()
@@ -305,6 +309,7 @@ def test_standard_automatic_cancel_resume_skips_three_committed_groups(tmp_path)
         driver2 = DesktopPipelineDriver(editor2, driver.config)
         driver2.plan_state = driver.plan_state
         driver2.voice_ready = driver.voice_ready
+        driver2.measure_plan_duration = driver.measure_plan_duration
         driver2.timing_ready = driver.timing_ready
         driver2.scenes = driver.scenes
         driver2.timeline_candidates = driver.timeline_candidates

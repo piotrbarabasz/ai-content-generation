@@ -7,6 +7,7 @@ import logging
 from app.application.automatic_workflow import AutomaticWorkflowCanceled
 from app.application.image_presets import motion_master_dimensions, generation_dimensions
 from app.application.invalidation import Freshness
+from app.application.plan_duration import plan_duration_result, selected_narration
 from app.domain.dependencies import Provenance
 
 
@@ -122,6 +123,20 @@ class DesktopPipelineDriver:
             return not audio.stale
         except (ValueError, OSError):
             return False
+
+    def measure_plan_duration(self, plan, sections, config):
+        current_plan = self.selected_video_plan()
+        if current_plan is None or current_plan.id != plan.id or tuple(self.saved_sections()) != tuple(sections):
+            raise ValueError("The selected plan or script changed; click Run / Resume to revalidate narration.")
+        measurements = []
+        for section in sections:
+            try:
+                measurements.append(selected_narration(self.editor.audio.services, section,
+                                                       config.voice_choice, config.audio_variant))
+            except (ValueError, OSError) as exc:
+                return plan_duration_result(plan, measurements, len(sections),
+                    pending_reason=f"{section.title}: {exc}")
+        return plan_duration_result(plan, measurements, len(sections))
 
     async def generate_voice(self, section, choice):
         if self.cancel_requested:

@@ -27,6 +27,9 @@ from app.desktop.project_outline import ProjectOutline
 from app.desktop.storyboard_panel import StoryboardPanel
 from app.desktop.export_panel import ExportPanel
 from app.desktop.script_panel import ScriptPanel
+from app.desktop.publish_panel import PublishPanel
+from app.desktop.quality_panel import QualityPanel
+from app.desktop.shorts_panel import ShortsPanel
 
 
 class GenerationThread(QThread):
@@ -55,13 +58,14 @@ class GenerationThread(QThread):
 
 class ProjectEditor(QMainWindow):
     def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
-                 preview_factory=None, regeneration_factory=None, workflow_mode="manual"):
+                 preview_factory=None, regeneration_factory=None, workflow_mode="manual", publishing_factory=None):
         super().__init__()
         self.projects, self.provider = projects, provider
         self.audio_factory, self.scene_factory = audio_factory, scene_factory
         self.timeline_factory = timeline_factory
         self.preview_factory = preview_factory
         self.regeneration_factory = regeneration_factory
+        self.publishing_factory = publishing_factory
 
         self.regeneration = RegenerationPanel(self)
         self.regeneration.before_start = self._regeneration_ready
@@ -209,6 +213,19 @@ class ProjectEditor(QMainWindow):
         export_layout.addWidget(self.advanced_regeneration)
         export_layout.addWidget(self.advanced_content, 1)
         self.tabs.addTab(self.export_tab, "Export")
+        self.publish_panel = PublishPanel(self)
+        self.quality_panel = QualityPanel(self)
+        self.quality_panel.changed = self.publish_panel.quality_changed
+        self.tabs.addTab(self.quality_panel, "Quality")
+        self.tabs.addTab(self.publish_panel, "Publish")
+        self.shorts_panel = ShortsPanel(self)
+        self.tabs.addTab(self.shorts_panel, "Shorts")
+        self.tabs.currentChanged.connect(lambda index: self.shorts_panel.run(self.shorts_panel.activate)
+                                        if self.tabs.widget(index) is self.shorts_panel else None)
+        self.tabs.currentChanged.connect(lambda index: self.publish_panel.run(self.publish_panel.activate)
+                                        if self.tabs.widget(index) is self.publish_panel else None)
+        self.tabs.currentChanged.connect(lambda index: self.quality_panel.run(self.quality_panel.activate)
+                                        if self.tabs.widget(index) is self.quality_panel else None)
 
         workspace = QSplitter(Qt.Horizontal)
         workspace.addWidget(self.outline)
@@ -354,6 +371,15 @@ class ProjectEditor(QMainWindow):
             self.audio.set_draft(True)
 
     def _ready(self, clean=True):
+        if self.quality_panel.busy:
+            raise ValueError("Wait for QA cleanup before changing project state.")
+        self.shorts_panel.director.require_saved()
+        if self.shorts_panel.busy:
+            raise ValueError("Wait for Shorts cleanup before changing project state.")
+        if self.publish_panel.busy:
+            raise ValueError("Wait for publishing preparation cleanup before changing project inputs.")
+        if self.export_panel.branding.busy or self.export_panel.delivery.busy:
+            raise ValueError("Wait for finishing or delivery export to complete or cancel it.")
         if self.automatic_busy:
             raise ValueError("Wait for the automatic workflow to finish or stop.")
         if self.regeneration.busy:
@@ -394,6 +420,15 @@ class ProjectEditor(QMainWindow):
 
     def load_project(self, path, *, create=False):
         def action():
+            if self.quality_panel.busy:
+                raise ValueError("Wait for QA cleanup before changing projects.")
+            self.shorts_panel.director.require_saved()
+            if self.shorts_panel.busy:
+                raise ValueError("Wait for Shorts cleanup before changing projects.")
+            if self.publish_panel.busy:
+                raise ValueError("Wait for publishing preparation cleanup before changing projects.")
+            if self.export_panel.branding.busy or self.export_panel.delivery.busy:
+                raise ValueError("Wait for finishing or delivery cleanup before changing projects.")
             if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
                 raise ValueError("Finish generation and save or discard your draft first.")
             candidate = (self.projects.create(path, name=self.project_name.text(), language=self.language.text())
@@ -409,13 +444,28 @@ class ProjectEditor(QMainWindow):
                 candidate.close()
                 raise
             if self.session:
+                self.shorts_panel.director.close_service()
                 self.audio.stop()
                 self.preview.stop()
                 self.session.close()
             self.session, self.snapshot = candidate, snapshot
             self.video_plan.bind(candidate)
             self.storyboard.bind(scene_services)
-            self.export_panel.bind(candidate)
+            self.export_panel.bind(candidate, timelines=timeline_services)
+            from app.desktop.publishing_composition import compose_publishing
+            self.publish_panel.bind((self.publishing_factory or compose_publishing)(
+                candidate, self.export_panel, timeline_services, llm=self.provider), defer_sources=True)
+            from app.desktop.quality_composition import compose_quality
+            quality = compose_quality(self.publish_panel.service)
+            self.publish_panel.service.quality = quality
+            self.quality_panel.bind(quality)
+            from app.desktop.shorts_composition import compose_shorts
+            self.shorts_panel.bind(compose_shorts(self.publish_panel.service))
+            from app.desktop.director_composition import compose_director
+            def director(shorts, identity, language):
+                provider = scene_services._generation_for(self.visuals.image_generator.currentData()).provider if scene_services else None
+                return compose_director(shorts, identity, audio_factory=self.audio_factory, image_provider=provider, language=language)
+            self.shorts_panel.director_factory = director
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
             self.visuals.bind(scene_services)
@@ -809,6 +859,35 @@ class ProjectEditor(QMainWindow):
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if self.quality_panel.busy:
+            self.quality_panel.cancel()
+            self.status.setText("Waiting for QA process cleanup before closing.")
+            event.ignore()
+            return
+        self.quality_panel.player.stop()
+        if self.shorts_panel.director.unsaved:
+            self.status.setText('Save or explicitly discard director script/scene edits before closing.');event.ignore();return
+        if self.shorts_panel.busy:
+            self.shorts_panel.cancel()
+            self.status.setText("Waiting for Shorts process cleanup before closing.")
+            event.ignore()
+            return
+        self.shorts_panel.player.stop()
+        if self.publish_panel.busy:
+            self.publish_panel.cancel()
+            self.status.setText("Waiting for publishing preparation cleanup before closing.")
+            event.ignore()
+            return
+        if self.export_panel.delivery.busy:
+            self.export_panel.delivery.cancel()
+            self.status.setText("Canceling delivery export; wait for cleanup before closing.")
+            event.ignore()
+            return
+        if self.export_panel.branding.busy:
+            self.export_panel.branding.cancel()
+            self.status.setText("Canceling finishing; wait for cleanup before closing.")
+            event.ignore()
+            return
         if self.automatic_busy or self.worker is not None or self.video_plan.busy or self.dirty or self.audio.busy or self.preview.busy or self.regeneration.busy or self.visuals.busy or self.visuals.prompt_dirty or self.visuals.context_dirty:
             self.status.setText("Finish generation and save or discard your draft before closing.")
             event.ignore()
@@ -816,6 +895,7 @@ class ProjectEditor(QMainWindow):
         if self.session:
             self.audio.stop()
             self.preview.stop()
+            self.shorts_panel.director.close_service()
             self.session.close()
             self.session = None
         event.accept()

@@ -17,7 +17,8 @@ class MediaProcess:
             raise ValueError("Media process deadline must be finite and positive.")
         self.timeout = timeout
 
-    async def run(self, command, *, cwd, canceled=lambda: False, on_line=lambda _: None):
+    async def run(self, command, *, cwd, canceled=lambda: False, on_line=lambda _: None,
+                  capture_stderr=False, capture_stdout=True, on_stderr_line=None):
         if canceled():
             raise RenderCanceled("Render canceled before process launch.")
         process = await asyncio.create_subprocess_exec(*map(str, command), cwd=cwd,
@@ -27,15 +28,27 @@ class MediaProcess:
 
         async def stdout():
             while line := await process.stdout.readline():
-                output.extend(line)
+                if capture_stdout:
+                    output.extend(line)
                 if len(output) > 1024 * 1024:
                     raise ValueError("Media process stdout exceeded 1 MiB.")
                 on_line(line.decode("utf-8", errors="replace").strip())
 
         async def stderr():
+            pending = bytearray()
             while block := await process.stderr.read(4096):
                 tail.extend(block)
                 del tail[:-65536]
+                if on_stderr_line is not None:
+                    pending.extend(block)
+                    while b"\n" in pending:
+                        line, _, rest = pending.partition(b"\n")
+                        pending[:] = rest
+                        on_stderr_line(line.decode("utf-8", errors="replace").strip())
+                    if len(pending) > 65536:
+                        raise ValueError("Media process stderr line exceeded 64 KiB.")
+            if pending and on_stderr_line is not None:
+                on_stderr_line(pending.decode("utf-8", errors="replace").strip())
 
         async def watch_cancel():
             while not canceled():
@@ -65,7 +78,7 @@ class MediaProcess:
                 raise RenderCanceled("Render canceled at process completion.")
             if process.returncode != 0:
                 raise RuntimeError(f"Media process exited {process.returncode}: {tail.decode('utf-8', errors='replace')}")
-            return bytes(output)
+            return bytes(tail if capture_stderr else output)
         finally:
             if owned is not None:
                 owned.close()

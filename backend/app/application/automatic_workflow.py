@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import inspect
 import logging
 from app.domain.scene_motion import MotionConfig
+from app.domain.video_plan import VideoFormat
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -81,6 +82,22 @@ class AutomaticWorkflow:
                          stage, section or "-", scene or "-", reason)
             raise AutomaticWorkflowBlocked(stage, reason, section=section, scene=scene) from None
 
+    async def _ensure_voice(self, section, config):
+        self._check_cancel()
+        if self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
+            self.skipped += 1
+            logger.info("[AICS][PIPELINE][AUTO][VOICE][SKIP] section=%r", section.title)
+        else:
+            logger.info("[AICS][PIPELINE][AUTO][VOICE][BUILD] section=%r provider=%s",
+                        section.title, config.voice_choice.provider)
+            await self._operation("VOICE", lambda: self.driver.generate_voice(section, config.voice_choice),
+                                  section=section.title)
+            self._check_cancel()
+            if not self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
+                raise AutomaticWorkflowBlocked("VOICE", "Generated narration did not validate for the current section.",
+                                               section=section.title)
+            logger.info("[AICS][PIPELINE][AUTO][VOICE][OK] section=%r", section.title)
+
     async def run(self, config: AutomaticWorkflowConfig):
         self.cancel_requested = False
         self.skipped = 0
@@ -109,22 +126,23 @@ class AutomaticWorkflow:
                         config.image_generator_id or "default", config.orientation,
                         config.final_resolution, config.audio_variant)
 
+            standard = selected_plan is not None and selected_plan.format == VideoFormat.STANDARD
+            if standard:
+                for section in sections:
+                    await self._ensure_voice(section, config)
+                duration = await self._operation("PLAN_DURATION",
+                    lambda: self.driver.measure_plan_duration(selected_plan, sections, config))
+                logger.info("[AICS][PIPELINE][AUTO][PLAN_DURATION][%s] %s", duration.state, duration.summary)
+                if duration.state != "OK":
+                    raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary)
+                self._check_cancel()
+
             expected_scene_count = 0
             for section in sections:
                 self._check_cancel()
                 section_label = section.title
-                if self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
-                    self.skipped += 1
-                    logger.info("[AICS][PIPELINE][AUTO][VOICE][SKIP] section=%r", section_label)
-                else:
-                    logger.info("[AICS][PIPELINE][AUTO][VOICE][BUILD] section=%r provider=%s",
-                                section_label, config.voice_choice.provider)
-                    await self._operation("VOICE", lambda: self.driver.generate_voice(section, config.voice_choice),
-                                          section=section_label)
-                    if not self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
-                        raise AutomaticWorkflowBlocked("VOICE", "Generated narration did not validate for the current section.",
-                                                       section=section_label)
-                    logger.info("[AICS][PIPELINE][AUTO][VOICE][OK] section=%r", section_label)
+                if not standard:
+                    await self._ensure_voice(section, config)
 
                 plan = self.driver.plan_state(section)
                 if plan.state == "accepted":

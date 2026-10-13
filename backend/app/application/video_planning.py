@@ -3,7 +3,8 @@
 from app.domain.base import new_id
 from app.domain.video_plan import (VIDEO_FORMATS, WORDS_PER_SECOND, PlannedSection,
                                    VideoFormat, VideoPlanGroup, VideoPlanRevision)
-from app.domain.video_plan_schema import validate_video_plan_output, video_plan_schema
+from app.domain.video_plan_schema import (MissingStandardPlanGroupsError,
+                                         validate_video_plan_output, video_plan_schema)
 
 
 def _allocate(total, weights):
@@ -30,9 +31,13 @@ def _planner_prompt(fmt, target_duration_seconds, topic):
         )
     else:
         guidance = (
-            "Start with a cold_open, include an introduction, create 5–7 chapter groups, "
-            "and include a conclusion; chapters may contain multiple planned sections. "
+            "Use only these exact canonical kind values: cold_open, opening, introduction, chapter, conclusion. "
+            "Start with a cold_open (opening is also supported). Include introduction and conclusion "
+            "as separate top-level groups, not sections inside a chapter. Create 5–7 chapter groups "
+            "within 7–10 groups overall; chapters may contain multiple planned sections. "
+            "Do not use synonyms such as intro, outro, wrap_up, closing, or final_thoughts. "
             "Shape this as a target long-form 9 to 11 minute explanatory structure. "
+            "Do not calculate duration budgets; the application allocates them. "
             "Return content matching the supplied strict schema."
         )
     return f"Create a {fmt.value} video plan of {target_duration_seconds} seconds about: {topic}\n{guidance}"
@@ -51,9 +56,20 @@ class VideoPlanningService:
             raise ValueError("Target duration is outside the selected format profile.")
         if type(topic) is not str or not topic.strip():
             raise ValueError("Topic is required.")
-        semantic = self.provider.generate_structured(
-            _planner_prompt(fmt, target_duration_seconds, topic), video_plan_schema(fmt))
-        semantic = validate_video_plan_output(semantic, fmt)
+        prompt = _planner_prompt(fmt, target_duration_seconds, topic)
+        schema = video_plan_schema(fmt)
+        semantic = self.provider.generate_structured(prompt, schema)
+        try:
+            semantic = validate_video_plan_output(semantic, fmt)
+        except MissingStandardPlanGroupsError:
+            if fmt is not VideoFormat.STANDARD:
+                raise
+            semantic = self.provider.generate_structured(
+                prompt + "\nThe previous response lacked a top-level introduction or conclusion. "
+                "Return a complete replacement plan matching the strict schema, with separate "
+                "top-level groups whose kind values are exactly introduction and conclusion. "
+                "Return the entire plan, not a patch or partial response.", schema)
+            semantic = validate_video_plan_output(semantic, fmt)
         group_durations = _allocate(target_duration_seconds, [g["weight"] for g in semantic["groups"]])
         groups = []
         for g, duration in zip(semantic["groups"], group_durations):

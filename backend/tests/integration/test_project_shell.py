@@ -1,6 +1,8 @@
 """The five-tab coordinator shell follows retained diagnostics and one selection."""
 
 import os
+from fractions import Fraction
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
@@ -10,6 +12,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from app.desktop.__main__ import LocalProjects
+from app.application.plan_duration import PlanDurationResult
 from app.desktop.editor import ProjectEditor
 from app.desktop.project_outline import ProjectOutline
 from app.desktop.project_header import ProjectHeader
@@ -79,6 +82,23 @@ def test_social_header_shows_selected_format_target_and_measured_duration(qt):
     header.close()
 
 
+@pytest.mark.parametrize("seconds, state", [(600, "OK"), (489, "BLOCKED"), (None, "PENDING")])
+def test_standard_header_keeps_duration_result_compact(qt, seconds, state):
+    header = ProjectHeader()
+    duration = PlanDurationResult(600, 540, 660, None if seconds is None else Fraction(seconds))
+    report = SimpleNamespace(plan_duration=duration, narration_duration_review=duration.summary,
+        script_group_progress="9/9", section_count=9, voice_ready=9, visuals_ready=0, visual_count=0,
+        timeline_expected=0, timeline_rejected=0, final_render_ready=False, export_ready=False,
+        plan_summary="STANDARD · READY")
+    header.show_diagnostics(report, project_name="Standard test", language="en", plan=_plan(VideoFormat.STANDARD))
+    assert state in header.project_summary.text()
+    assert "Target 10:00" in header.project_summary.text()
+    assert "\n" not in header.project_summary.text()
+    if seconds is not None:
+        assert f"Actual {seconds:.1f}s" in header.project_summary.text()
+    header.close()
+
+
 def test_outline_selection_syncs_script_audio_and_internal_combo(qt, tmp_path):
     editor = ProjectEditor(LocalProjects())
     editor.load_project(tmp_path / "project", create=True)
@@ -130,7 +150,7 @@ def test_busy_controls_disable_navigational_surfaces_and_project_switch_resets_s
         assert editor.storyboard.scene_count == 0
         assert editor.audio.section is None
         assert [editor.tabs.tabText(i) for i in range(editor.tabs.count())] == [
-            "Plan", "Script", "Storyboard", "Timeline", "Export"]
+            "Plan", "Script", "Storyboard", "Timeline", "Export", "Quality", "Publish", "Shorts"]
         assert editor.minimumSizeHint().height() <= 768
         assert editor.storyboard.scroll.widgetResizable()
     finally:
