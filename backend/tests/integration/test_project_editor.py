@@ -47,6 +47,30 @@ def click(window, name):
     QTest.mouseClick(window.buttons[name], Qt.LeftButton)
 
 
+def test_create_button_uses_projects_and_reopens_without_overwriting(qt, tmp_path, monkeypatch):
+    from app.desktop import project_locations
+
+    root = tmp_path / "projects"
+    monkeypatch.setattr(project_locations, "projects_directory", lambda: root)
+    window = ProjectEditor(LocalProjects())
+    try:
+        window.project_name.setText("My film")
+        window._choose_project(True)
+        original_id = window.session.project.id
+        assert window.session.repository.workspace == root / "My-film"
+        window._choose_project(True)
+        assert window.session.project.id == original_id
+        assert "already exists" in window.status.text()
+        monkeypatch.setattr("app.desktop.editor.QFileDialog.getExistingDirectory",
+                            lambda parent, title, start: str(root / "My-film") if start == str(root) else "")
+        window.session.close()
+        window.session = None
+        window._choose_project(False)
+        assert window.session.project.id == original_id
+    finally:
+        window.close()
+
+
 def append(window, title, text):
     click(window, "New section")
     window.title.setText(title)

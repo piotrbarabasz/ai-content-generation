@@ -39,6 +39,7 @@ dist/
 build/
 
 # Local artifacts
+/projects/
 data/
 outputs/
 artifacts/

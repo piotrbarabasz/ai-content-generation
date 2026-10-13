@@ -414,7 +414,12 @@ class ProjectEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def _choose_project(self, create):
-        path = QFileDialog.getExistingDirectory(self, "Project folder")
+        from app.desktop.project_locations import new_project_path, projects_directory
+
+        if create:
+            self._run(lambda: self.load_project(new_project_path(self.project_name.text()), create=True))
+            return
+        path = QFileDialog.getExistingDirectory(self, "Project folder", str(projects_directory()))
         if path:
             self.load_project(path, create=create)
 
