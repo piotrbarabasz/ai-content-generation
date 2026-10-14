@@ -1,6 +1,7 @@
 """Durable, plan-group-at-a-time script generation and resume operations."""
 
 from dataclasses import replace
+import json
 import logging
 
 from app.domain.base import new_id
@@ -10,10 +11,13 @@ from app.domain.plan_script import (GeneratedGroupSection, GeneratedScriptGroup,
                                     planned_section_identity)
 from app.domain.planned_script_schema import planned_script_group_schema, validate_planned_script_group
 from app.domain.script import ScriptRevision
+from app.domain.narration_quality import narration_issues
+from app.domain.llm_errors import StructuredOutputError, GeneratedNarrationError
 
 
 logger = logging.getLogger("aics.pipeline")
 WORD_COUNT_TOLERANCE = 0.25
+MAX_GROUP_ATTEMPTS = 2
 
 
 class PlanScriptGenerationService:
@@ -23,12 +27,15 @@ class PlanScriptGenerationService:
 
     def _selected_plan(self, plan):
         selected = self.video_plans.selected()
-        if selected is None or selected.id != plan.id:
+        if selected is None or selected != plan:
             raise ValueError("The selected Video Plan changed; refresh before continuing script generation.")
         return selected
 
     def start_or_resume(self, plan, *, replace_current=False):
         plan = self._selected_plan(plan)
+        reset = getattr(self.provider, "reset_cancel", None)
+        if callable(reset):
+            reset()
         active = self.session.active_script
         selected_binding = self.artifacts.active_binding()
         if selected_binding is not None:
@@ -90,14 +97,22 @@ class PlanScriptGenerationService:
         identity = self._identity()
         plan_fingerprint = content_fingerprint(plan.to_payload())
         group_value = self._group_payload(group)
-        key = content_fingerprint({"version": 1, "plan_id": plan.id, "plan": plan_fingerprint,
+        inputs = {"version": 1, "plan_id": plan.id, "plan": plan_fingerprint,
                                    "group": group_value, "language": plan.language,
                                    "provider_identity": identity, **({"policy": "narrative-context-v2", "context": context} if context else {}),
-                                   **({"regeneration_id": regeneration_id} if regeneration_id else {})})
+                                   **({"regeneration_id": regeneration_id} if regeneration_id else {})}
+        legacy_key = content_fingerprint(inputs)
+        key = content_fingerprint({**inputs, "version": 2, "response_contract": "fixed-narration-slots-v2",
+                                   "narration_policy": "spoken-prose-v1"})
         cached = self.artifacts.cached_group(key)
+        if cached is None:
+            cached = self.artifacts.cached_group(legacy_key)
+            if cached is not None:
+                key = legacy_key
         expected = tuple(section.id for section in group.sections)
         if cached is not None:
             self._validate_cached(cached, plan, group, key)
+            self._validate_narration(group, tuple(s.text for s in cached.sections))
             self._validate_context_result(cached, context)
             return {"cache_key": key, "cached": cached, "prompt": None, "schema": None, "regeneration_id": regeneration_id, "source_revisions": tuple(context["source_revisions"]) if context else (), "policy": "narrative-context-v2" if context else None}
         index = next(i for i, item in enumerate(plan.groups) if item.id == group.id)
@@ -105,6 +120,19 @@ class PlanScriptGenerationService:
         prompt = canonical_json({"task": "generate_planned_script_group", "language": plan.language,
             "video_format": plan.format.value, "target_duration_seconds": plan.target_duration_seconds,
             "working_title": plan.working_title, "topic": plan.topic, "film_brief": plan.film_brief,
+            "response_contract": "fixed-narration-slots-v2",
+            "section_slots": {f"section_{i + 1}": {"title": s.title, "purpose": s.purpose}
+                              for i, s in enumerate(group.sections)},
+            "narration_instruction": (
+                "Return final words the narrator should read aloud, directly suitable for Chatterbox TTS. "
+                "Video Plan objectives, purposes and visual directions describe intent; turn them into spoken documentary prose. "
+                "Each section_N slot binds only to the Nth supplied planned section. Never return internal IDs. "
+                "Do not include section titles, editorial directions, instructions to an editor, stage directions, "
+                "Markdown headings, character labels or descriptions of what should be narrated. "
+                "Do not write 'Explain how', 'Show the audience', 'Pose the question' or 'Establish the stakes'. "
+                "Illustration only: instead of 'Framing the Question — Pose the central question', narrate "
+                "'What if Washington had failed that night?' Use the requested topic and language, natural documentary "
+                "voice and factual caution. Preserve counterfactual assumptions without presenting them as historical fact."),
             "group": group_value, "neighboring_group_summaries": neighbors,
             **({"narrative_context": context} if context else {}),
             "instruction": ("Return only the planned sections in their supplied order. Target word counts are guidance." if context is None else
@@ -117,6 +145,7 @@ class PlanScriptGenerationService:
                 "do not introduce a major new topic or manufacture certainty. Excerpts are partial evidence, not summaries of omitted claims.")})
         return {"cache_key": key, "cached": None, "prompt": prompt,
                 "schema": planned_script_group_schema(len(expected)), "expected_ids": expected,
+                "response_version": 2, "attempt": 1,
                 "identity": identity, "source_revisions": tuple(context["source_revisions"]) if context else (),
                 "policy": "narrative-context-v2" if context else None, "regeneration_id": regeneration_id}
 
@@ -182,15 +211,87 @@ class PlanScriptGenerationService:
             raise ValueError("A structured script provider is required for plan-driven generation.")
         return self.provider.generate_structured(prepared["prompt"], prepared["schema"])
 
+    @staticmethod
+    def _validate_narration(group, texts):
+        for section, text in zip(group.sections, texts):
+            issues = narration_issues(text, title=section.title, purposes=(section.purpose, group.purpose))
+            if issues:
+                raise GeneratedNarrationError(f"Section {section.title!r} ({section.id}): {' '.join(issues)}",
+                                              "EDITORIAL_LEAKAGE")
+
+    def narration_findings(self, plan):
+        """Read-only check of selected revisions, including historical/manual text."""
+        by_id = {s.section_id: s for s in self.session.active_script.sections}
+        findings = []
+        known = set()
+        for group in plan.groups:
+            for planned in group.sections:
+                key = self.section_id(plan.project_id, planned.id)
+                known.add(key)
+                section = by_id.get(key)
+                if section is None:
+                    continue
+                for reason in narration_issues(section.text, title=section.title,
+                                                purposes=(planned.purpose, group.purpose)):
+                    findings.append({"group_id": group.id, "group": group.title, "section": section.title,
+                        "section_id": section.section_id, "revision_id": section.id, "reason": reason,
+                        "action": "Review saved text; explicitly edit or regenerate only this group in Plan."})
+        for section in by_id.values():
+            if section.section_id not in known:
+                for reason in narration_issues(section.text, title=section.title):
+                    findings.append({"group_id": None, "group": "Manual sections", "section": section.title,
+                        "section_id": section.section_id, "revision_id": section.id, "reason": reason,
+                        "action": "Review and explicitly edit this saved section in Script."})
+        return tuple(findings)
+
+    def require_narration(self, plan):
+        findings = self.narration_findings(plan)
+        if findings:
+            raise ValueError("Narration blocked before TTS. Saved text was preserved.\n" + "\n".join(
+                f"Group {f['group']!r}; section {f['section']!r}; revision={f['revision_id']}: "
+                f"{f['reason']} {f['action']}" for f in findings))
+
+    @staticmethod
+    def retry_group(group, prepared, error):
+        """Only rejected output is repaired here. Transport retries belong to the provider."""
+        attempt = prepared.get("attempt", 1)
+        retry = isinstance(error, StructuredOutputError) and attempt < MAX_GROUP_ATTEMPTS
+        category = getattr(error, "category", "PROVIDER_FAILURE")
+        details = (f"group={group.title!r} category={category} attempt={attempt} "
+                   f"sections={len(group.sections)} existing_sections=preserved retryable={retry} "
+                   f"action={'RETRY_GROUP' if retry else 'STOP'}")
+        logger.warning("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][INVALID] %s", details)
+        if not retry:
+            message = details + f". {error} Run / Resume reuses completed groups and retries this pending group; " \
+                "configuration errors require correction first. Timed-out requests may still have been billed."
+            raise RuntimeError(message) from error
+        prompt = json.loads(prepared["prompt"])
+        prompt["correction"] = (f"Previous output rejected: {error}. Return a complete replacement matching all fixed slots, "
+                                "their original objectives, spoken narration and word budgets. Do not return partial output.")
+        return {**prepared, "attempt": attempt + 1, "prompt": canonical_json(prompt)}
+
+    def generate_validated_group(self, plan, group, prepared):
+        while True:
+            try:
+                return self.validate_and_cache(plan, group, prepared, self.generate_payload(prepared))
+            except (StructuredOutputError, RuntimeError, OSError) as exc:
+                prepared = self.retry_group(group, prepared, exc)
+
     def validate_and_cache(self, plan, group, prepared, payload):
         self._selected_plan(plan)
         expected = tuple(section.id for section in group.sections)
-        texts = validate_planned_script_group(payload, expected)
+        try:
+            texts = validate_planned_script_group(payload, expected, version=prepared.get("response_version", 1))
+        except ValueError as exc:
+            sections = payload.get("sections") if type(payload) is dict else None
+            category = "SECTION_COUNT" if type(sections) in (dict, list) and len(sections) != len(expected) else "SECTION_CONTRACT"
+            raise StructuredOutputError(str(exc), category) from exc
+        self._validate_narration(group, texts)
         for section, text in zip(group.sections, texts):
             count = len(text.split())
             target = section.target_word_count
             if abs(count - target) > target * WORD_COUNT_TOLERANCE:
-                raise ValueError(f"Generated section {section.title!r} has {count} words; target {target} allows ±25%.")
+                raise GeneratedNarrationError(f"Generated section {section.title!r} has {count} words; target {target} allows ±25%.", "WORD_BUDGET")
         result = GeneratedScriptGroup(new_id("generated_script_group"), plan.project_id, plan.id, group.id,
             prepared["cache_key"], tuple(GeneratedGroupSection(section_id, text)
                                          for section_id, text in zip(expected, texts)),
@@ -258,6 +359,7 @@ class PlanScriptGenerationService:
         if retained != result:
             raise ValueError("Generated group is not the exact retained cache artifact.")
         self._validate_cached(result, plan, group, prepared["cache_key"])
+        self._validate_narration(group, tuple(s.text for s in result.sections))
         state = self.group_state(plan, group, current)
         if state == "complete" and regeneration_id is None:
             return current
@@ -298,7 +400,7 @@ class PlanScriptGenerationService:
         before = self.session.active_script.id
         request = new_id("group_regeneration")
         prepared = self.prepare_group(plan, group, regeneration_id=request)
-        result = self.validate_and_cache(plan, group, prepared, self.generate_payload(prepared))
+        result = self.generate_validated_group(plan, group, prepared)
         return self.commit_group(plan, group, result, expected_active_revision_id=before, regeneration_id=request)
 
     def run_next_group(self, plan):
@@ -317,7 +419,7 @@ class PlanScriptGenerationService:
                 logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][CACHE] group=%r", group.title)
             else:
                 logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][BUILD] group=%r sections=%d", group.title, len(group.sections))
-                result = self.validate_and_cache(plan, group, prepared, self.generate_payload(prepared))
+                result = self.generate_validated_group(plan, group, prepared)
             self.commit_group(plan, group, result, expected_active_revision_id=before)
             logger.info("[AICS][PIPELINE][AUTO][SCRIPT_GROUP][OK] group=%r words=%d", group.title,
                         sum(len(item.text.split()) for item in result.sections))

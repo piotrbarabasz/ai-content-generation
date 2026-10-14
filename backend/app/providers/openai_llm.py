@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import logging
 import os
 import re
 import threading
@@ -16,6 +17,7 @@ from urllib.request import Request, urlopen
 from app.domain.enums import ProviderType
 from app.domain.types import JsonDict
 from app.providers.llm_settings import OpenAISettings
+from app.domain.llm_errors import StructuredOutputError, LLMRequestCanceled
 
 
 RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses"
@@ -23,15 +25,24 @@ RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses"
 
 class OpenAILLMError(RuntimeError):
     """Credential-safe OpenAI provider failure."""
+    category = "CONFIGURATION_OR_PROVIDER_REJECTION"
+
+
+class OpenAIStructuredOutputError(OpenAILLMError, StructuredOutputError):
+    category = "SECTION_CONTRACT"
 
 
 class OpenAITransportError(OpenAILLMError):
     def __init__(self, message: str, *, status_code: int | None = None,
-                 retryable: bool = False, retry_after: float | None = None) -> None:
+                 retryable: bool = False, retry_after: float | None = None,
+                 category: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.retryable = retryable
         self.retry_after = retry_after
+        self.category = category or ("RATE_LIMIT" if status_code == 429 else
+                         "TRANSIENT_PROVIDER" if status_code and status_code >= 500 else
+                         "CONFIGURATION" if status_code else "NETWORK_TIMEOUT")
 
 
 class OpenAITransport(Protocol):
@@ -75,15 +86,14 @@ class UrllibOpenAITransport:
                                        retryable=status == 429 or status >= 500,
                                        retry_after=retry_after) from None
         except (TimeoutError, URLError, OSError) as exc:
-            if isinstance(exc, URLError) and not isinstance(exc.reason, TimeoutError):
-                message = "OpenAI network request failed."
-            else:
-                message = "OpenAI request timed out."
-            raise OpenAITransportError(message, retryable=True) from None
+            timeout = isinstance(exc, TimeoutError) or (isinstance(exc, URLError) and isinstance(exc.reason, TimeoutError))
+            message = "OpenAI request timed out." if timeout else "OpenAI network request failed."
+            raise OpenAITransportError(message, retryable=True,
+                                       category="NETWORK_TIMEOUT" if timeout else "NETWORK_FAILURE") from None
         except (UnicodeDecodeError, json.JSONDecodeError):
-            raise OpenAITransportError("OpenAI returned an invalid response.") from None
+            raise OpenAITransportError("OpenAI returned an invalid response.", category="TRANSIENT_PROVIDER") from None
         if not isinstance(result, Mapping):
-            raise OpenAITransportError("OpenAI returned an invalid response.")
+            raise OpenAITransportError("OpenAI returned an invalid response.", category="TRANSIENT_PROVIDER")
         return result
 
 
@@ -109,6 +119,15 @@ def _safe_count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def _unique_structured_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise OpenAIStructuredOutputError("OpenAI structured output contained duplicate object fields.")
+        result[key] = value
+    return result
+
+
 class OpenAILLMProvider:
     provider_type = ProviderType.LLM
     provider_name = "openai"
@@ -124,6 +143,24 @@ class OpenAILLMProvider:
         self._throttle_lock = threading.Lock()
         self._last_request_at: float | None = None
         self._last_usage: LLMUsage | None = None
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        self._cancel_event.set()
+
+    def reset_cancel(self):
+        self._cancel_event.clear()
+
+    def _check_cancel(self):
+        if self._cancel_event.is_set():
+            raise LLMRequestCanceled("OpenAI request canceled; an in-flight request may still have been billed.")
+
+    def _wait(self, delay):
+        if self._sleep is time.sleep:
+            self._cancel_event.wait(delay)
+        else:
+            self._sleep(delay)
+        self._check_cancel()
 
     def generation_identity(self) -> JsonDict:
         return {"provider": self.provider_name, "api": "responses", "model": self.settings.model}
@@ -132,6 +169,7 @@ class OpenAILLMProvider:
         return self._last_usage.to_payload() if self._last_usage else None
 
     def generate_text(self, prompt: str, context: JsonDict | None = None) -> str:
+        self.reset_cancel()
         if not isinstance(prompt, str) or not prompt.strip():
             raise OpenAILLMError("OpenAI prompt must be nonempty text.")
         if context is not None and not isinstance(context, Mapping):
@@ -145,6 +183,7 @@ class OpenAILLMProvider:
         return self._output_text(response)
 
     def generate_structured(self, prompt: str, schema: JsonDict) -> JsonDict:
+        self.reset_cancel()
         if not isinstance(prompt, str) or not prompt.strip():
             raise OpenAILLMError("OpenAI prompt must be nonempty text.")
         if type(schema) is not dict:
@@ -171,11 +210,11 @@ class OpenAILLMProvider:
         }
         text = self._output_text(self._request(payload))
         try:
-            result = json.loads(text)
+            result = json.loads(text, object_pairs_hook=_unique_structured_fields)
         except json.JSONDecodeError:
-            raise OpenAILLMError("OpenAI structured output was not valid JSON.") from None
+            raise OpenAIStructuredOutputError("OpenAI structured output was not valid JSON.") from None
         if type(result) is not dict:
-            raise OpenAILLMError("OpenAI structured output must be a JSON object.")
+            raise OpenAIStructuredOutputError("OpenAI structured output must be a JSON object.")
         return result
 
     def _api_key(self) -> str:
@@ -192,13 +231,14 @@ class OpenAILLMProvider:
             if self._last_request_at is not None:
                 remaining = self.settings.request_interval_seconds - (now - self._last_request_at)
                 if remaining > 0:
-                    self._sleep(remaining)
+                    self._wait(remaining)
                     now = self._monotonic()
             self._last_request_at = now
 
     def _request(self, payload: JsonDict) -> Mapping[str, Any]:
         api_key = self._api_key()
         for attempt in range(self.settings.max_retries + 1):
+            self._check_cancel()
             self._throttle()
             try:
                 response = self._transport.create_response(
@@ -207,10 +247,14 @@ class OpenAILLMProvider:
                 self._record_usage(response)
                 return response
             except OpenAITransportError as exc:
+                exc.attempts = attempt + 1
+                logging.getLogger("aics.pipeline").warning(
+                    "[AICS][LLM][REQUEST] category=%s attempt=%d retryable=%s billing=timeout_may_be_billed",
+                    exc.category, attempt + 1, exc.retryable and attempt < self.settings.max_retries)
                 if not exc.retryable or attempt >= self.settings.max_retries:
                     raise
                 delay = exc.retry_after if exc.retry_after is not None else self.settings.retry_delay_seconds
-                self._sleep(min(max(delay, 0.0), 60.0))
+                self._wait(min(max(delay, 0.0), 60.0))
         raise AssertionError("unreachable")
 
     def _record_usage(self, response: Mapping[str, Any]) -> None:

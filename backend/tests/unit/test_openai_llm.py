@@ -129,6 +129,58 @@ def test_malformed_structured_json_is_rejected():
         provider(Transport(response("[]"))).generate_structured("Prompt", {"type": "object"})
 
 
+def test_timeout_retries_are_bounded_and_exhaustion_preserves_original_error():
+    errors = [OpenAITransportError("OpenAI request timed out.", retryable=True) for _ in range(3)]
+    transport = Transport(*errors)
+    llm = provider(transport, maxRetries=2, retryDelaySeconds=0)
+    with pytest.raises(OpenAITransportError) as captured:
+        llm.generate_structured("Prompt", {"type": "object"})
+    assert captured.value is errors[-1] and captured.value.attempts == 3
+    assert captured.value.category == "NETWORK_TIMEOUT"
+    assert len(transport.calls) == 3
+
+
+def test_timeout_recovers_and_authentication_never_retries():
+    transport = Transport(OpenAITransportError("timeout", retryable=True), response('{"sections":{}}'))
+    assert provider(transport, retryDelaySeconds=0).generate_structured("Prompt", {"type": "object"}) == {"sections": {}}
+    assert len(transport.calls) == 2
+    auth = Transport(OpenAITransportError("authentication failed", status_code=401))
+    with pytest.raises(OpenAITransportError):
+        provider(auth).generate_text("Prompt")
+    assert len(auth.calls) == 1
+
+
+def test_cancellation_during_backoff_prevents_next_paid_request_and_can_reset():
+    from app.domain.llm_errors import LLMRequestCanceled
+    transport = Transport(OpenAITransportError("rate limit", status_code=429, retryable=True), response("done"))
+    llm = provider(transport)
+    llm._sleep = lambda _: llm.cancel()
+    with pytest.raises(LLMRequestCanceled):
+        llm.generate_text("Prompt")
+    assert len(transport.calls) == 1
+    # A separate invocation must not inherit cancellation from the prior call.
+    assert llm.generate_text("Prompt") == "done"
+
+
+def test_v2_fixed_slots_are_sent_as_strict_objects_without_local_id():
+    from app.domain.planned_script_schema import planned_script_group_schema
+    transport = Transport(response('{"sections":{"section_1":"First.","section_2":"Second."}}'))
+    llm = provider(transport)
+    llm.generate_structured("Prompt", planned_script_group_schema(2))
+    schema = transport.calls[0]["payload"]["text"]["format"]["schema"]
+    assert "$id" not in schema
+    slots = schema["properties"]["sections"]
+    assert slots["type"] == "object" and slots["additionalProperties"] is False
+    assert slots["required"] == ["section_1", "section_2"]
+
+
+def test_duplicate_json_slots_are_rejected_before_dict_can_overwrite_them():
+    from app.domain.llm_errors import StructuredOutputError
+    with pytest.raises(StructuredOutputError, match="duplicate object fields"):
+        provider(Transport(response('{"sections":{"section_1":"First","section_1":"Replaced"}}'))).generate_structured(
+            "Prompt", {"type": "object"})
+
+
 def test_settings_and_http_errors_never_serialize_credentials():
     for secret_setting in ({"model": "gpt-test", "apiKey": "secret"},
                            {"model": "gpt-test", "token": "secret"}):

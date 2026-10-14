@@ -9,6 +9,7 @@ from app.application.image_presets import motion_master_dimensions, generation_d
 from app.application.invalidation import Freshness
 from app.application.plan_duration import plan_duration_result, selected_narration
 from app.domain.dependencies import Provenance
+from app.domain.llm_errors import StructuredOutputError
 
 
 logger = logging.getLogger("aics.pipeline")
@@ -93,8 +94,15 @@ class DesktopPipelineDriver:
                             group.title, len(group.sections))
                 self.active_script_provider = self.editor.provider
                 try:
-                    payload = await asyncio.to_thread(service.generate_payload, prepared)
-                    result = service.validate_and_cache(plan, group, prepared, payload)
+                    while True:
+                        try:
+                            payload = await asyncio.to_thread(service.generate_payload, prepared)
+                            result = service.validate_and_cache(plan, group, prepared, payload)
+                            break
+                        except (StructuredOutputError, RuntimeError, OSError) as exc:
+                            if self.cancel_requested:
+                                raise AutomaticWorkflowCanceled("SCRIPT") from exc
+                            prepared = service.retry_group(group, prepared, exc)
                 finally:
                     self.active_script_provider = None
             if self.cancel_requested:
@@ -106,6 +114,9 @@ class DesktopPipelineDriver:
             panel._render()
             panel._script_progress()
             self.editor._refresh()
+
+    def validate_narration(self, plan):
+        self.editor.video_plan.script_service.require_narration(plan)
 
     def plan_script_progress(self, plan):
         service = self.editor.video_plan.script_service

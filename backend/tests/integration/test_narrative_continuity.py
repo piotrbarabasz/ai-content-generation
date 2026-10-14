@@ -338,8 +338,8 @@ def test_selective_regeneration_preserves_user_section_order_and_media_inputs(na
     original_generate = provider.generate_structured
     def changed_text(prompt, schema):
         result = original_generate(prompt, schema)
-        for section in result["sections"]:
-            section["text"] = section["text"].replace("word0", "changed")
+        for slot, text in result["sections"].items():
+            result["sections"][slot] = text.replace("word0", "changed")
         return result
     provider.generate_structured = changed_text
     service.regenerate_group(plan, plan.groups[-1])

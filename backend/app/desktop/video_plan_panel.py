@@ -9,7 +9,7 @@ from app.domain.video_plan import VIDEO_FORMATS, VideoFormat
 
 
 class PlanGroupThread(QThread):
-    outcome = Signal(object, str)
+    outcome = Signal(object, object)
 
     def __init__(self, provider, prepared, parent=None):
         super().__init__(parent)
@@ -19,7 +19,7 @@ class PlanGroupThread(QThread):
         try:
             self.outcome.emit(self.provider.generate_structured(self.prepared["prompt"], self.prepared["schema"]), "")
         except Exception as exc:
-            self.outcome.emit(None, str(exc))
+            self.outcome.emit(None, exc)
 
 
 class VideoPlanPanel(QWidget):
@@ -236,12 +236,13 @@ class VideoPlanPanel(QWidget):
             self.status.setText(str(exc))
 
     def _script_group_ready(self, payload, error):
+        is_editorial = self._editorial_prepared is not None
         worker, self.script_worker = self.script_worker, None
         if worker is not None:
             worker.deleteLater()
         try:
             if error:
-                raise ValueError(error)
+                raise error if isinstance(error, Exception) else ValueError(error)
             if self._editorial_prepared is not None:
                 prepared, self._editorial_prepared = self._editorial_prepared, None
                 if not self._cancel_script_requested:
@@ -276,6 +277,22 @@ class VideoPlanPanel(QWidget):
             self._script_progress()
             QTimer.singleShot(0, self._run_next_script_group)
         except Exception as exc:
+            from app.domain.llm_errors import StructuredOutputError
+            if (not is_editorial and self._prepared_group is not None
+                    and not self._cancel_script_requested
+                    and isinstance(exc, (StructuredOutputError, RuntimeError, OSError))):
+                try:
+                    self._prepared_group = self.script_service.retry_group(
+                        self._script_group, self._prepared_group, exc)
+                except RuntimeError as exhausted:
+                    exc = exhausted
+                else:
+                    self.status.setText(f"Retrying {self._script_group.title}: attempt "
+                                        f"{self._prepared_group['attempt']}; existing sections preserved.")
+                    self.script_worker = PlanGroupThread(self.provider, self._prepared_group, self)
+                    self.script_worker.outcome.connect(self._script_group_ready)
+                    self.script_worker.start()
+                    return
             self._editorial_prepared = self._regeneration_id = None
             self._script_running = False
             if self.parent() is not None and hasattr(self.parent(), "set_plan_script_busy"):
@@ -370,6 +387,7 @@ class VideoPlanPanel(QWidget):
         self.group_selection.setCurrentIndex(max(0, selection_index))
         self.group_selection.blockSignals(False)
         self.preview_group()
+        self.show_continuity_findings()
         lines = []
         try:
             states = self.script_service.progress(plan) if self.script_service else ("pending",) * len(plan.groups)
@@ -476,6 +494,12 @@ class VideoPlanPanel(QWidget):
 
     def show_continuity_findings(self):
         try:
+            findings = self.script_service.narration_findings(self.plan) if self.plan and self.script_service else ()
+            if findings:
+                self.continuity_findings.setPlainText("Narration blocked before TTS; saved text preserved.\n" + "\n".join(
+                    f"{f['group']} / {f['section']} / revision={f['revision_id']}: {f['reason']} {f['action']}"
+                    for f in findings))
+                return
             review = self.continuity.latest_review(self.plan) if self.plan and self.continuity else None
             if review is None:
                 self.continuity_findings.setPlainText("Narrative review has not been run.")

@@ -48,9 +48,9 @@ class FakeProvider:
         payload = json.loads(prompt)
         group = payload["group"]
         self.calls.append(group["id"])
-        return {"sections": [{"planned_section_id": section["id"],
-                               "text": " ".join([f"word{i}" for i in range(section["target_word_count"])])}
-                              for section in group["sections"]]}
+        return {"sections": {f"section_{j + 1}": " ".join(
+            [f"word{j}_{i}" for i in range(section["target_word_count"])])
+            for j, section in enumerate(group["sections"])}}
 
 
 def env(tmp_path, fmt="social", provider=None):
@@ -167,8 +167,7 @@ def test_out_of_tolerance_provider_output_is_not_cached_or_committed(tmp_path):
     service.start_or_resume(plan)
     group = plan.groups[0]
     prepared = service.prepare_group(plan, group)
-    payload = {"sections": [{"planned_section_id": group.sections[0].id,
-                              "text": "one two three four five six"}]}
+    payload = {"sections": {"section_1": "one two three four five six"}}
     with pytest.raises(ValueError, match="±25%"):
         service.validate_and_cache(plan, group, prepared, payload)
     assert service.group_state(plan, group) == "pending"

@@ -12,13 +12,12 @@ from app.desktop.editor import ProjectEditor
 class Provider:
     def __init__(self): self.group_calls = []
     def generate_structured(self, _prompt, schema):
-        if schema["$id"] == "urn:aics:planned-script-group:v1":
+        if schema["$id"] == "urn:aics:planned-script-group:v2":
             import json
             payload = json.loads(_prompt)
             self.group_calls.append(payload["group"]["id"])
-            return {"sections": [{"planned_section_id": item["id"],
-                                   "text": " ".join(["word"] * item["target_word_count"])}
-                                  for item in payload["group"]["sections"]]}
+            return {"sections": {f"section_{i + 1}": " ".join([f"word{i}"] * item["target_word_count"])
+                                  for i, item in enumerate(payload["group"]["sections"])}}
         assert schema["$id"] == "urn:aics:video-plan:v1"
         standard = schema["properties"]["groups"]["maxItems"] == 10
         kinds = (["cold_open", "introduction", "chapter", "chapter", "chapter", "chapter", "chapter", "conclusion"]
@@ -106,6 +105,37 @@ def wait_for_narrative(qt, panel):
             break
         QTest.qWait(10)
     assert not panel.busy
+
+
+def test_panel_repairs_invalid_group_response_and_surfaces_saved_instruction(tmp_path):
+    qt = QApplication.instance() or QApplication([])
+    class RepairProvider(Provider):
+        failed = False
+        def generate_structured(self, prompt, schema):
+            result = super().generate_structured(prompt, schema)
+            if schema["$id"].endswith("planned-script-group:v2") and not self.failed:
+                self.failed = True
+                return {"sections": {"wrong_slot": "Wrong"}}
+            return result
+    provider = RepairProvider()
+    editor = ProjectEditor(LocalProjects(), provider=provider)
+    editor.load_project(tmp_path / "project", create=True)
+    try:
+        panel = editor.video_plan
+        panel.topic.setPlainText("A topic")
+        panel.generate()
+        panel.resume_script_generation()
+        wait_for_narrative(qt, panel)
+        assert len(provider.group_calls) == len(panel.plan.groups) + 1
+        first = editor.session.active_script.sections[0]
+        editor.session.edit_section(first.section_id, text="Show the audience the stakes.")
+        current = editor.session.active_script
+        panel._render()
+        assert "Narration blocked before TTS" in panel.continuity_findings.toPlainText()
+        assert current.sections[0].id in panel.continuity_findings.toPlainText()
+        assert editor.session.active_script == current
+    finally:
+        editor.close()
 
 
 def test_narrative_panel_preview_review_regenerate_approve_and_no_open_paid_calls(tmp_path):
