@@ -133,24 +133,44 @@ class ChatterboxProvisioner:
                     or value["fingerprint"] != distribution.fingerprint
                     or re.fullmatch(r"[0-9a-f]{32}", value["generation"]) is None):
                 raise ValueError("Invalid active Chatterbox pointer.")
-            root = self.root / "envs" / value["generation"]
-            if root.is_symlink() or root.resolve().parent != (self.root / "envs").resolve():
-                raise ValueError("Chatterbox pointer escaped configured storage.")
-            receipt = json.loads((root / "ready.json").read_text(encoding="utf-8"))
-            if set(receipt) != {"schema_version", "distribution_fingerprint", "health", "files"}:
-                raise ValueError("Invalid Chatterbox installation receipt.")
-            health = ChatterboxHealth.from_payload(receipt["health"])
-            if (receipt["schema_version"] != 1
-                    or receipt["distribution_fingerprint"] != distribution.fingerprint
-                    or receipt["files"] != _inventory(root)
-                    or json.loads((root / "profile.json").read_text(encoding="utf-8")) != distribution.to_payload()):
-                raise ValueError("Installed Chatterbox runtime is incomplete or changed.")
+            installed, receipt = self._verified_generation(distribution, value["generation"])
+            root = installed.directory
+            expected = {name: hashlib.sha256(data).hexdigest() for name, data in _worker_files().items()}
+            if {name: digest for name, digest in receipt["files"].items()
+                    if name.startswith("worker/")} != expected:
+                raise ValueError("Installed Chatterbox worker differs from this application revision.")
             for name, data in _worker_files().items():
                 if (root / name).read_bytes() != data:
                     raise ValueError("Installed Chatterbox worker differs from this application revision.")
-            return InstalledChatterboxRuntime(root, health, distribution.fingerprint)
+            return installed
         except (OSError, ValueError, TypeError, KeyError) as exc:
             raise ProvisioningError("Active Chatterbox runtime failed verification; no worker may be launched.") from exc
+
+    def _verified_generation(self, distribution, generation):
+        """Verify historical integrity without claiming current worker compatibility.
+
+        Only explicit refresh inspection uses this alone. Launch authorization
+        remains active(), including its current application worker-byte check.
+        """
+        self._require_host(distribution)
+        if not isinstance(generation, str) or re.fullmatch(r"[0-9a-f]{32}", generation) is None:
+            raise ValueError("Invalid Chatterbox generation.")
+        root = self.root / "envs" / generation
+        for path in (self.root / "envs", root):
+            if path.is_symlink() or (os.name == "nt" and path.stat().st_file_attributes & 0x400):
+                raise ValueError("Chatterbox generation links/reparse points are unsupported.")
+        if root.resolve().parent != (self.root / "envs").resolve():
+            raise ValueError("Chatterbox pointer escaped configured storage.")
+        receipt = json.loads((root / "ready.json").read_text(encoding="utf-8"))
+        if set(receipt) != {"schema_version", "distribution_fingerprint", "health", "files"}:
+            raise ValueError("Invalid Chatterbox installation receipt.")
+        health = ChatterboxHealth.from_payload(receipt["health"])
+        if (receipt["schema_version"] != 1
+                or receipt["distribution_fingerprint"] != distribution.fingerprint
+                or receipt["files"] != _inventory(root)
+                or json.loads((root / "profile.json").read_text(encoding="utf-8")) != distribution.to_payload()):
+            raise ValueError("Installed Chatterbox runtime is incomplete or changed.")
+        return InstalledChatterboxRuntime(root, health, distribution.fingerprint), receipt
 
     def install(self, distribution: ChatterboxDistribution, source: ArtifactSource):
         self._require_host(distribution)

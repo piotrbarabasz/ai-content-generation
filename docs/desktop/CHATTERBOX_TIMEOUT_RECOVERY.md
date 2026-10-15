@@ -91,6 +91,12 @@ Standard narration check still precedes any scenes/images.
 
 ## Activating the updated worker
 
+For an intact existing approved distribution, the subsequent D029
+[explicit worker refresh command](CHATTERBOX_RUNTIME_REFRESH.md) now reuses its
+verified interpreter and packages in a new generation. Use that operation for
+worker-only application updates. The fresh-root provisioning procedure below
+remains an alternative when reviewed dependency artifacts are available.
+
 Existing D029 activation verifies the complete runtime inventory and exact
 application worker source closure. These worker changes therefore require a
 fresh verified runtime for this application revision. Do not patch an active

@@ -55,7 +55,9 @@ class WorkerLaunch:
         entry = self.entrypoint.expanduser().resolve(strict=True)
         if not entry.is_file() or entry.suffix != ".py":
             raise ValueError("Python worker requires a trusted script entry point.")
-        return [str(executable), "-I", "-u", str(entry)]
+        # -I ignores PYTHONDONTWRITEBYTECODE. Suppress writes explicitly so
+        # imports cannot mutate an installed, receipted worker generation.
+        return [str(executable), "-I", "-B", "-u", str(entry)]
 
 
 @dataclass(frozen=True)
