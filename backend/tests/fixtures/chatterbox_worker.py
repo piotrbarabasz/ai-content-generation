@@ -20,6 +20,18 @@ def handle(payload, report, canceled):
     os.write(1, b"Native model log must also go to stderr\n")
     health = ChatterboxHealth(profile_fingerprint(), os.environ["AICS_CHATTERBOX_DEVICE"], ("en", "pl"), "fixture", 1024)
     if payload.get("request", {}).get("operation") == "runtime.chatterbox.health":
+        if os.environ.get("CHATTERBOX_TEST_NUMBA_CACHE"):
+            # Simulate librosa's import-time @guvectorize(cache=True) writes.
+            # -B suppresses Python bytecode, not Numba's native-code cache.
+            cache = Path(os.environ.get("NUMBA_CACHE_DIR", os.environ["CHATTERBOX_TEST_NUMBA_CACHE"]))
+            target = cache / "kernel.nbc"
+            if os.environ.get("CHATTERBOX_TEST_NUMBA_PATH_BUDGET"):
+                target = cache / ("core_" + "a" * 40) / ("audio._zc_wrapper-1154.py311.1.nbc.tmp." + "b" * 16)
+                if len(str(target)) > int(os.environ["CHATTERBOX_TEST_NUMBA_PATH_BUDGET"]):
+                    raise FileNotFoundError("Simulated Windows atomic cache path limit")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            cache.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"relocated compiled kernel")
         Path(os.environ["AICS_CHATTERBOX_HEALTH"]).write_text(json.dumps(health.to_payload()), encoding="utf-8")
         return []
     job = JobRequest.from_payload(payload)

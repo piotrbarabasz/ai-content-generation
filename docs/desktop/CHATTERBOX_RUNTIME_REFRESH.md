@@ -89,9 +89,9 @@ four changed source files (`chatterbox_worker.py`, `section_synthesis.py`,
 `supervisor.py`, `worker.py`) and 55 receipted bytecode files absent from the
 current closure. Refresh drops those old worker bytecode files in the candidate.
 Managed Python launches now explicitly use `-B`: isolated `-I` mode ignores the
-previous `PYTHONDONTWRITEBYTECODE` environment setting. This prevents health and
-subsequent inference imports from changing receipted files. The live installation
-was only inspected; no live refresh or CUDA health operation was performed.
+previous `PYTHONDONTWRITEBYTECODE` environment setting. This suppresses Python
+bytecode writes. Initial implementation validation only inspected the live
+installation; the subsequent operator refresh is recorded below.
 
 ## Explicit rollback
 
@@ -124,7 +124,7 @@ startup fail-closed behavior, external project/model/audio preservation,
 idempotence and explicit version-compatible rollback. No GPU or network is used
 by these regression tests. A live refresh remains an explicit operator action.
 
-Validation on Windows, isolated Python 3.11.9:
+Initial validation on Windows, isolated Python 3.11.9:
 
 - Final focused refresh/lifecycle/GPU suite: **76 passed**.
 - Fixture-only alternate host-gate path: **19 passed**, using a simulated
@@ -134,3 +134,49 @@ Validation on Windows, isolated Python 3.11.9:
   **2,462 passed, 12 skipped** in **1,813.89 seconds (30:13)**.
 - New modules compile successfully; working-tree and staged `git diff --check`
   pass. No live generation was copied, activated or health-probed.
+
+## Follow-up live cache correction
+
+The first explicit live refresh failed closed on a 90-second initialization
+deadline. An offline import diagnostic subsequently completed in 61 seconds,
+with most time in Transformers package discovery and imports. A second normal
+refresh completed health but was correctly rejected by the protected inventory
+comparison: librosa/Numba rewrote six `audio._zc_wrapper` / `guf-audio._zc_wrapper`
+`.nbi` and `.nbc` files in `packages/librosa/core/__pycache__`. Both attempts left
+the original active pointer and generation intact. Neither candidate received a
+ready receipt.
+
+`-B` does not control Numba's native-code cache. The shared private cache
+environment now sets `NUMBA_CACHE_DIR`: health redirects JIT writes into its
+excluded temporary scratch; production redirects them into its configured
+writable runtime cache. All original package/cache bytes remain protected and
+must still match the old receipt. No deadline or package/model version changes.
+
+Numba's hashed source directory and atomic-write suffix also exceeded Windows'
+path limit in the original nested health directory. Health now uses the short
+`cb-*/n` cache layout within the same temporary ownership boundary. An actual
+private CUDA probe then passed on the GTX 1660 SUPER (`cuda:0`, EN/PL), with
+35.797 seconds of initialization and clean process exit. No weights were loaded.
+
+Focused refresh/distribution/audio/recovery regression after these corrections:
+**45 passed**. A real child-process regression simulates import-time JIT writes,
+checks that inherited/protected cache paths are overridden, preserves the
+receipted package bytes, exercises Numba-shaped hashed/atomic filenames under a
+deterministic Windows path budget, and verifies temporary-cache cleanup.
+Production cache selection is also checked to remain under the configured
+writable root.
+
+The subsequent complete operator refresh activated generation
+`7a9066c51ff448429b4592afc3e80b0a` successfully, including strict post-health
+inventory comparison, original-generation integrity verification and fresh
+process checks before and after activation. An additional `--verify` using the
+user's `.venv` interpreter also passed. Original generation
+`7d429dc360cf464e8102c08cdefcb1ce` remains intact; rejected candidates remain for
+inspection. Model weights, project databases and completed narration were not
+modified by this runtime operation.
+
+Final follow-up validation: `python -m pytest backend/tests --basetemp .tmp/ncf`
+completed with **2,464 passed, 12 skipped** in **1,998.49 seconds (33:18)**.
+Working-tree and staged `git diff --check` passed. All tests are offline; the
+separately invoked live health/activation evidence above does not synthesize
+narration or load model weights.

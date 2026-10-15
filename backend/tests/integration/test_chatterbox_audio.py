@@ -54,6 +54,26 @@ def test_private_probe_uses_owned_process_and_reads_fixed_health(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("windows_cache_names", [False, True])
+def test_health_redirects_numba_jit_writes_away_from_protected_packages(tmp_path, windows_cache_names):
+    protected = tmp_path / "installed/packages/librosa/core/__pycache__"
+    protected.mkdir(parents=True)
+    original = protected / "kernel.nbc"
+    original.write_bytes(b"receipted compiled kernel")
+    scratch = tmp_path / "probe"
+    environment = {"CHATTERBOX_TEST_NUMBA_CACHE": str(protected), "NUMBA_CACHE_DIR": str(protected)}
+    if windows_cache_names:
+        # Budget the path suffix independently of the CI workspace spelling.
+        # A real generation leaves this room for Numba's directory + .tmp name.
+        environment["CHATTERBOX_TEST_NUMBA_PATH_BUDGET"] = str(len(str(scratch)) + 120)
+    launch = WorkerLaunch(PYTHON, FIXTURE, environment=environment)
+    health = asyncio.run(probe_chatterbox(launch, "cuda:0", scratch))
+    assert health.device == "cuda:0"
+    assert original.read_bytes() == b"receipted compiled kernel"
+    assert list(protected.iterdir()) == [original]
+    assert list(scratch.iterdir()) == []
+
+
 def test_missing_runtime_probe_fails_honestly(tmp_path):
     with pytest.raises(ValueError, match="health failed"):
         asyncio.run(probe_chatterbox(WorkerLaunch(tmp_path / "missing.exe"), "cuda:0", tmp_path / "probe"))
@@ -130,7 +150,7 @@ def test_busy_gpu_prevents_preview_and_leaves_queue_unclaimed(setup):
 
 def test_device_change_cannot_publish_previous_output(setup):
     _, managed, services, section = setup
-    for key in ("HF_HOME", "HF_HUB_CACHE", "TORCH_HOME", "PKUSEG_HOME", "TEMP", "TMP"):
+    for key in ("HF_HOME", "HF_HUB_CACHE", "TORCH_HOME", "PKUSEG_HOME", "NUMBA_CACHE_DIR", "TEMP", "TMP"):
         assert Path(managed.worker_launch().environment[key]).is_relative_to(managed.work_root)
     choice, = services.choices("pl")
     queued = services.production.enqueue(section, services.selection(choice))
