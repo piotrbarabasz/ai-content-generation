@@ -122,6 +122,9 @@ class AutomaticWorkflow:
                 logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="No saved script."')
                 raise AutomaticWorkflowBlocked("SCRIPT", "No saved script.")
             logger.info("[AICS][PIPELINE][AUTO][START] sections=%d", len(sections))
+            narration_check = getattr(self.driver, "validate_narration", None)
+            if selected_plan is not None and callable(narration_check):
+                await self._operation("NARRATION", lambda: narration_check(selected_plan))
             logger.info("[AICS][PIPELINE][AUTO][CONFIG] image_generator=%s orientation=%s resolution=%s audio_variant=%s",
                         config.image_generator_id or "default", config.orientation,
                         config.final_resolution, config.audio_variant)

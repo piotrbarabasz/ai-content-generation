@@ -1397,6 +1397,8 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D064 — Plan-driven script generation and resumable long-form workflow
 
+- **Reliability repair boundary (2026-10-14):** The user-selected automatic-script repair extends D064's per-group contract to V2 fixed narration slots, retains V1 artifacts, adds bounded validation repair and provider-owned transport retries, and checks saved narration before TTS. D075 context and explicit selective regeneration remain intact. Code evidence: V1 asks the model to reproduce opaque IDs; completion checks identities without checking narration. No project migration, automatic replacement of saved text, new plan or media-generation changes. Evidence: [reliability repair](AUTOMATIC_SCRIPT_RELIABILITY.md).
+
 - **Status:** Completed — offline implementation and full suite passed (2026-09-29).
 - **Milestone:** M7
 - **Priority:** P1

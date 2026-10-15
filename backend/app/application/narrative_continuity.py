@@ -65,6 +65,12 @@ class NarrativeContinuityService:
                 "group_id": group.id if group else None, "section_id": section.section_id if section else None,
                 "revision_id": section.id if section else None, "supporting_excerpt": "",
                 "explanation": explanation, "suggested_correction": "Inspect the referenced group and selectively edit or regenerate it."})
+        for finding in self.scripts.narration_findings(plan):
+            findings.append({"issue_type": "editorial_leakage", "severity": "BLOCKED",
+                "group_id": finding["group_id"], "section_id": finding["section_id"],
+                "revision_id": finding["revision_id"], "supporting_excerpt": "",
+                "explanation": f"{finding['group']} / {finding['section']}: {finding['reason']}",
+                "suggested_correction": finding["action"]})
         if plan.format is VideoFormat.STANDARD:
             try:
                 validate_standard_order(plan.groups)
