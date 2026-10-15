@@ -105,6 +105,59 @@ def test_stderr_is_drained_and_retained_as_a_bounded_tail(setup):
     assert len(result.stderr_tail) == 1024 and result.stderr_tail.endswith("LOG-END")
 
 
+@pytest.mark.parametrize("case,code,phase", [
+    ("no-handshake", "WORKER_HANDSHAKE_TIMEOUT", "HANDSHAKE"),
+    ("initialization-hang", "WORKER_HANDSHAKE_TIMEOUT", "RUNTIME_INITIALIZATION"),
+    ("hang", "WORKER_EXECUTION_TIMEOUT", "SYNTHESIS"),
+    ("terminal-hang", "WORKER_TERMINAL_EOF_TIMEOUT", "STDOUT_EOF"),
+    ("exit-hang", "WORKER_EXIT_TIMEOUT", "PROCESS_EXIT"),
+])
+def test_deadline_identifies_exact_wait_and_reaps_before_retry(setup, case, code, phase, caplog):
+    caplog.set_level("INFO", logger="aics.pipeline")
+    coordinator, repository, queued = setup
+    worker = supervisor(coordinator, case, handshake=.5, execution=.5, exit_grace=.15)
+    result = asyncio.run(worker.run_next())
+    assert result.attempt.error.startswith(code + ":")
+    assert "phase=" + phase in result.attempt.error
+    assert result.retryable and result.cleanup_confirmed and result.returncode is not None
+    assert phase in result.phase_durations and "CLEANUP" in result.phase_durations
+    assert "B1" not in caplog.text
+    original = repository.get_job(queued.job_id)
+    retry = worker.retry_transient(result)
+    assert retry.job_id == original.id and retry.number == 2
+    worker.launch = replace(worker.launch, environment={"WORKER_CASE": "success"})
+    success = asyncio.run(worker.run_next())
+    assert success.attempt.status == AttemptStatus.COMPLETED
+    assert not success.retryable and success.pid != result.pid
+    assert repository.get_job(queued.job_id) == original
+
+
+@pytest.mark.parametrize("case", ["delayed-eof", "delayed-exit"])
+def test_terminal_waits_within_grace_do_not_lose_valid_completion(setup, case):
+    coordinator, _, _ = setup
+    result = asyncio.run(supervisor(coordinator, case).run_next())
+    assert result.attempt.status == AttemptStatus.COMPLETED
+    assert result.cleanup_confirmed and result.returncode == 0
+    assert {"TERMINAL_MESSAGE", "STDOUT_EOF", "PROCESS_EXIT", "CLEANUP", "PUBLICATION"} <= result.phase_durations.keys()
+
+
+def test_production_quiet_worker_closes_protocol_before_interpreter_teardown(setup):
+    coordinator, _, _ = setup
+    worker = WorkerSupervisor(coordinator, WorkerLaunch(PYTHON, BACKEND / "tests/fixtures/quiet_exit_worker.py"),
+                              limits=WorkerLimits(handshake=3, execution=3, exit_grace=.15, reap=3))
+    result = asyncio.run(worker.run_next())
+    assert result.attempt.error.startswith("WORKER_EXIT_TIMEOUT:")
+    assert result.phase_durations["STDOUT_EOF"] < .15
+    assert "RUNTIME_INITIALIZATION" in result.phase_durations
+
+
+def test_permanent_terminal_failure_never_becomes_retryable_due_to_slow_shutdown(setup):
+    coordinator, _, _ = setup
+    result = asyncio.run(supervisor(coordinator, "failure-terminal-hang").run_next())
+    assert result.attempt.error.startswith("WORKER_TERMINAL_EOF_TIMEOUT:")
+    assert result.terminal_outcome == "failed" and not result.retryable
+
+
 @pytest.mark.parametrize("method", ["close", "task-cancel"])
 def test_application_shutdown_awaits_child_cleanup(setup, method):
     coordinator, repository, queued = setup

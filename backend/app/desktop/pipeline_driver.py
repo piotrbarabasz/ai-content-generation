@@ -130,9 +130,9 @@ class DesktopPipelineDriver:
         if self.editor.audio.services is None:
             return False
         try:
-            audio = self.editor.audio.services.playback(section, variant, choice)
-            return not audio.stale
-        except (ValueError, OSError):
+            selected_narration(self.editor.audio.services, section, choice, variant)
+            return True
+        except (ValueError, OSError, KeyError, StopIteration):
             return False
 
     def measure_plan_duration(self, plan, sections, config):
@@ -154,8 +154,13 @@ class DesktopPipelineDriver:
             raise AutomaticWorkflowCanceled("VOICE")
         if self.editor.audio.services is None:
             raise ValueError("Audio services are not configured.")
+        self.editor.audio.services.canceled = False
         self.editor.audio.select_section(section)
         result = await self.editor.audio.services.generate(section, choice)
+        # Automatic bypasses AudioPanel._tick; publish verified readiness here too.
+        refresh = getattr(self.editor, "diagnose_pipeline", None)
+        if callable(refresh):
+            refresh()
         if self.cancel_requested:
             raise AutomaticWorkflowCanceled("VOICE")
         if not str(result).startswith("completed"):

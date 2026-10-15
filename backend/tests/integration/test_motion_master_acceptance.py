@@ -233,7 +233,8 @@ def editor_for(session, paid, upscaler):
 
     return SimpleNamespace(session=session, dirty=False, worker=None,
         video_plan=SimpleNamespace(plans=None),
-        audio=SimpleNamespace(services=SimpleNamespace(playback=playback, attempt=None)),
+        audio=SimpleNamespace(services=SimpleNamespace(playback=playback, attempt=None,
+                                                       index=services.store._index)),
         visuals=SimpleNamespace(services=services),
         timeline=SimpleNamespace(services=timeline, refresh=lambda: None), _bind_regeneration=lambda: None)
 

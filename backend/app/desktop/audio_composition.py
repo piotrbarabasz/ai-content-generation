@@ -13,7 +13,7 @@ from app.storage.result_publication import ResultArtifactIndex
 
 def compose_audio(session, *, catalog, voices, outputs, launch, preview_root,
                   preview_builder=None, providers=("piper",), settings=None,
-                  device=None, limits=WorkerLimits(), reference_audio=None):
+                  device=None, limits=WorkerLimits(), reference_audio=None, transient_retries=0):
     """voices/outputs may be the existing ManagedSectionAudio instance.
 
     Preview and production are explicitly composed: no desktop model download,
@@ -33,7 +33,8 @@ def compose_audio(session, *, catalog, voices, outputs, launch, preview_root,
     return AudioServices(catalog=catalog, production=production, coordinator=coordinator,
                          supervisor=supervisor, index=index, store=store,
                          preview_root=preview_root, preview_builder=preview_builder,
-                         providers=providers, settings=settings).configure_reference_audio(reference_audio)
+                         providers=providers, settings=settings,
+                         transient_retries=transient_retries).configure_reference_audio(reference_audio)
 
 
 def compose_candidate_chatterbox_audio(session, *, managed, preview_root, reference_audio=None):
@@ -44,4 +45,5 @@ def compose_candidate_chatterbox_audio(session, *, managed, preview_root, refere
                          launch=managed.worker_launch(), preview_root=preview_root,
                          providers=("chatterbox_v3",), settings={"chatterbox_v3": {"device": managed.device.effective}},
                          device=managed.device, limits=CHATTERBOX_LIMITS,
+                         transient_retries=1,
                          reference_audio=reference_audio)

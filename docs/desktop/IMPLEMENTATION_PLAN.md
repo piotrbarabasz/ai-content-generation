@@ -897,6 +897,8 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D029 — Managed Chatterbox profile
 
+- **Timeout recovery repair boundary (2026-10-15):** The user-selected repair covers D029's managed audio composition over D007 lifecycle and D010 frozen job/chunk recovery: observable phase deadlines, deterministic protocol-pipe closure, one cleaned-up transient section retry through JobCoordinator, and verified publication-driven desktop voice counters. Preserve GPU quarantine, immutable inputs, selected audio and D067 measured duration protection. Historical generic TimeoutError records cannot identify their originating wait. No deadline increases, model/provider changes, project migration or regeneration of existing media. See [timeout recovery evidence](CHATTERBOX_TIMEOUT_RECOVERY.md).
+
 - **Status:** Completed — approved private Windows/CUDA distribution, installed selection and measured EN/PL GPU acceptance PASS (2026-09-22)
 - **Milestone:** M10
 - **Priority:** P1
