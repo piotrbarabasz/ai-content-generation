@@ -187,3 +187,49 @@ def test_standard_pending_measurement_does_not_start_downstream_work():
     assert blocked.value.stage == "PLAN_DURATION"
     assert "PLAN_DURATION PENDING" in blocked.value.reason
     assert "plan-check" not in driver.calls and "image" not in driver.calls
+
+
+class RepairDriver(PlanDriver):
+    def __init__(self, targets=(600,)):
+        super().__init__(476)
+        self.targets = iter(targets)
+        self.rounds = 0
+
+    async def repair_duration(self, *_):
+        self.calls.append("repair")
+        self.rounds += 1
+        target = Fraction(next(self.targets))
+        audio = self.audio[self.sections[1].id]
+        retained = Fraction(audio.frame_count, audio.sample_rate)
+        self.duration = (target - retained) * 2
+        self.sections = (SimpleNamespace(id=f"fixed{self.rounds}", section_id="s0", title="Section 0"), self.sections[1])
+        return True
+
+
+def test_duration_repair_selective_voice_precedes_remeasurement_and_images():
+    driver = RepairDriver()
+    asyncio.run(AutomaticWorkflow(driver).run(config()))
+    assert driver.calls[:7] == ["script", "voice:r0", "voice:r1", "duration", "repair", "voice:fixed1", "duration"]
+    assert driver.calls.index("image") > driver.calls.index("voice:fixed1")
+    assert driver.calls.count("voice:r1") == 1
+
+
+def test_duration_repair_runs_at_most_two_rounds_without_premature_images():
+    driver = RepairDriver((510, 530))
+    with pytest.raises(AutomaticWorkflowBlocked) as blocked:
+        asyncio.run(AutomaticWorkflow(driver).run(config()))
+    assert blocked.value.stage == "PLAN_DURATION"
+    assert driver.rounds == 2
+    assert "image" not in driver.calls and "plan-check" not in driver.calls
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("LLM timeout"), ValueError("quality budget exhausted"), AutomaticWorkflowCanceled("DURATION_REPAIR")])
+def test_repair_failures_and_cancel_never_launch_images(failure):
+    driver = RepairDriver()
+    async def fail(*_):
+        raise failure
+    driver.repair_duration = fail
+    expected = AutomaticWorkflowCanceled if isinstance(failure, AutomaticWorkflowCanceled) else AutomaticWorkflowBlocked
+    with pytest.raises(expected):
+        asyncio.run(AutomaticWorkflow(driver).run(config()))
+    assert "image" not in driver.calls and "plan-check" not in driver.calls
