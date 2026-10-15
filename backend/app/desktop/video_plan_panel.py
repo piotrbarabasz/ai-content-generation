@@ -343,6 +343,7 @@ class VideoPlanPanel(QWidget):
                                          topic=self.topic.toPlainText(),
                                          parent_revision_id=active.id if active else None)
             self._render()
+            self._script_progress()
             self.status.setText("Plan generated and retained.")
         except Exception as exc:
             self.status.setText(str(exc))
