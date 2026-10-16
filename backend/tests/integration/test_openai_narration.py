@@ -146,7 +146,7 @@ def test_only_changed_section_settings_invalidate_audio_and_keep_script(cloud):
 def test_restart_reuses_paid_success_and_resumes_only_missing_chunk(cloud):
     session, service, sdk, sections = cloud
     choice = service.choices("en")[0]
-    sdk.failures = [None, RuntimeError("timeout"), RuntimeError("timeout")]
+    sdk.failures = [None, TimeoutError("timeout"), TimeoutError("timeout")]
     approve(service, sections, choice)
     with pytest.raises(ValueError, match="uncertain"):
         asyncio.run(service.generate(sections[0], choice))
@@ -202,10 +202,9 @@ def test_project_ceiling_and_attempt_approval_are_durable(cloud):
     _, service, sdk, sections = cloud
     service.narration.save_project(NarrationSettings(), project_budget=.001)
     choice = service.choices("en")[0]
-    approve(service, sections, choice)
-    with pytest.raises(ValueError, match="budget exhausted"):
-        asyncio.run(service.generate(sections[0], choice))
-    assert not sdk.calls
+    with pytest.raises(ValueError, match="spending ceiling"):
+        approve(service, sections, choice)
+    assert not sdk.calls and not service.narration.history('approval')
 
 
 def test_cancellation_retains_completed_audio_and_blocks_publication(cloud):

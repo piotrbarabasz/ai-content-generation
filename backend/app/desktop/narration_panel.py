@@ -4,27 +4,34 @@ from dataclasses import asdict
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
     QPlainTextEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 from app.domain.narration import MODELS, PACING, PRESETS, STYLES, VOICES, NarrationSettings
+from app.domain.narration_recovery import NarrationPreflightError
 
 
 class NarrationCostDialog(QDialog):
     def __init__(self, estimate, parent=None):
         super().__init__(parent)
+        if estimate.get('blocked'):
+            raise NarrationPreflightError(estimate)
         self.setWindowTitle("Approve paid narration operation")
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
         text = (f"Model: {estimate['model']}\nSections: {estimate['sections']} · regenerate {estimate['regenerate']} · reuse {estimate['reuse']}\n"
                 f"Text: {estimate['characters']} characters · {estimate['chunks']} technical chunks\n"
-                f"Estimated speech: {estimate['estimated_seconds']:.1f}s (not measured or guaranteed)\n"
+                f"Estimated new paid speech: {estimate['estimated_seconds']:.1f}s (not measured or guaranteed)\n"
                 f"Estimated API cost: ${estimate['low_usd']:.4f}–${estimate['high_usd']:.4f} before retries\n"
                 f"Pricing: {estimate['pricing']['version']}\n"
                 "Each retry consumes this approval. Lost responses/timeouts may be billed twice.\n"
                 "The ceiling controls reserved estimated spend; provider billing may vary.\n"
                 "Generated speech is AI-generated. Existing artifacts are retained.")
         label = QLabel(text); label.setWordWrap(True); layout.addWidget(label)
+        rows = estimate.get('chunk_statuses', [])
+        if rows:
+            layout.addWidget(QLabel(f"Verified cached/recoverable chunks: {sum(not r['api_required'] for r in rows)}; "
+                                   f"eligible paid chunks: {estimate.get('api_chunks', 0)}"))
         form = QFormLayout(); layout.addLayout(form)
         self.budget = QDoubleSpinBox(); self.budget.setRange(.001, 1000); self.budget.setDecimals(3)
         self.budget.setPrefix("$ "); self.budget.setValue(max(.05, estimate["high_usd"] * 2.1))
@@ -136,7 +143,9 @@ class NarrationSettingsPanel(QWidget):
 
 
 async def approve_estimate_async(audio_panel, estimate):
-    if not estimate["regenerate"]:
+    if estimate.get('blocked'):
+        raise NarrationPreflightError(estimate)
+    if not estimate["regenerate"] or estimate.get('api_chunks') == 0:
         return True
     dialog = NarrationCostDialog(estimate, audio_panel)
     future = asyncio.get_running_loop().create_future()
@@ -147,3 +156,58 @@ async def approve_estimate_async(audio_panel, estimate):
         return False
     audio_panel.services.approve_operation(estimate, dialog.budget.value(), max_attempts=dialog.attempts.value())
     return True
+
+class NarrationRecoveryDialog(QDialog):
+    """A scan is read-only. Only accepting this review can append a retry authorization."""
+    def __init__(self, report, parent=None):
+        super().__init__(parent)
+        import json
+        self.setWindowTitle('Narration recovery review — no generation starts here')
+        self.resize(820, 650)
+        layout = QVBoxLayout(self)
+        summary = QLabel(report['summary']); summary.setWordWrap(True); layout.addWidget(summary)
+        detail = QPlainTextEdit(); detail.setReadOnly(True)
+        detail.setPlainText(json.dumps(report, indent=2, ensure_ascii=False)); layout.addWidget(detail)
+        self.target = QComboBox()
+        for row in report['blocked']:
+            if row['state'] == 'ATTEMPTS_EXHAUSTED' and len(row['attempts']) == 2 and not row['exceptional_retry']:
+                self.target.addItem(f"{row['section_title']} / {row['chunk_id']} · estimated ${row['estimate']['high_usd']:.4f}", row)
+        self.operator = QLineEdit()
+        self.operator.setPlaceholderText('Operator name'); self.operator.setMaxLength(100)
+        self.reason = QPlainTextEdit(); self.reason.setMaximumHeight(65)
+        self.reason.setPlaceholderText('Review findings and why an additional request is justified (no secrets)')
+        self.acknowledge = QCheckBox('I reviewed the attempts and retained evidence. Prior charges are unknown; another call may be billed again.')
+        self.budget = QDoubleSpinBox(); self.budget.setRange(.001, 1000); self.budget.setDecimals(3); self.budget.setPrefix('$ ')
+        def selected():
+            row = self.target.currentData()
+            import math
+            self.budget.setValue(max(.001, math.ceil(row['estimate']['high_usd'] * 1000) / 1000) if row else .001)
+        self.target.currentIndexChanged.connect(selected); selected()
+        for widget in (self.target, self.operator, self.reason, self.acknowledge, self.budget): layout.addWidget(widget)
+        note = QLabel('One additional attempt per immutable chunk, with no automatic retries. This does not reset history or override project spending limits. '
+                      'After review, Run / Resume quotes only eligible remaining work. Verified cached work requires no API call.')
+        note.setWordWrap(True); layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText('Authorize one exceptional attempt')
+        buttons.button(QDialogButtonBox.Cancel).setText('Close scan without changes')
+        def enable():
+            buttons.button(QDialogButtonBox.Ok).setEnabled(bool(self.target.currentData() and self.operator.text().strip()
+                and self.reason.toPlainText().strip() and self.acknowledge.isChecked()))
+        self.operator.textChanged.connect(enable); self.reason.textChanged.connect(enable); self.acknowledge.toggled.connect(enable)
+        enable(); buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
+
+
+async def review_recovery_async(panel, report, choice):
+    dialog = NarrationRecoveryDialog(report, panel)
+    future = asyncio.get_running_loop().create_future()
+    dialog.finished.connect(lambda code: future.set_result(code) if not future.done() else None)
+    dialog.open()
+    if await future != QDialog.Accepted or panel.cancel_requested:
+        return 'Recovery scan closed; no history or media changed.'
+    row = dialog.target.currentData()
+    result = await panel.services.authorize_exceptional_retry_async(report, choice, scope=row['scope'], chunk_key=row['chunk_key'],
+        operator=dialog.operator.text(), reason=dialog.reason.toPlainText(), budget=dialog.budget.value(),
+        acknowledge=dialog.acknowledge.isChecked())
+    if result is None:
+        return 'Review canceled; no additional attempt authorized.'
+    return 'One exceptional attempt authorized; no API call started. Run / Resume to approve eligible remaining narration. Existing sections are retained.'

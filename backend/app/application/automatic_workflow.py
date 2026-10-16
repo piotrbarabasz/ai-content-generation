@@ -76,6 +76,8 @@ class AutomaticWorkflow:
             return await result if inspect.isawaitable(result) else result
         except AutomaticWorkflowCanceled:
             raise
+        except AutomaticWorkflowBlocked:
+            raise
         except (ValueError, RuntimeError, OSError) as exc:
             reason = str(exc) or type(exc).__name__
             logger.error("[AICS][PIPELINE][AUTO][FAIL] stage=%s section=%s scene=%s reason=%r",
@@ -108,6 +110,11 @@ class AutomaticWorkflow:
             if self.driver.unsaved_script_draft():
                 logger.error('[AICS][PIPELINE][AUTO][FAIL] stage=SCRIPT reason="Unsaved script draft."')
                 raise AutomaticWorkflowBlocked("SCRIPT", "Save or discard the script draft before automatic processing.")
+            eligibility = getattr(self.driver, 'preflight_narration', None)
+            if callable(eligibility):
+                existing_sections = tuple(self.driver.saved_sections())
+                if existing_sections:
+                    await self._operation('VOICE', lambda: eligibility(existing_sections, config))
             selected_plan = (self.driver.selected_video_plan()
                              if callable(getattr(self.driver, "selected_video_plan", None)) else None)
             if selected_plan is not None:

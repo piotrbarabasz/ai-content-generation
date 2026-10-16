@@ -1,4 +1,4 @@
-﻿# D078 — OpenAI narration
+# D078 — OpenAI narration
 
 The normal desktop entry point is `python run_app.py` (or the installed
 `ai-content-studio` command). Install Python 3.11+ in a virtual environment with
@@ -158,3 +158,7 @@ Local evidence: `.tmp/oab/d078-preview-result.json`,
 `d078-original-proof.json`; preview audio is `d078-preview.wav`. These private
 project outputs and caches are ignored by Git. No project text, credentials or
 generated media are committed.
+
+D079 adds chunk eligibility preflight and one explicitly reviewed exceptional attempt
+after the original two reservations. See [recovery and operator steps](D079_NARRATION_RECOVERY.md);
+ordinary budget approvals still cannot reset the lifetime attempt count.

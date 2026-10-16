@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from app.application.automatic_workflow import AutomaticWorkflowCanceled
+from app.application.automatic_workflow import AutomaticWorkflowCanceled, AutomaticWorkflowBlocked
 from app.application.image_presets import motion_master_dimensions, generation_dimensions
 from app.application.invalidation import Freshness
 from app.application.plan_duration import plan_duration_result, selected_narration
@@ -118,10 +118,23 @@ class DesktopPipelineDriver:
     def validate_narration(self, plan):
         self.editor.video_plan.script_service.require_narration(plan)
 
+    async def preflight_narration(self, sections, config):
+        services = getattr(self.editor.audio, 'services', None)
+        scan = getattr(services, 'recovery_scan_async', None)
+        if callable(scan):
+            report = await scan(sections, config.voice_choice)
+            if report['blocked']:
+                raise AutomaticWorkflowBlocked('VOICE', report['summary'], section=report['blocked'][0]['section_title'])
+
     async def authorize_narration(self, sections, config):
         authorize = getattr(self.editor.audio, "authorize_sections", None)
-        if authorize is not None and not await authorize(sections, config.voice_choice):
-            raise AutomaticWorkflowCanceled("NARRATION_BUDGET")
+        from app.domain.narration_recovery import NarrationPreflightError
+        try:
+            if authorize is not None and not await authorize(sections, config.voice_choice):
+                raise AutomaticWorkflowCanceled("NARRATION_BUDGET")
+        except NarrationPreflightError as exc:
+            blocked = exc.report['blocked'][0]
+            raise AutomaticWorkflowBlocked('VOICE', str(exc), section=blocked['section_title']) from None
 
     def plan_script_progress(self, plan):
         service = self.editor.video_plan.script_service

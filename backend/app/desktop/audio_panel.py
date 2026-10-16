@@ -78,6 +78,9 @@ class AudioPanel(QWidget):
                                ("Play new / B", lambda: self.play_history(self.history_b)), ("Approve preferred B", self.approve_variant))):
             button = QPushButton(name); button.clicked.connect(callback); compare_actions.addWidget(button, index // 2, index % 2); self.cloud_buttons.append(button)
         self.timer = QTimer(self)
+        self.recovery_button = QPushButton('Scan narration recovery')
+        self.recovery_button.clicked.connect(self.review_recovery)
+        layout.addWidget(self.recovery_button)
         self.timer.setInterval(15)
         self.timer.timeout.connect(self._tick)
         self._enable()
@@ -104,6 +107,8 @@ class AudioPanel(QWidget):
         self.reference_buttons["Approve reference"].setEnabled(selected_reference and not self.busy)
         self.reference_buttons["Reject reference"].setEnabled(selected_reference and not self.busy)
         cloud = available and hasattr(self.services, "narration")
+        self.recovery_button.setVisible(cloud)
+        self.recovery_button.setEnabled(cloud and not self.busy)
         self.narration_scroll.setVisible(cloud)
         self.narration_controls.setEnabled(not self.busy)
         for button in self.cloud_buttons:
@@ -223,7 +228,7 @@ class AudioPanel(QWidget):
             if self.services and not self.busy and self.voices.currentData():
                 choice, text = self.voices.currentData(), self.preview_text.text()
                 if hasattr(self.services, "estimate_preview"):
-                    self._start(self._paid_operation(lambda: self.services.estimate_preview(choice, text),
+                    self._start(self._paid_operation(lambda: self.services.estimate_preview_async(choice, text),
                         lambda: self.services.preview(choice, text)), "preview")
                 else:
                     self._start(self.services.preview(choice, text), "preview")
@@ -348,7 +353,7 @@ class AudioPanel(QWidget):
             choice = self.voices.currentData()
             if self.section and not self.busy:
                 section = self.section
-                self._start(self._paid_operation(lambda: self.services.estimate_preview(choice, section.text, section),
+                self._start(self._paid_operation(lambda: self.services.estimate_preview_async(choice, section.text, section),
                     lambda: self.services.preview(choice, section.text, section=section)), "preview")
         except (ValueError, OSError) as exc:
             self.status.setText(str(exc))
@@ -364,3 +369,15 @@ class AudioPanel(QWidget):
         value = self.history_b.currentData()
         if value and value[1] and self.section and not self.busy:
             self._start(self.services.approve_preview(value[1], self.voices.currentData()), "generation")
+
+    def review_recovery(self):
+        if self.services and not self.busy:
+            self._start(self._review_recovery(), 'recovery')
+
+    async def _review_recovery(self):
+        from app.desktop.narration_panel import review_recovery_async
+        choice = self.voices.currentData()
+        report = await self.services.recovery_scan_async(self.services.session.active_script.sections, choice)
+        if self.cancel_requested:
+            return 'Recovery scan canceled; no changes made.'
+        return await review_recovery_async(self, report, choice)

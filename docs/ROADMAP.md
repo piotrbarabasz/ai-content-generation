@@ -61,3 +61,6 @@ with explicit paid-call opt-in before the existing narration duration gate.
 M7 includes [D078 OpenAI narration](desktop/D078_OPENAI_NARRATION.md):
 revisioned delivery controls, explicit legacy migration, approved estimated-spend
 limits and resumable measured audio through the normal desktop launcher.
+
+M7 includes [D079 narration attempt recovery](desktop/D079_NARRATION_RECOVERY.md):
+read-only eligibility scans, verified response recovery and a bounded, operator-reviewed retry.

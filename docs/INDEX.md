@@ -4,6 +4,7 @@
 
 - [Desktop implementation plan and authoritative D### backlog](desktop/IMPLEMENTATION_PLAN.md)
 - [OpenAI narration setup, migration and acceptance (D078)](desktop/D078_OPENAI_NARRATION.md)
+- [Narration eligibility and reviewed recovery (D079)](desktop/D079_NARRATION_RECOVERY.md)
 - [Product roadmap](ROADMAP.md)
 - [Architecture overview](architecture/overview.md)
 - [Domain model](architecture/domain-model.md)
