@@ -130,9 +130,9 @@ class DesktopPipelineDriver:
         if self.editor.audio.services is None:
             return False
         try:
-            audio = self.editor.audio.services.playback(section, variant, choice)
-            return not audio.stale
-        except (ValueError, OSError):
+            selected_narration(self.editor.audio.services, section, choice, variant)
+            return True
+        except (ValueError, OSError, KeyError, StopIteration):
             return False
 
     def measure_plan_duration(self, plan, sections, config):
@@ -149,13 +149,46 @@ class DesktopPipelineDriver:
                     pending_reason=f"{section.title}: {exc}")
         return plan_duration_result(plan, measurements, len(sections))
 
+    def observe_duration_repair(self, plan, config):
+        service = getattr(getattr(self.editor, "video_plan", None), "duration_repairs", None)
+        if (service is not None and service.records.policy(plan.id)[0].enabled
+                and service.latest(plan) is not None):
+            snapshot = service.measure(plan, self.editor.audio.services, config.voice_choice, config.audio_variant)
+            service.observe(plan, snapshot)
+            self.editor.video_plan.refresh_duration()
+
+    async def repair_duration(self, plan, config):
+        panel = getattr(self.editor, "video_plan", None)
+        service = getattr(panel, "duration_repairs", None)
+        if service is None or not service.records.policy(plan.id)[0].enabled:
+            return False
+        capture = lambda: service.measure(plan, self.editor.audio.services, config.voice_choice, config.audio_variant)
+        proposal = service.propose(plan, capture())
+        if proposal is None:
+            return False
+        panel.refresh_duration()
+        self.active_script_provider = self.editor.provider
+        try:
+            await service.execute(plan, proposal, capture, canceled=lambda: self.cancel_requested,
+                progress=lambda message: panel.refresh_duration(message))
+        finally:
+            self.active_script_provider = None
+            panel.refresh_duration()
+        self.editor._refresh()
+        return True
+
     async def generate_voice(self, section, choice):
         if self.cancel_requested:
             raise AutomaticWorkflowCanceled("VOICE")
         if self.editor.audio.services is None:
             raise ValueError("Audio services are not configured.")
+        self.editor.audio.services.canceled = False
         self.editor.audio.select_section(section)
         result = await self.editor.audio.services.generate(section, choice)
+        # Automatic bypasses AudioPanel._tick; publish verified readiness here too.
+        refresh = getattr(self.editor, "diagnose_pipeline", None)
+        if callable(refresh):
+            refresh()
         if self.cancel_requested:
             raise AutomaticWorkflowCanceled("VOICE")
         if not str(result).startswith("completed"):

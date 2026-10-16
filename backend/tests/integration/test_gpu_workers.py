@@ -173,6 +173,25 @@ def test_cleanup_failure_quarantines_until_explicit_unload(project, monkeypatch)
     assert project.repository.attempts(project.repository.jobs()[0].id)[-1].status == AttemptStatus.FAILED
 
 
+def test_cleanup_timeout_is_classified_and_never_authorizes_retry_or_gpu_release(project, monkeypatch):
+    from app.runtime.supervisor import WorkerPhaseTimeout
+    resources = GPUResourceManager()
+    queued = enqueue(project)
+    supervisor = worker(project, "success", resources)
+    stop = supervisor._stop
+    async def uncertain_stop():
+        await stop()
+        raise asyncio.TimeoutError
+    monkeypatch.setattr(supervisor, "_stop", uncertain_stop)
+    with pytest.raises(WorkerPhaseTimeout, match="WORKER_CLEANUP_TIMEOUT"):
+        asyncio.run(supervisor.run_next())
+    assert resources.availability().quarantined
+    assert project.repository.get_attempt(queued.id).status == AttemptStatus.RUNNING
+    monkeypatch.setattr(supervisor, "_stop", stop)
+    asyncio.run(supervisor.unload())
+    assert resources.availability().available
+
+
 @pytest.mark.parametrize("kind", ["timeout", "task-cancel"])
 def test_deadline_and_task_cancellation_reap_before_releasing_gpu(project, kind):
     resources = GPUResourceManager()

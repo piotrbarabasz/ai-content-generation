@@ -53,6 +53,9 @@ elif case == "stdout-log":
     sys.exit(0)
 elif case == "wrong-id":
     attempt_id = "foreign_attempt"
+if case == "initialization-hang":
+    send("progress", {"phase": "RUNTIME_INITIALIZATION", "completed": None, "total": None})
+    time.sleep(60)
 send("ready", {"pid": os.getpid() + 1 if case == "wrong-pid" else os.getpid()})
 run = read_message(sys.stdin.buffer)
 assert run["type"] == "run" and run["payload"]["job"]["input_snapshot"]["text"] == "B1"
@@ -72,8 +75,10 @@ elif case == "tree":
 elif case in ("cancel", "late-complete"):
     assert read_message(sys.stdin.buffer)["type"] == "cancel"
     send("canceled" if case == "cancel" else "completed", None if case == "cancel" else {"artifact_ids": ["late_result"]})
-elif case == "failure":
+elif case in ("failure", "failure-terminal-hang"):
     send("failed", {"code": "fixture_failure", "message": "offline failure"})
+    if case == "failure-terminal-hang":
+        time.sleep(60)
 elif case == "gpu-oom":
     send("failed", {"code": "gpu_oom", "message": "Device memory exhausted"})
 elif case == "regression":
@@ -91,5 +96,10 @@ else:
         send("completed", {"artifact_ids": []})
     elif case == "terminal-hang":
         time.sleep(60)
+    elif case == "delayed-eof":
+        time.sleep(0.1)
+    elif case in ("exit-hang", "delayed-exit"):
+        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+        time.sleep(60 if case == "exit-hang" else 0.1)
     elif case == "nonzero":
         sys.exit(7)

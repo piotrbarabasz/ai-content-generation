@@ -38,7 +38,7 @@ def workspace(root, job):
     return contained_path(Path(root).absolute(), sha256(job.id.encode()).hexdigest())
 
 
-def generate(job, provider, root, report=lambda *args: None, canceled=lambda: False):
+def generate(job, provider, root, report=lambda *args: None, canceled=lambda: False, *, phase=None):
     section, prepared = inputs(job)
     config = prepared["voice_config"]
     identity = provider.effective_synthesis_identity(config)
@@ -60,9 +60,16 @@ def generate(job, provider, root, report=lambda *args: None, canceled=lambda: Fa
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(pending, marker)
+    def progress(done, total):
+        report("chunks", done, total)
+        if done == total and phase is not None:
+            phase("FINAL_ARTIFACT_ASSEMBLY")
+
+    if phase is not None:
+        phase("SYNTHESIS")
     result = ResumableChunkSynthesizer(provider, max_attempts=1).synthesize(
         chunks, runtime_dir=directory, voice_config=config, canceled=canceled,
-        progress=lambda done, total: report("chunks", done, total))
+        progress=progress)
     if not result.completed:
         raise ValueError("Section synthesis incomplete; valid chunks remain available for retry.")
     return []  # The coordinator resolves a fixed output in its own configured workspace.

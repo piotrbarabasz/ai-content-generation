@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 from inspect import signature
 import json
+import logging
 
 from app.application.section_audio import SectionAudioService
 from app.domain.dependencies import DEPENDENCY_METADATA_KEY, DependencyDeclaration, canonical_json
 from app.domain.section_audio import SectionAudio
+from app.domain.publication import PublicationSnapshot
 from app.tts.assembly import inspect_pcm_wav
 from app.tts.preview import TTSPreviewService
 from app.tts.selection import map_catalog_selection
@@ -52,7 +54,10 @@ class AudioServices:
     """
 
     def __init__(self, *, catalog, production, coordinator, supervisor, index, store,
-                 preview_root, preview_builder, providers, settings=None):
+                 preview_root, preview_builder, providers, settings=None, transient_retries=0):
+        if type(transient_retries) is not int or not 0 <= transient_retries <= 1:
+            raise ValueError("Audio recovery permits at most one automatic transient retry.")
+        self.transient_retries = transient_retries
         self.catalog, self.production = catalog, production
         self.coordinator, self.supervisor = coordinator, supervisor
         self.index, self.store = index, store
@@ -219,9 +224,33 @@ class AudioServices:
                 return deepcopy(prepared)
 
         production = SectionAudioService(self.production.publication, jobs, FrozenVoice(), self.production.outputs)
-        self.attempt = production.enqueue(section, selection)
+        recover = None
+        if self.transient_retries:
+            latest = next((job for job in reversed(jobs.jobs())
+                           if job.output_key == f"section:{section.section_id}:audio:raw"), None)
+            if (latest is not None and latest.request.operation == "section_audio.synthesize"
+                    and latest.request.algorithm_version == "2"
+                    and latest.request.settings_json == canonical_json(prepared)
+                    and PublicationSnapshot.from_job(latest).sections == (section,)
+                    and jobs.attempts(latest.id)[-1].status in ("failed", "interrupted", "canceled")):
+                recover = latest
+        self.attempt = (self.coordinator.retry(recover.id) if recover is not None
+                        else production.enqueue(section, selection))
         try:
-            await self.supervisor.run_next("desktop-audio")
+            for number in range(self.transient_retries + 1):
+                if self.canceled:
+                    self.coordinator.cancel(self.attempt.id)
+                    break
+                result = await self.supervisor.run_next("desktop-audio")
+                if (self.canceled or number == self.transient_retries or result is None
+                        or not result.retryable):
+                    break
+                logging.getLogger("aics.pipeline").warning(
+                    "[AICS][VOICE][RETRY] section=%s revision=%s job=%s attempt=%d code=%s action=RETRY_FROZEN_JOB",
+                    section.section_id, section.id, self.attempt.job_id, result.attempt.number,
+                    result.attempt.error.split(":", 1)[0])
+                self.attempt = self.supervisor.retry_transient(result)
+                await asyncio.sleep(0)  # Honor cancellation before starting the replacement child.
             attempt = jobs.get_attempt(self.attempt.id)
             if attempt.status == "queued":
                 self.coordinator.cancel(attempt.id)

@@ -1,7 +1,7 @@
 """Focused editor for the optional Social / Standard Video Plan."""
 
 from PySide6.QtCore import QThread, Signal, QTimer
-from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox,
                                QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from app.application.video_planning import VideoPlanningService
@@ -28,6 +28,7 @@ class VideoPlanPanel(QWidget):
     def __init__(self, provider=None, parent=None):
         super().__init__(parent)
         self.provider = provider
+        self.editor = parent  # QTabWidget reparents the panel into its internal stack.
         self.session = self.plans = self.plan = self.context_service = None
         self.store = self.script_service = self.script_artifacts = None
         self.script_worker = None
@@ -37,6 +38,7 @@ class VideoPlanPanel(QWidget):
         self._cancel_script_requested = False
         self._regeneration_id = self._editorial_prepared = None
         self.continuity = None
+        self.duration_repairs = None
         outer = QVBoxLayout(self)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -104,6 +106,26 @@ class VideoPlanPanel(QWidget):
         self.continuity_findings.setMaximumHeight(110)
         layout.addWidget(self.continuity_findings)
         layout.addWidget(QLabel("Narrative hook and conclusion are story content. Reusable channel branding is separate in Export."))
+        layout.addWidget(QLabel("Narration duration repair — Standard"))
+        self.allow_duration_repair = QCheckBox("Allow automatic duration repairs (paid LLM)")
+        self.allow_duration_repair.setToolTip("Saved for this project and plan. At most 2 rounds, 3 chapter groups per round, "
+            "12 structured calls total; each call permits at most 2 configured transport retries. Resume retains these limits.")
+        self.allow_duration_repair.toggled.connect(self._save_duration_policy)
+        layout.addWidget(self.allow_duration_repair)
+        layout.addWidget(QLabel("Maximum: 2 rounds · 3 groups per round · 12 structured calls. Provider timeouts may still be billed."))
+        duration_buttons = QHBoxLayout()
+        self.preview_duration_button = QPushButton("Preview duration repair")
+        self.continue_duration_button = QPushButton("Continue Automatic")
+        self.preview_duration_button.clicked.connect(self.preview_duration_repair)
+        self.continue_duration_button.clicked.connect(self.continue_duration_repair)
+        duration_buttons.addWidget(self.preview_duration_button)
+        duration_buttons.addWidget(self.continue_duration_button)
+        layout.addLayout(duration_buttons)
+        self.duration_repair_details = QPlainTextEdit()
+        self.duration_repair_details.setReadOnly(True)
+        self.duration_repair_details.setMaximumHeight(190)
+        self.duration_repair_details.setPlaceholderText("Preview verified narration measurements and a selective chapter repair. No LLM call is made by Preview.")
+        layout.addWidget(self.duration_repair_details)
         self.details = QLabel("Choose a format and describe a topic.")
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
@@ -132,6 +154,8 @@ class VideoPlanPanel(QWidget):
         self.script_service = PlanScriptGenerationService(session, self.provider, self.plans, self.script_artifacts)
         from app.application.narrative_continuity import NarrativeContinuityService
         self.continuity = NarrativeContinuityService(self.script_service)
+        from app.application.duration_repair import DurationRepairService
+        self.duration_repairs = DurationRepairService(self.script_service)
         self.context_service = VisualPromptService(
             _ContextPort(session, self.store), self.provider,
             generation_identity={"provider": "video_plan_apply"})
@@ -361,6 +385,7 @@ class VideoPlanPanel(QWidget):
             self.status.setText(str(exc))
 
     def _render(self):
+        self.refresh_duration()
         if self.plan is None:
             self.details.setText("No Video Plan is selected. Existing project workflows remain available.")
             self.outline.clear()
@@ -404,6 +429,79 @@ class VideoPlanPanel(QWidget):
                 lines.append(f"  • {section.title} — {section.purpose} ({section.target_duration_seconds}s, ~{section.target_word_count} words, ~{section.target_scene_count} visuals)")
         self.outline.setPlainText("\n".join(lines))
         self.plan_changed.emit(plan)
+
+    def _save_duration_policy(self, enabled):
+        if self.duration_repairs is None or self.plan is None:
+            return
+        from dataclasses import replace
+        try:
+            policy, _ = self.duration_repairs.records.policy(self.plan.id)
+            self.duration_repairs.records.configure(self.plan.id, replace(policy, enabled=enabled))
+            self.refresh_duration()
+        except (ValueError, OSError) as exc:
+            self.duration_repair_details.setPlainText(str(exc))
+
+    def preview_duration_repair(self):
+        try:
+            if self.plan is None or self.duration_repairs is None:
+                raise ValueError("Select a Standard plan first.")
+            editor = self.editor
+            snapshot = self.duration_repairs.measure(self.plan, editor.audio.services, editor.audio.voices.currentData())
+            proposal = self.duration_repairs.propose(self.plan, snapshot)
+            if proposal is None:
+                self.duration_repairs.status(self.plan, "PASS", f"Measured narration: {snapshot['actual_seconds']:.2f}s; within allowed range.", snapshot=snapshot)
+            self.refresh_duration()
+        except (ValueError, RuntimeError, OSError, AttributeError) as exc:
+            self.duration_repair_details.setPlainText("BLOCKED: " + str(exc))
+
+    def continue_duration_repair(self):
+        editor = self.editor
+        if editor is not None and hasattr(editor, "run_automatic_workflow"):
+            editor.workflow_mode.setCurrentIndex(editor.workflow_mode.findData("automatic"))
+            editor.run_automatic_workflow()
+
+    def refresh_duration(self, message=None):
+        standard = self.plan is not None and self.plan.format == VideoFormat.STANDARD and self.duration_repairs is not None
+        for widget in (self.allow_duration_repair, self.preview_duration_button, self.continue_duration_button):
+            widget.setEnabled(standard)
+        if not standard:
+            self.duration_repair_details.setPlainText("Duration repair is available for a selected Standard plan.")
+            return
+        policy, campaign = self.duration_repairs.records.policy(self.plan.id)
+        self.allow_duration_repair.blockSignals(True)
+        self.allow_duration_repair.setChecked(policy.enabled)
+        self.allow_duration_repair.blockSignals(False)
+        lines = [f"Target: {self.plan.target_duration_seconds}s · accepted 540–660s · preferred target ±10s",
+                 "Automatic paid repair: " + ("enabled" if policy.enabled else "disabled")]
+        latest = self.duration_repairs.latest(self.plan)
+        measurements = self.duration_repairs.records.history("measurement", plan_id=self.plan.id)
+        if measurements:
+            current = measurements[-1]["snapshot"]
+            state = "PASS" if current["minimum_seconds"] <= current["actual_seconds"] <= current["maximum_seconds"] else "BLOCKED"
+            if current["source_script_id"] != self.session.active_script.id:
+                state = "PENDING — script changed; regenerate and verify narration"
+            lines += [f"Last verified measurement — {state}: {current['actual_seconds']:.2f}s; "
+                      f"difference to target {current['target_seconds']-current['actual_seconds']:+.2f}s"]
+            titles = {p.id: p.title for group in self.plan.groups for p in group.sections}
+            for section in current["sections"]:
+                seconds = section["frame_count"] / section["sample_rate"]
+                lines.append(f"{titles.get(section['planned_section_id'], 'Historical section')}: {seconds:.2f}s / planned {section['planned_seconds']}s, "
+                             f"{section['words']} words, {section['words']*60/seconds:.1f} words/min.")
+        if latest:
+            from app.domain.duration_repair import DurationRepairProposal
+            proposal = DurationRepairProposal.from_payload(latest["proposal"])
+            lines += [f"Round {proposal.round_number}/{policy.max_rounds} · measured {proposal.actual_seconds:.2f}s · "
+                      f"difference to target {proposal.target_seconds-proposal.actual_seconds:+.2f}s",
+                      f"Measured speaking rate: {proposal.overall_words_per_minute:.1f} words/min"]
+            for a in proposal.adjustments:
+                lines += [f"{a.title}: actual {a.actual_seconds:.1f}s / planned {a.planned_seconds}s; "
+                    f"adjust {a.expected_delta_seconds:+.1f}s, {a.target_words-a.original_words:+d} words ({a.target_words} total).",
+                    a.justification]
+        statuses = self.duration_repairs.records.history("status", plan_id=self.plan.id, campaign_id=campaign)
+        lines += [f"History — {v['state']}: {v['message']}" for v in statuses[-6:]]
+        if message:
+            lines.append(message)
+        self.duration_repair_details.setPlainText("\n".join(lines))
 
     def selected_group(self):
         if self.plan is None:

@@ -33,8 +33,6 @@ def serve(handler=diagnostic, *, quiet_handler=False, initialize=None):
         # Capture C/native writes too, while protocol frames use the owned duplicate.
         os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     try:
-        if initialize is not None:
-            initialize()  # Before the blocking cancel reader (native CRT stdin locks).
         hello = read_message(incoming)
         if hello is None or hello["type"] != "hello":
             raise ProtocolError("Expected version handshake.")
@@ -49,6 +47,9 @@ def serve(handler=diagnostic, *, quiet_handler=False, initialize=None):
                     raise BrokenPipeError("Parent pipe closed.")
                 view = view[written:]
 
+        if initialize is not None:
+            send("progress", {"phase": "RUNTIME_INITIALIZATION", "completed": None, "total": None})
+            initialize()  # Still before the cancel reader (native CRT stdin locks).
         send("ready", {"pid": os.getpid()})
         run = check_identity(read_message(incoming), job_id, attempt_id)
         if run["type"] != "run":
@@ -87,9 +88,10 @@ def serve(handler=diagnostic, *, quiet_handler=False, initialize=None):
         print(f"Worker protocol failed: {type(exc).__name__}", file=sys.stderr, flush=True)
         return 2
     finally:
-        if quiet_handler:
-            sys.stdout.flush()
-            os.dup2(outgoing.fileno(), sys.stdout.fileno())
+        # Never restore the protocol descriptor onto stdout during CUDA teardown.
+        # Close every stdout writer now; later Python/native diagnostics go to stderr.
+        sys.stdout.flush()
+        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
         outgoing.close()
         # Incoming may be owned by the cancel reader; the process owns its lifetime.
 

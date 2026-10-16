@@ -31,7 +31,8 @@ def _private_cache_environment(root):
     """Never borrow a user's global model/auxiliary caches as readiness evidence."""
     environment = dict(OFFLINE_ENVIRONMENT)
     for key, name in (("HF_HOME", "hf"), ("HF_HUB_CACHE", "hf/hub"), ("TORCH_HOME", "torch"),
-                      ("PKUSEG_HOME", "pkuseg"), ("TEMP", "temp"), ("TMP", "temp")):
+                      ("PKUSEG_HOME", "pkuseg"), ("NUMBA_CACHE_DIR", "numba"),
+                      ("TEMP", "temp"), ("TMP", "temp")):
         path = contained_path(root, "runtime-cache/" + name)
         path.mkdir(parents=True, exist_ok=True)
         environment[key] = str(path)
@@ -48,9 +49,14 @@ async def probe_chatterbox(launch, device, work_root):
         raise ValueError("Select an explicit CUDA index for the Chatterbox probe.")
     root = Path(work_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="chatterbox-health-", dir=root) as temporary:
+    # Numba appends a hashed source directory and an atomic-write suffix.
+    # Keep this scratch layout short enough for Windows' native path limit.
+    with tempfile.TemporaryDirectory(prefix="cb-", dir=root) as temporary:
         report = Path(temporary) / "health.json"
+        jit_cache = Path(temporary) / "n"
+        jit_cache.mkdir()
         launch = replace(launch, environment=launch.environment | _private_cache_environment(Path(temporary)) | {
+            "NUMBA_CACHE_DIR": str(jit_cache),
             "AICS_CHATTERBOX_DEVICE": device, "AICS_CHATTERBOX_HEALTH": str(report)})
         request = RequestFingerprint.create("runtime.chatterbox.health", "1")
         job = JobRequest(new_id("health"), "runtime:health", request, "{}", utc_now())

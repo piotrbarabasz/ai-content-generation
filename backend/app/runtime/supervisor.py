@@ -5,6 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import math
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,20 @@ from .protocol import (
     MAX_FRAME_BYTES, ProtocolError, check_identity, encode_frame, message, read_message_async,
 )
 from .resources import APPLICATION_GPU_RESOURCES, DeviceDecision, _device
+
+
+logger = logging.getLogger("aics.pipeline")
+TRANSIENT_WORKER_CODES = frozenset({"WORKER_HANDSHAKE_TIMEOUT", "WORKER_EXECUTION_TIMEOUT",
+                                    "WORKER_TERMINAL_EOF_TIMEOUT", "WORKER_EXIT_TIMEOUT"})
+PHASES = frozenset({"PROCESS_START", "RUNTIME_INITIALIZATION", "HANDSHAKE", "MODEL_LOADING",
+                   "SYNTHESIS", "FINAL_ARTIFACT_ASSEMBLY", "TERMINAL_MESSAGE", "STDOUT_EOF",
+                   "PROCESS_EXIT", "CLEANUP", "PUBLICATION"})
+
+
+class WorkerPhaseTimeout(TimeoutError):
+    def __init__(self, code, phase, operation):
+        self.code, self.phase = code, phase
+        super().__init__(f"{code}: phase={phase} operation={operation}")
 
 
 @dataclass(frozen=True)
@@ -40,7 +55,9 @@ class WorkerLaunch:
         entry = self.entrypoint.expanduser().resolve(strict=True)
         if not entry.is_file() or entry.suffix != ".py":
             raise ValueError("Python worker requires a trusted script entry point.")
-        return [str(executable), "-I", "-u", str(entry)]
+        # -I ignores PYTHONDONTWRITEBYTECODE. Suppress writes explicitly so
+        # imports cannot mutate an installed, receipted worker generation.
+        return [str(executable), "-I", "-B", "-u", str(entry)]
 
 
 @dataclass(frozen=True)
@@ -68,6 +85,15 @@ class WorkerRunResult:
     returncode: int | None
     stderr_tail: str
     device_identity: dict = field(default_factory=dict)
+    phase_durations: dict[str, float] = field(default_factory=dict)
+    cleanup_confirmed: bool = False
+    terminal_outcome: str | None = None
+
+    @property
+    def retryable(self):
+        return (self.cleanup_confirmed and self.returncode is not None and self.terminal_outcome in (None, "completed")
+                and self.attempt.status == AttemptStatus.FAILED
+                and self.attempt.error.split(":", 1)[0] in TRANSIENT_WORKER_CODES)
 
 
 class WorkerSupervisor:
@@ -102,6 +128,29 @@ class WorkerSupervisor:
         self.resources = APPLICATION_GPU_RESOURCES if resources is None else resources
         self._resource_lease = None
         self._unresolved_claim = None
+        self._phase_name = None
+        self._phase_at = None
+        self._phase_durations = {}
+
+    def _enter_phase(self, phase):
+        if phase is not None and phase not in PHASES:
+            raise ValueError("Unknown worker lifecycle phase.")
+        now = asyncio.get_running_loop().time()
+        if self._phase_name == phase:
+            return
+        if self._phase_name is not None:
+            elapsed = now - self._phase_at
+            self._phase_durations[self._phase_name] = self._phase_durations.get(self._phase_name, 0.0) + elapsed
+            logger.info("[AICS][WORKER][PHASE] job=%s attempt=%s pid=%s phase=%s elapsed_seconds=%.6f",
+                        *self._phase_identity, self.process.pid if self.process else None,
+                        self._phase_name, elapsed)
+        self._phase_name, self._phase_at = phase, now
+
+    async def _deadline(self, operation, seconds, code, name):
+        try:
+            return await asyncio.wait_for(operation, seconds)
+        except asyncio.TimeoutError as exc:
+            raise WorkerPhaseTimeout(code, self._phase_name, name) from exc
 
     def retry_oom(self, result: WorkerRunResult):
         """Explicit one-retry policy; never mutate a job or substitute devices."""
@@ -117,6 +166,20 @@ class WorkerSupervisor:
                 or sum(a.error.startswith("gpu_oom:") for a in attempts) != 1):
             raise ValueError("Only the first confirmed GPU OOM permits one explicit retry.")
         return self.coordinator.retry(job.id)
+
+    def retry_transient(self, result: WorkerRunResult):
+        """Reuse the exact request/workspace only after confirmed process cleanup."""
+        previous = self.coordinator.repository.get_attempt(result.attempt.id)
+        if self.device is not None:
+            self.device.validate(self.coordinator.repository.get_job(previous.job_id).request)
+            if result.device_identity != self.device.to_payload():
+                raise ValueError("Transient retry cannot change the pinned device identity.")
+        if (not result.retryable or self._resource_lease is not None or self._unresolved_claim is not None
+                or self.process is None or self.process.pid != result.pid
+                or self.process.returncode != result.returncode or previous != result.attempt
+                or self.coordinator.repository.attempts(previous.job_id)[-1] != previous):
+            raise ValueError("Transient retry requires the latest failed attempt and confirmed worker cleanup.")
+        return self.coordinator.retry(previous.job_id)
 
     async def unload(self):
         """Unload through process exit; also retry previously uncertain cleanup."""
@@ -147,7 +210,8 @@ class WorkerSupervisor:
 
     async def _send(self, value):
         self.process.stdin.write(encode_frame(value))
-        await asyncio.wait_for(self.process.stdin.drain(), self.limits.handshake)
+        await self._deadline(self.process.stdin.drain(), self.limits.handshake,
+                             "WORKER_HANDSHAKE_TIMEOUT", "send_" + value["type"])
 
     async def _logs(self, tail):
         while chunk := await self.process.stderr.read(4096):
@@ -169,29 +233,60 @@ class WorkerSupervisor:
             await asyncio.sleep(0.02)
 
     async def _conversation(self, job, claim):
+        self._enter_phase("HANDSHAKE")
         await self._send(message("hello", job.id, claim.id))
-        ready = check_identity(await asyncio.wait_for(read_message_async(self.process.stdout), self.limits.handshake), job.id, claim.id)
+        async def receive_ready():
+            while True:
+                value = check_identity(await read_message_async(self.process.stdout), job.id, claim.id)
+                if value["type"] != "progress":
+                    return value
+                if value["payload"] != {"phase": "RUNTIME_INITIALIZATION", "completed": None, "total": None}:
+                    raise ProtocolError("Unexpected initialization event.")
+                self._enter_phase("RUNTIME_INITIALIZATION")
+                self.coordinator.progress(claim, JobProgress(**value["payload"]))
+                await asyncio.sleep(0)
+        ready = await self._deadline(receive_ready(), self.limits.handshake,
+                                     "WORKER_HANDSHAKE_TIMEOUT", "receive_ready")
         if ready["type"] != "ready" or ready["payload"]["pid"] != self.process.pid:
             raise ProtocolError("Expected handshake from the directly owned worker PID.")
+        self._enter_phase("HANDSHAKE")
         await self._send(message("run", job.id, claim.id, {"job": job.to_payload()}))
         self._started.set()
-        while True:
-            event = check_identity(await read_message_async(self.process.stdout), job.id, claim.id)
-            if event["type"] == "progress":
-                self.coordinator.progress(claim, JobProgress(**event["payload"]))
-                await asyncio.sleep(0)  # A stdout flood must not starve cancel/deadline tasks.
-            elif event["type"] in ("completed", "failed", "canceled"):
-                break
-            else:
-                raise ProtocolError("Unexpected worker event ordering.")
-        # A success frame alone is insufficient: require EOF and a clean exit.
-        extra = await asyncio.wait_for(read_message_async(self.process.stdout), self.limits.exit_grace)
+        self._enter_phase("SYNTHESIS")
+        event = await self._deadline(self._events(job, claim), self.limits.execution,
+                                     "WORKER_EXECUTION_TIMEOUT", "receive_terminal")
+        self._terminal_outcome = event["type"]
+        self._enter_phase("TERMINAL_MESSAGE")
+        self.process.stdin.close()
+        with suppress(BrokenPipeError, ConnectionResetError):
+            await self._deadline(self.process.stdin.wait_closed(), self.limits.exit_grace,
+                                 "WORKER_TERMINAL_EOF_TIMEOUT", "close_stdin")
+        # No publication from a terminal frame alone: still require EOF and clean exit.
+        self._enter_phase("STDOUT_EOF")
+        extra = await self._deadline(read_message_async(self.process.stdout), self.limits.exit_grace,
+                                     "WORKER_TERMINAL_EOF_TIMEOUT", "receive_eof")
         if extra is not None:
             raise ProtocolError("Worker sent an event after its terminal outcome.")
-        code = await asyncio.wait_for(self.process.wait(), self.limits.exit_grace)
+        self._enter_phase("PROCESS_EXIT")
+        code = await self._deadline(self.process.wait(), self.limits.exit_grace,
+                                    "WORKER_EXIT_TIMEOUT", "wait_exit")
         if code != 0:
             raise ProtocolError("Worker exited nonzero after reporting an outcome.")
         return event
+
+    async def _events(self, job, claim):
+        while True:
+            event = check_identity(await read_message_async(self.process.stdout), job.id, claim.id)
+            if event["type"] == "progress":
+                phase = event["payload"]["phase"]
+                if phase in {"RUNTIME_INITIALIZATION", "MODEL_LOADING", "SYNTHESIS", "FINAL_ARTIFACT_ASSEMBLY"}:
+                    self._enter_phase(phase)
+                self.coordinator.progress(claim, JobProgress(**event["payload"]))
+                await asyncio.sleep(0)  # A stdout flood must not starve cancel/deadline tasks.
+            elif event["type"] in ("completed", "failed", "canceled"):
+                return event
+            else:
+                raise ProtocolError("Unexpected worker event ordering.")
 
     async def _stop(self):
         if self.process is None:
@@ -210,7 +305,7 @@ class WorkerSupervisor:
                 await asyncio.wait_for(self.process.wait(), self.limits.reap)
         if self.process.stdin is not None:
             self.process.stdin.close()
-            with suppress(BrokenPipeError, ConnectionResetError, asyncio.TimeoutError):
+            with suppress(BrokenPipeError, ConnectionResetError):
                 await asyncio.wait_for(self.process.stdin.wait_closed(), self.limits.reap)
 
     async def _cleanup(self, tasks, logs):
@@ -229,6 +324,8 @@ class WorkerSupervisor:
                 await asyncio.wait_for(asyncio.shield(drain), self.limits.reap)
             if logs is not None:
                 await asyncio.wait_for(asyncio.shield(logs), self.limits.reap)
+        except asyncio.TimeoutError as exc:
+            raise WorkerPhaseTimeout("WORKER_CLEANUP_TIMEOUT", "CLEANUP", "reap_process_and_pipes") from exc
         finally:
             for task in tasks:
                 if not task.done():
@@ -260,6 +357,10 @@ class WorkerSupervisor:
                 self._resource_lease = None
             return None
         self._task, self._claim = asyncio.current_task(), claim
+        self._phase_identity = (claim.job_id, claim.id)
+        self._phase_name, self._phase_at, self._phase_durations = None, None, {}
+        self._terminal_outcome = None
+        self._enter_phase("PROCESS_START")
         self._started = asyncio.Event()
         tasks, tail = [], bytearray()
         event, error, canceled, external_cancel = None, None, False, False
@@ -288,7 +389,7 @@ class WorkerSupervisor:
             conversation = asyncio.create_task(self._conversation(job, claim))
             cancellation = asyncio.create_task(self._cancellation(claim))
             tasks.extend((logs, conversation, cancellation))
-            done, _ = await asyncio.wait((conversation, cancellation), timeout=self.limits.execution,
+            done, _ = await asyncio.wait((conversation, cancellation),
                                          return_when=asyncio.FIRST_COMPLETED)
             if cancellation in done:
                 cancellation.result()
@@ -300,16 +401,19 @@ class WorkerSupervisor:
                 # Before run, or after grace expires, cleanup confirms termination.
             elif conversation in done:
                 event = conversation.result()
-            else:
-                error = "worker_timeout: execution deadline exceeded"
         except asyncio.CancelledError:
             external_cancel = True
             self.request_cancel()
             canceled = True
+        except WorkerPhaseTimeout as exc:
+            error = str(exc)
+            logger.warning("[AICS][WORKER][TIMEOUT] job=%s attempt=%s pid=%s %s",
+                           claim.job_id, claim.id, self.process.pid if self.process else None, error)
         except (OSError, ValueError, asyncio.TimeoutError) as exc:
             error = f"worker_error: {type(exc).__name__}: {str(exc)[:1024]}"
         finally:
             # No terminal queue outcome until the owned child has actually exited.
+            self._enter_phase("CLEANUP")
             cleanup = asyncio.create_task(self._cleanup(tasks, logs))
             try:
                 while True:
@@ -323,6 +427,12 @@ class WorkerSupervisor:
                         # Repeated shutdown requests cannot abandon pipe/process cleanup.
                         external_cancel, canceled = True, True
                         self.request_cancel()
+            except BaseException as exc:
+                self._enter_phase(None)
+                logger.error("[AICS][WORKER][CLEANUP] job=%s attempt=%s pid=%s code=%s quarantine=%s",
+                             claim.job_id, claim.id, self.process.pid if self.process else None,
+                             getattr(exc, "code", "WORKER_CLEANUP_FAILED"), self._resource_lease is not None)
+                raise
             finally:
                 if self._resource_lease is not None:
                     self.resources.quarantine(self._resource_lease)
@@ -335,6 +445,7 @@ class WorkerSupervisor:
         elif error is not None:
             outcome = self.coordinator.fail(claim, error)
         elif event is not None and event["type"] == "completed":
+            self._enter_phase("PUBLICATION")
             try:
                 if self.completion_handler is None:
                     outcome = self.coordinator.complete(claim, event["payload"]["artifact_ids"])
@@ -355,9 +466,11 @@ class WorkerSupervisor:
             outcome = self.coordinator.fail(claim, f'{event["payload"]["code"]}: {event["payload"]["message"]}')
         else:
             outcome = self.coordinator.fail(claim, "worker_protocol: unsolicited cancellation or missing outcome")
+        self._enter_phase(None)
         if external_cancel:
             raise asyncio.CancelledError
         return WorkerRunResult(outcome, self.process.pid if self.process else None,
                                self.process.returncode if self.process else None,
                                bytes(tail).decode("utf-8", errors="replace"),
-                               self.device.to_payload() if self.device is not None else {})
+                               self.device.to_payload() if self.device is not None else {},
+                               dict(self._phase_durations), True, self._terminal_outcome)

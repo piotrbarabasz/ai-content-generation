@@ -29,6 +29,39 @@ class Provider:
                            for k in kinds]}
 
 
+def test_duration_repair_opt_in_preview_and_continue_survive_tab_reparenting(tmp_path):
+    qt = QApplication.instance() or QApplication([])
+    provider = Provider()
+    editor = ProjectEditor(LocalProjects(), provider=provider)
+    path = tmp_path / "project"
+    editor.load_project(path, create=True)
+    try:
+        panel = editor.video_plan
+        panel.topic.setPlainText("America 1776")
+        panel.format.setCurrentIndex(panel.format.findData("standard"))
+        panel.generate()
+        assert panel.editor is editor
+        assert not panel.allow_duration_repair.isChecked()
+        panel.allow_duration_repair.setChecked(True)
+        assert panel.duration_repairs.records.policy(panel.plan.id)[0].enabled
+        panel.preview_duration_repair()
+        assert "BLOCKED" in panel.duration_repair_details.toPlainText()
+        assert provider.group_calls == []  # preview never calls the paid provider
+        invoked = []
+        editor.run_automatic_workflow = lambda: invoked.append(True)
+        panel.continue_duration_repair()
+        assert invoked == [True] and editor.workflow_mode.currentData() == "automatic"
+    finally:
+        editor.close()
+    reopened = ProjectEditor(LocalProjects(), provider=provider)
+    reopened.load_project(path)
+    try:
+        assert reopened.video_plan.allow_duration_repair.isChecked()
+        assert "enabled" in reopened.video_plan.duration_repair_details.toPlainText()
+    finally:
+        reopened.close()
+
+
 def test_plan_tab_profiles_rendering_and_context_application(tmp_path):
     qt = QApplication.instance() or QApplication([])
     provider = Provider()

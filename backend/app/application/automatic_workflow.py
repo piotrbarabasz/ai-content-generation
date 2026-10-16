@@ -82,7 +82,7 @@ class AutomaticWorkflow:
                          stage, section or "-", scene or "-", reason)
             raise AutomaticWorkflowBlocked(stage, reason, section=section, scene=scene) from None
 
-    async def _ensure_voice(self, section, config):
+    async def _ensure_voice(self, section, config, *, stage="VOICE"):
         self._check_cancel()
         if self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
             self.skipped += 1
@@ -90,11 +90,11 @@ class AutomaticWorkflow:
         else:
             logger.info("[AICS][PIPELINE][AUTO][VOICE][BUILD] section=%r provider=%s",
                         section.title, config.voice_choice.provider)
-            await self._operation("VOICE", lambda: self.driver.generate_voice(section, config.voice_choice),
+            await self._operation(stage, lambda: self.driver.generate_voice(section, config.voice_choice),
                                   section=section.title)
             self._check_cancel()
             if not self.driver.voice_ready(section, config.voice_choice, config.audio_variant):
-                raise AutomaticWorkflowBlocked("VOICE", "Generated narration did not validate for the current section.",
+                raise AutomaticWorkflowBlocked(stage, "Generated narration did not validate for the current section.",
                                                section=section.title)
             logger.info("[AICS][PIPELINE][AUTO][VOICE][OK] section=%r", section.title)
 
@@ -133,11 +133,30 @@ class AutomaticWorkflow:
             if standard:
                 for section in sections:
                     await self._ensure_voice(section, config)
-                duration = await self._operation("PLAN_DURATION",
-                    lambda: self.driver.measure_plan_duration(selected_plan, sections, config))
-                logger.info("[AICS][PIPELINE][AUTO][PLAN_DURATION][%s] %s", duration.state, duration.summary)
-                if duration.state != "OK":
-                    raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary)
+                for repair_round in range(3):
+                    duration = await self._operation("PLAN_DURATION",
+                        lambda: self.driver.measure_plan_duration(selected_plan, sections, config))
+                    logger.info("[AICS][PIPELINE][AUTO][PLAN_DURATION][%s] %s", duration.state, duration.summary)
+                    observe = getattr(self.driver, "observe_duration_repair", None)
+                    if duration.actual is not None and callable(observe):
+                        await self._operation("PLAN_DURATION", lambda: observe(selected_plan, config))
+                    if duration.state == "OK":
+                        break
+                    repair = getattr(self.driver, "repair_duration", None)
+                    if duration.actual is None or repair_round >= 2 or not callable(repair):
+                        raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary)
+                    try:
+                        changed = await self._operation("DURATION_REPAIR", lambda: repair(selected_plan, config))
+                    except AutomaticWorkflowBlocked as exc:
+                        raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary + "\n" + exc.reason) from None
+                    if not changed:
+                        raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary +
+                            "\nPreview and enable bounded automatic duration repair in Plan, or adjust narration manually.")
+                    sections = tuple(self.driver.saved_sections())
+                    if callable(narration_check):
+                        await self._operation("NARRATION", lambda: narration_check(selected_plan))
+                    for section in sections:
+                        await self._ensure_voice(section, config, stage="SELECTIVE_VOICE")
                 self._check_cancel()
 
             expected_scene_count = 0

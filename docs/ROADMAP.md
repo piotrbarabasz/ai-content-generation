@@ -53,3 +53,7 @@ and explicit editorial review in the existing Plan/Script workspace.
 M7 includes [D076 reusable channel branding](desktop/D076_REUSABLE_CHANNEL_BRANDING.md):
 shared immutable channel profiles/clips, explicit project selections and verified
 finishing/caption offsets, alongside the legacy card mode.
+
+M7 includes [D077 automatic narration duration repair](desktop/D077_DURATION_REPAIR.md):
+measured speaking-rate calibration, bounded selective chapter rewrites and TTS,
+with explicit paid-call opt-in before the existing narration duration gate.

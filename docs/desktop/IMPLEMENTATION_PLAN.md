@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -896,6 +896,13 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Validation:** Focused resource-manager, GPU-worker and D007 lifecycle tests: 58 passed in 20.59 s. Full `python -m pytest backend/tests`: 1595 passed, 11 existing optional tests skipped in 617.37 s (Windows, isolated Python 3.11.9). `python -m compileall -q backend/app backend/tests`, `python -m pip check` and `git diff --check` PASS. D025 release gates remain open; D029 owns concrete GPU profile/selection and hardware measurements.
 
 ### D029 — Managed Chatterbox profile
+
+- **Worker refresh repair boundary (2026-10-15):** An application update intentionally invalidates an installed worker snapshot. Add an explicit offline operator command that verifies the old receipt and all protected files, copies verified dependencies into a new generation, replaces only the worker closure, checks CUDA health, and atomically activates after verification. Include read-only inspection, fresh-process verification and explicit rollback to a generation matching the target application. Preserve strict startup verification, old generations, external models, projects and audio. No automatic refresh or dependency downloads. See [refresh operation](CHATTERBOX_RUNTIME_REFRESH.md).
+- **Required launch correction:** Read-only inspection found 55 receipted worker `.pyc` files. `WorkerLaunch.command()` uses `-I`, which ignores `PYTHONDONTWRITEBYTECODE`; add `-B` to this shared Python launch so health and subsequent inference cannot mutate a verified generation. This argument-only D007 launch adjustment is required for D029 immutability and does not change protocol/provider contracts.
+- **Live refresh correction:** The real CUDA probe exposed librosa/Numba rewriting six receipted JIT cache files under `packages/librosa/core/__pycache__`. Route `NUMBA_CACHE_DIR` through the existing private cache environment: health uses excluded temporary scratch, production uses its configured writable cache. Keep the protected inventory comparison and all deadlines unchanged. No package, model or historical receipt changes.
+- **Windows cache path evidence:** The private health cache must use a short `cb-*/n` layout: Numba's hashed module directory plus atomic-write suffix exceeded the Windows path limit under the original nested health layout. This is scratch-path handling only; no inventory exclusions or deadline changes.
+
+- **Timeout recovery repair boundary (2026-10-15):** The user-selected repair covers D029's managed audio composition over D007 lifecycle and D010 frozen job/chunk recovery: observable phase deadlines, deterministic protocol-pipe closure, one cleaned-up transient section retry through JobCoordinator, and verified publication-driven desktop voice counters. Preserve GPU quarantine, immutable inputs, selected audio and D067 measured duration protection. Historical generic TimeoutError records cannot identify their originating wait. No deadline increases, model/provider changes, project migration or regeneration of existing media. See [timeout recovery evidence](CHATTERBOX_TIMEOUT_RECOVERY.md).
 
 - **Status:** Completed — approved private Windows/CUDA distribution, installed selection and measured EN/PL GPU acceptance PASS (2026-09-22)
 - **Milestone:** M10
@@ -1551,9 +1558,23 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Shared bytes and pinned versions survive project switches/restart; legacy settings/output caches remain readable; source narrative stays complete and byte-identical; exact insertion mapping drives timed exports; missing/corrupt assets and cancellation preserve prior outputs; no paid providers are invoked.
 - **Test strategy:** Temporary injected library roots, deterministic contracts/reopen/overrides/cache tests, short real CPU FFmpeg fixtures, offscreen desktop checks, full backend suite and diff check.
 
+### D077 — Automatic Narration Duration Repair
+
+- **Status:** Complete. Offline regressions and safe-copy measured acceptance passed on 2026-10-15: 476.64→598.00s, six revised sections/twelve reused audio selections, zero images, production restart and original-file hashes verified. See [D077 evidence](D077_DURATION_REPAIR.md).
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Correct out-of-range Standard narration using measured rates, substantive selective rewriting and verified replacement audio.
+- **Dependencies:** D004, D010, D063, D064, D065, D067, D075. Inspected immutable script selection/storage, compatible audio-job recovery, exact plan-section identities, structured generation, desktop composition, verified PCM guard and retained narrative context/quality checks. These required code paths exist on the branch; their IDs alone were not used as evidence. D075's broader human narrative/listening acceptance remains separate.
+- **Scope:** Measured per-section calibration; immutable versioned repair proposals and separate word budgets; chapter-only expansion/compression preserving plan/order/section identity; explicit project opt-in; durable bounded calls/rounds; atomic selective script revisions; existing selective TTS and chunk recovery; measured recheck before visuals; Plan-tab preview/history/controls. Original word-budget rules and Video Plan remain unchanged.
+- **Bounds:** Default two rounds, three groups/round, two output attempts/group, twelve structured calls/campaign; transport retries stay bounded by the configured provider. Persist reservations before calls so restart cannot reset spending. Stop for stale sources, invalid narration, insufficient measured improvement or exhausted limits.
+- **Main code areas:** Duration repair domain/application/storage, existing Automatic driver, continuity budget review and Plan controls.
+- **Acceptance criteria:** Deterministic offline LLM/TTS tests and safe-copy America 1776 acceptance. Never alter the original project or invoke paid images for duration acceptance. Exact audio frames alone pass D067; editorial/factual quality remains reviewable evidence, not fabricated certification.
+- **Test strategy:** Verified synthetic PCM with real project storage, mocked structured providers, restart/cancellation/timeout/selection-intent regressions, offscreen Qt, existing D075/D067 suites and full backend/diff checks. See [D077 evidence](D077_DURATION_REPAIR.md).
+- **Out of scope:** Plan regeneration, global budget relaxation, provider changes, time stretching, image-generation changes, migrations, historical artifact deletion or unbounded paid calls.
+
 ## Backlog provenance and deferred scope
 
-There are **75 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **76 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1568,6 +1589,7 @@ D072 adds independently narrated and directed Shorts without replacing Original 
 D073 adds read-only production QA, separate review history and publishing status.
 D075 adds narrative planning, retained script continuity and explicit editorial review.
 D076 adds the shared reusable channel library and verified clip finishing maps.
+D077 adds opt-in measured narration duration repair before visual generation.
 None is
 completed merely by publishing this plan.
 

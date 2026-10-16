@@ -60,6 +60,10 @@ class NarrativeContinuityService:
 
     def deterministic_findings(self, plan):
         findings = []
+        from app.storage.duration_repairs import ProjectDurationRepairs
+        repaired_budgets = {b["revision_id"]: b["target_words"]
+            for record in ProjectDurationRepairs(self.scripts.session.repository,
+                self.scripts.artifacts.store).history("commit", plan_id=plan.id) for b in record["budgets"]}
         def add(issue, explanation, group=None, section=None, severity="BLOCKED"):
             findings.append({"issue_type": issue, "severity": severity,
                 "group_id": group.id if group else None, "section_id": section.section_id if section else None,
@@ -92,8 +96,11 @@ class NarrativeContinuityService:
             for planned in group.sections:
                 section = by_id[self.scripts.section_id(plan.project_id, planned.id)]
                 count = len(section.text.split())
-                if abs(count - planned.target_word_count) > planned.target_word_count * .25:
-                    add("word_budget", f"{count} words; planned {planned.target_word_count}. Audio duration still requires measured TTS.", group, section, "REVIEW")
+                repaired_budget = repaired_budgets.get(section.id)
+                budget = repaired_budget or planned.target_word_count
+                tolerance = .1 if repaired_budget else .25
+                if abs(count - budget) > max(2 if repaired_budget else 0, budget * tolerance):
+                    add("word_budget", f"{count} words; {'measured repair' if repaired_budget else 'planned'} budget {budget}. Audio duration still requires measured TTS.", group, section, "REVIEW")
                 if abs(planned.target_word_count - round(planned.target_duration_seconds * WORDS_PER_SECOND)) > 1:
                     add("estimate_metadata", "Historical word estimate differs from the configured speech-rate estimate.", group, section, "REVIEW")
             try:

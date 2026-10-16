@@ -28,6 +28,7 @@ def enforce_offline():
 
 
 def handle(payload, report, canceled):
+    report("RUNTIME_INITIALIZATION")
     health = check_private_runtime(os.environ["AICS_CHATTERBOX_DEVICE"])
     if payload.get("request", {}).get("operation") == "runtime.chatterbox.health":
         # The path is supplied by trusted launch composition, never by the job.
@@ -42,6 +43,7 @@ def handle(payload, report, canceled):
     oom = [False]
 
     def load(device):
+        report("MODEL_LOADING")
         import torch
         import torchaudio
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
@@ -59,6 +61,7 @@ def handle(payload, report, canceled):
         try:
             # No from_pretrained/main/HF network access on the synthesis path.
             model = ChatterboxMultilingualTTS.from_local(models, device=device, t3_model="v3")
+            report("SYNTHESIS")
             return Backend(model, torchaudio)
         except torch.cuda.OutOfMemoryError:
             oom[0] = True
@@ -79,7 +82,8 @@ def handle(payload, report, canceled):
     import torch
     torch.cuda.reset_peak_memory_stats(health.device)
     try:
-        result = generate(job, provider, os.environ["AICS_SECTION_WORK"], report, canceled.is_set)
+        result = generate(job, provider, os.environ["AICS_SECTION_WORK"], report, canceled.is_set,
+                          phase=lambda value: report(value))
         # Diagnostic evidence is not accepted as a worker-provided artifact path.
         evidence = health.to_payload() | {"peak_allocated_bytes": torch.cuda.max_memory_allocated(health.device),
                                          "peak_reserved_bytes": torch.cuda.max_memory_reserved(health.device)}
