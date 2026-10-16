@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077, D078 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077, D078, D079 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1585,9 +1585,23 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Acceptance criteria:** Deterministic offline provider/budget/restart/settings/UI/legacy regressions; full backend suite and diff check. Safe-copy America 1776 preview and any further paid synthesis require the user's operation budget approval after a concrete estimate; original artifacts/video are preserved.
 - **Test strategy:** Synthetic WAV and mocked official-SDK transports, owner-thread publication, interrupted requests and valid-chunk reuse, exact PCM/boundaries, explicit migration and paid-operation gates, offscreen Qt, opt-in live short-preview smoke.
 
+### D079 — Narration Attempt Eligibility and Reviewed Recovery
+
+- **Status:** Complete on `fix/openai-narration-attempt-recovery`; explicitly requested. Full backend suite: 2544 passed, 12 skipped; original project's 394 file hashes unchanged.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Eliminate ineffective payment approvals; recover verified narration and make a bounded exceptional retry auditable.
+- **Dependencies:** D078 durable narration ledger/cache and D065/D067 Automatic flow, inspected in code at `381e6f0`.
+- **Scope:** Read-only chunk/response/manifest eligibility scans; reject blocked paid preflights; recover verified retained bytes; one auditable exceptional attempt per immutable chunk after operator review, with existing spending ceilings; structured failures and offline regressions.
+- **Out of scope:** Paid real-project retries, editorial/image changes, history deletion, refunds or certification of actual provider billing.
+- **Main code areas:** Narration ledger, cloud audio preflight/recovery, SDK diagnostics, Audio dialogs, Automatic adapter and read-only diagnostic tooling.
+- **Acceptance criteria:** No ineffective approval for exhausted input; no fabricated receipts or counter resets; cached work resumes without API; unaffected sections remain selected. Investigate the Soviet Moon project read-only and document exact operator steps. No paid generation or edits to that project's databases/scripts/media are authorized by this task.
+- **Test strategy:** Synthetic PCM and mocked SDK; retained-response/provenance, exhaustion, exceptional retry, cancellation, budget and Automatic regressions; full backend suite and diff check.
+- **Boundary note:** The old ledger collapses unknown exceptions and pre-dispatch exhaustion into `failed_or_uncertain`. Recovering the original transport exception is impossible when it was not retained; new diagnostics must preserve this uncertainty rather than invent a cause or invoice.
+
 ## Backlog provenance and deferred scope
 
-There are **77 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **78 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds

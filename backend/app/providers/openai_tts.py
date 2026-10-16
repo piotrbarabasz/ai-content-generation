@@ -20,7 +20,14 @@ SHUTDOWN = "2027-01-06"
 class SpeechError(ValueError):
     def __init__(self, category, *, retryable=False, uncertain=False):
         self.category, self.retryable, self.uncertain = category, retryable, uncertain
+        self.phase, self.exception_type, self.received_bytes, self.dispatched, self.status_code = None, None, 0, None, None
+        self.response_complete = False
         super().__init__(category + (": response uncertain; retry may duplicate billing." if uncertain else ""))
+
+    def to_diagnostics(self):
+        return {'category': self.category, 'retryable': self.retryable, 'billing_uncertain': self.uncertain,
+                'phase': self.phase, 'exception_type': self.exception_type, 'received_bytes': self.received_bytes,
+                'dispatch_attempted': self.dispatched, 'status_code': self.status_code, 'response_complete': self.response_complete}
 
 
 def normalize_speech_wav(payload, ffmpeg=None):
@@ -77,6 +84,7 @@ class OpenAITTSProvider:
         self.api_key_env, self.ffmpeg = api_key_env, ffmpeg
         self.canceled = threading.Event()
         self.response_sink = response_sink
+        self.partial_response_sink = None
 
     def check_configuration(self):
         if date.today().isoformat() >= SHUTDOWN:
@@ -112,12 +120,14 @@ class OpenAITTSProvider:
             raise SpeechError("CANCELED")
         from openai import OpenAI
         factory = self.client_factory or OpenAI
+        parts, size, phase, dispatched, complete = [], 0, 'client_setup', False, False
         try:
             # SDK retries are disabled; the durable approved operation owns each attempt.
             with factory(api_key=key, max_retries=0, timeout=30) as client:
+                phase, dispatched = 'dispatch', True
                 with client.audio.speech.with_streaming_response.create(model=settings.model, voice=settings.voice,
                         speed=float(settings.speed), instructions=settings.delivery, input=text, response_format="wav") as response:
-                    parts, size = [], 0
+                    phase = 'download'
                     for part in response.iter_bytes():
                         size += len(part)
                         if self.canceled.is_set():
@@ -125,21 +135,41 @@ class OpenAITTSProvider:
                         if size > 32_000_000:
                             raise SpeechError("OVERSIZED_SPEECH_RESPONSE", uncertain=True)
                         parts.append(part)
-            raw = b"".join(parts)
-            if self.response_sink:
-                try:
-                    self.response_sink(raw)
-                except OSError:
-                    raise SpeechError("RESPONSE_PERSISTENCE_FAILED", uncertain=True) from None
+                    complete = True
+                    raw = b"".join(parts)
+                    phase = 'retention'
+                    if self.response_sink:
+                        try:
+                            self.response_sink(raw)
+                        except OSError:
+                            raise SpeechError("RESPONSE_PERSISTENCE_FAILED", uncertain=True) from None
+            phase = 'validation'
             payload = normalize_speech_wav(raw, self.ffmpeg)
-        except SpeechError:
-            raise
         except Exception as exc:
-            status = getattr(exc, "status_code", None)
-            category = {401: "AUTHENTICATION_FAILED", 403: "ACCESS_DENIED", 404: "MODEL_UNAVAILABLE",
-                        400: "UNSUPPORTED_SPEECH_REQUEST", 429: "RATE_LIMIT"}.get(status, "SPEECH_NETWORK_OR_PROVIDER_FAILURE")
-            raise SpeechError(category, retryable=status in (None, 408, 429) or isinstance(status, int) and status >= 500,
-                              uncertain=status is None or isinstance(status, int) and status >= 500) from None
+            import httpx
+            from openai import APITimeoutError, APIConnectionError
+            status = getattr(exc, 'status_code', None)
+            if isinstance(exc, SpeechError):
+                error = exc
+            else:
+                timeout = isinstance(exc, (APITimeoutError, httpx.TimeoutException, TimeoutError))
+                connection = isinstance(exc, (APIConnectionError, httpx.TransportError, ConnectionError))
+                category = {401: 'AUTHENTICATION_FAILED', 403: 'ACCESS_DENIED', 404: 'MODEL_UNAVAILABLE',
+                            400: 'UNSUPPORTED_SPEECH_REQUEST', 429: 'RATE_LIMIT', 408: 'SPEECH_TIMEOUT'}.get(status)
+                if category is None:
+                    category = ('SPEECH_TIMEOUT' if timeout else 'SPEECH_CONNECTION_FAILURE' if connection else
+                                'SPEECH_SERVER_FAILURE' if isinstance(status, int) and status >= 500 else 'APPLICATION_ERROR')
+                error = SpeechError(category,
+                    retryable=timeout or connection or status in (408, 429) or isinstance(status, int) and status >= 500,
+                    uncertain=dispatched and (timeout or connection or status is None or isinstance(status, int) and status >= 500))
+            error.phase, error.exception_type, error.received_bytes = phase, type(exc).__name__, size
+            error.dispatched, error.status_code, error.response_complete = dispatched, status, complete
+            if phase == 'download' and parts and self.partial_response_sink:
+                try:
+                    self.partial_response_sink(b''.join(parts))
+                except OSError:
+                    pass  # Partial evidence cannot be promised when storage also fails.
+            raise error from None
         pcm, _ = inspect_pcm_wav(payload)
         return TTSSynthesisResult(payload, pcm.sample_rate, pcm.duration_seconds, "wav", "openai",
                                   {"adapter": "speech-wav-v1", "measured": True})

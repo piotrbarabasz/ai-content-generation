@@ -24,6 +24,24 @@ def estimate_chunk(text, settings):
             "high_usd": max(.001, (tokens_upper * PRICING["text_per_million"] + seconds * 2 * 50 * PRICING["audio_per_million"]) / 1e6)}
 
 
+def attempt_evidence(history, scope, key):
+    attempts = [r for r in history('reservation') if (r['scope'], r['chunk_key']) == (scope, key)]
+    usage = history('usage')
+    values = []
+    for r in attempts:
+        linked = [u for u in usage if u.get('reservation_id') == r['id']]
+        values.append({**r, 'outcomes': linked, 'billing': 'UNKNOWN',
+                       'receipt': ('verified audio recorded' if any(u['state'] == 'received' for u in linked) else
+                           'complete response received; not verified' if any(u.get('diagnostics', {}).get('response_complete') for u in linked) else
+                           'partial bytes received; not verified' if any(u.get('diagnostics', {}).get('received_bytes', 0) for u in linked) else 'not established')})
+    legacy = [u for u in usage if (u.get('scope'), u.get('chunk_key')) == (scope, key) and not u.get('reservation_id')]
+    grants = [g for g in history('exceptional_retry') if (g['scope'], g['chunk_key']) == (scope, key)]
+    grant = grants[-1] if grants else None
+    additional = bool(grant and grant['prior_reservation_ids'] == [r['id'] for r in attempts])
+    return values, legacy, grant, additional
+
+
+
 class ProjectNarration:
     def __init__(self, session, store):
         self.session, self.store = session, store
@@ -95,8 +113,12 @@ class ProjectNarration:
         reservations = self.history("reservation")
         attempts = [r for r in reservations if r["scope"] == scope and r["chunk_key"] == chunk_key]
         # A new approval cannot erase already attempted calls for the same immutable input.
-        if len(attempts) >= approval["max_attempts"]:
+        _, _, grant, additional = attempt_evidence(self.history, scope, chunk_key)
+        exceptional = len(attempts) >= approval["max_attempts"]
+        if exceptional and (not additional or len(attempts) < 2 or grant["pricing"] != PRICING):
             raise ValueError("Chunk paid-attempt budget exhausted. Review uncertain billing/retained responses.")
+        if exceptional and estimate["high_usd"] > grant["budget_usd"] + 1e-12:
+            raise ValueError("Exceptional attempt estimated-spend ceiling exhausted; no request dispatched.")
         used = sum(r["reserved_usd"] for r in reservations if r["approval_id"] == approval["id"])
         amount = estimate["high_usd"]
         project = self.project()
@@ -104,4 +126,25 @@ class ProjectNarration:
         if used + amount > approval["budget_usd"] + 1e-12 or cap is not None and sum(r["reserved_usd"] for r in reservations) + amount > cap + 1e-12:
             raise ValueError("Approved estimated-spend budget exhausted; no request dispatched.")
         return self.save("reservation", {"approval_id": approval["id"], "scope": scope, "chunk_key": chunk_key,
-            "attempt": len(attempts) + 1, "reserved_usd": amount, "pricing_version": PRICING["version"]})
+            "attempt": len(attempts) + 1, "reserved_usd": amount, "pricing_version": PRICING["version"],
+            "exceptional_retry_id": grant["id"] if exceptional else None})
+
+    def authorize_exceptional_retry(self, scope, chunk_key, *, operator, reason, budget, evidence_fingerprint, acknowledge):
+        import math
+        if (not isinstance(operator, str) or not operator.strip() or len(operator) > 100
+                or not isinstance(reason, str) or not reason.strip() or len(reason) > 500 or acknowledge is not True):
+            raise ValueError("Operator, review reason and explicit uncertain-billing acknowledgement are required.")
+        if type(budget) not in (int, float) or not math.isfinite(budget) or not 0 < budget <= 1000:
+            raise ValueError("An explicit finite exceptional-attempt estimate ceiling is required.")
+        attempts, _, grant, _ = attempt_evidence(self.history, scope, chunk_key)
+        if len(attempts) != 2 or grant is not None:
+            raise ValueError("Only one reviewed additional attempt is allowed after the original two reservations.")
+        if datetime.now(timezone.utc).date().isoformat() >= PRICING["expires"]:
+            raise ValueError("Speech pricing expired; update before authorizing another attempt.")
+        cap = (self.project() or {}).get('project_budget')
+        if cap is not None and sum(r['reserved_usd'] for r in self.history('reservation')) + budget > cap + 1e-12:
+            raise ValueError("Project spending ceiling prevents this exceptional attempt. Historical reservations remain counted.")
+        return self.save('exceptional_retry', {'scope': scope, 'chunk_key': chunk_key,
+            'operator': operator.strip(), 'reason': reason.strip(), 'acknowledge_uncertain_billing': True,
+            'prior_reservation_ids': [r['id'] for r in attempts], 'additional_attempts': 1,
+            'budget_usd': budget, 'pricing': PRICING, 'evidence_fingerprint': evidence_fingerprint})
