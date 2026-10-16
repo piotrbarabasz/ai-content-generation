@@ -209,6 +209,19 @@ def _xtts_provider_descriptor() -> TTSProviderDescriptor:
     )
 
 
+def _openai_provider_descriptor():
+    from app.domain.narration import MODELS, VOICES
+    from .openai_tts import OpenAITTSProvider
+    capabilities = OpenAITTSProvider.catalog_capabilities()
+    return TTSProviderDescriptor(id="openai", display_name="OpenAI Speech", usage_policy="production",
+        supported_languages=capabilities.supported_languages, capabilities=capabilities,
+        models=tuple(TTSModelDescriptor(id=model, display_name=model, provider_id="openai",
+            supported_languages=capabilities.supported_languages, runtime_required=False, asset_required=False,
+            voices=tuple(TTSVoiceDescriptor(id=voice, display_name=voice.title(), provider_id="openai", model_id=model,
+                voice_mode="builtin", supported_languages=capabilities.supported_languages,
+                preview_supported=True, reference_audio_required=False) for voice in VOICES)) for model in MODELS))
+
+
 _DEFAULT_TTS_CATALOG_ADAPTERS = TTSCatalogAdapterRegistry()
 _DEFAULT_TTS_CATALOG_ADAPTERS.register(
     TTSCatalogAdapter(provider_id="chatterbox_v3", build_provider_descriptor=_chatterbox_provider_descriptor)
@@ -218,6 +231,9 @@ _DEFAULT_TTS_CATALOG_ADAPTERS.register(
 )
 _DEFAULT_TTS_CATALOG_ADAPTERS.register(
     TTSCatalogAdapter(provider_id="xtts_v2_eval", build_provider_descriptor=_xtts_provider_descriptor)
+)
+_DEFAULT_TTS_CATALOG_ADAPTERS.register(
+    TTSCatalogAdapter(provider_id="openai", build_provider_descriptor=_openai_provider_descriptor)
 )
 
 

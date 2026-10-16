@@ -124,6 +124,7 @@ def test_tts_catalog_endpoint_exposes_neutral_openapi_and_http_behavior() -> Non
         "chatterbox_v3",
         "piper",
         "xtts_v2_eval",
+        "openai",
     )
     assert set(payload["providers"][0]) == {
         "id",
@@ -144,13 +145,14 @@ def test_tts_catalog_endpoint_exposes_neutral_openapi_and_http_behavior() -> Non
     assert tuple(provider["id"] for provider in filtered_payload["providers"]) == (
         "chatterbox_v3",
         "piper",
+        "openai",
     )
     assert filtered_payload == json.loads(
         asyncio.run(_call_get(app, "/api/v1/tts/catalog", filtered_query))[2]
     )
 
     empty_status, _, empty_body = asyncio.run(
-        _call_get(app, "/api/v1/tts/catalog", urlencode({"language": "de", "usagePolicy": "production"}).encode("ascii"))
+        _call_get(app, "/api/v1/tts/catalog", urlencode({"language": "xx", "usagePolicy": "production"}).encode("ascii"))
     )
     assert empty_status == 200
     assert json.loads(empty_body)["providers"] == []

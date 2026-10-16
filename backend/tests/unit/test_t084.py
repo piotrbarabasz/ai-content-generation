@@ -34,7 +34,7 @@ def _fresh_tts_catalog_module() -> types.ModuleType:
 def test_default_adapter_registration_is_explicit_and_deterministic() -> None:
     module = _fresh_tts_catalog_module()
 
-    assert module.list_tts_catalog_adapters() == ("chatterbox_v3", "piper", "xtts_v2_eval")
+    assert module.list_tts_catalog_adapters() == ("chatterbox_v3", "piper", "xtts_v2_eval", "openai")
 
     catalog = module.build_tts_catalog()
 
@@ -43,6 +43,7 @@ def test_default_adapter_registration_is_explicit_and_deterministic() -> None:
         "chatterbox_v3",
         "piper",
         "xtts_v2_eval",
+        "openai",
     )
     assert all("moss" not in provider.id for provider in catalog.providers)
 
@@ -237,6 +238,7 @@ def test_import_and_build_do_not_trigger_optional_runtime_loading_or_filesystem_
         "chatterbox_v3",
         "piper",
         "xtts_v2_eval",
+        "openai",
     )
     assert "torch" not in sys.modules
     assert "torchaudio" not in sys.modules

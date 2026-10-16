@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077, D078 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1572,9 +1572,22 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Verified synthetic PCM with real project storage, mocked structured providers, restart/cancellation/timeout/selection-intent regressions, offscreen Qt, existing D075/D067 suites and full backend/diff checks. See [D077 evidence](D077_DURATION_REPAIR.md).
 - **Out of scope:** Plan regeneration, global budget relaxation, provider changes, time stretching, image-generation changes, migrations, historical artifact deletion or unbounded paid calls.
 
+### D078 — OpenAI Narration Replacement and Controls
+
+- **Status:** Complete on `feat/openai-tts-replacement` (2026-10-16). Offline provider/settings/budget/recovery/UI/legacy tests and safe-copy narration acceptance passed. The 831.23-second acceptance narration is correctly blocked by D067; no new paid editorial repair or render was authorized. See [D078 evidence](D078_OPENAI_NARRATION.md) for full-suite results and the corrected static catalog assertion.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** Replace the active local narration launcher with credential-safe cloud speech, durable creative settings, cost approval and selective publication.
+- **Dependencies:** D004, D010, D021, D040, D063, D064, D067, D077. Inspected section publication, PCM/chunk manifests, jobs, playback, desktop composition and measured repair on `4ba0930`; these contracts remain authoritative.
+- **Scope:** Official-SDK Speech adapter for the requested GPT-4o mini TTS family; capability/version boundary for future Realtime; project/section settings; explicit legacy migration; estimate/approval/reservation history; previews/comparison/approval; selective durable synthesis and measured timing; normal cloud launcher and offline regressions.
+- **Out of scope:** Implementing Realtime now, deleting installed local runtimes, silently converting legacy audio, changing editorial scripts or weakening D067/D077.
+- **Main code areas:** Providers, narration domain/storage/application, cloud desktop audio composition and Audio controls, launcher and setup documentation.
+- **Acceptance criteria:** Deterministic offline provider/budget/restart/settings/UI/legacy regressions; full backend suite and diff check. Safe-copy America 1776 preview and any further paid synthesis require the user's operation budget approval after a concrete estimate; original artifacts/video are preserved.
+- **Test strategy:** Synthetic WAV and mocked official-SDK transports, owner-thread publication, interrupted requests and valid-chunk reuse, exact PCM/boundaries, explicit migration and paid-operation gates, offscreen Qt, opt-in live short-preview smoke.
+
 ## Backlog provenance and deferred scope
 
-There are **76 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **77 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1590,6 +1603,7 @@ D073 adds read-only production QA, separate review history and publishing status
 D075 adds narrative planning, retained script continuity and explicit editorial review.
 D076 adds the shared reusable channel library and verified clip finishing maps.
 D077 adds opt-in measured narration duration repair before visual generation.
+D078 replaces primary narration with OpenAI Speech, explicit migration and paid-operation controls.
 None is
 completed merely by publishing this plan.
 

@@ -14,7 +14,7 @@ from app.runtime.provisioning import PiperProvisioner
 from app.runtime.section_audio import ManagedSectionAudio
 
 
-def compose_installed_audio(session, *, paths: UserDataPaths | None = None):
+def compose_installed_piper_audio(session, *, paths: UserDataPaths | None = None):
     """Use an already activated D008 runtime; never provision or download implicitly."""
 
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"}:
@@ -73,4 +73,20 @@ def compose_installed_chatterbox_audio(session, *, paths: UserDataPaths | None =
         reference_audio=references)
 
 
-__all__ = ["compose_installed_audio", "compose_installed_chatterbox_audio"]
+def compose_installed_audio(session, *, paths: UserDataPaths | None = None):
+    """Primary cloud narration. Construction performs no network/model/CUDA work."""
+    from app.desktop.cloud_audio import CloudAudioServices
+    from app.desktop.deployment import media_executables
+    from app.domain.narration import NarrationSettings
+    from app.providers.openai_tts import OpenAITTSProvider
+    if os.environ.get("AICS_TTS_PROVIDER", "openai").strip().lower() != "openai":
+        raise ValueError("The active narration backend is OpenAI; legacy runtimes require explicit tooling.")
+    provider = OpenAITTSProvider(settings=NarrationSettings(model=os.environ.get("AICS_OPENAI_TTS_MODEL", "gpt-4o-mini-tts")),
+        api_key_env=os.environ.get("AICS_OPENAI_TTS_API_KEY_ENV", "OPENAI_API_KEY"), ffmpeg=media_executables()[0])
+    audio = CloudAudioServices(session, provider=provider)
+    if audio.narration.project() is None:
+        audio.narration.save_project(provider.settings)
+    return audio
+
+
+__all__ = ["compose_installed_audio", "compose_installed_piper_audio", "compose_installed_chatterbox_audio"]

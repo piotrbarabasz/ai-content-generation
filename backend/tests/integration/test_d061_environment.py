@@ -94,46 +94,28 @@ def test_existing_composition_reads_loaded_settings(checkout, monkeypatch):
         compose_installed_image()
 
 
-def test_launcher_bootstraps_backend_and_reports_missing_runtime(tmp_path):
+@pytest.mark.parametrize("launcher", ["run_app.py", "run_test_chatterbox.py"])
+def test_launcher_bootstraps_backend_without_legacy_runtime(tmp_path, launcher):
     repo = Path(__file__).resolve().parents[3]
     env_file = tmp_path / "launcher.env"
     env_file.write_text("AICS_CHATTERBOX_RUNTIME_ROOT=Z:/absent-runtime\n"
                         "AICS_CHATTERBOX_MODEL_ROOT=Z:/absent-models\n"
-                        "AICS_CHATTERBOX_CACHE_ROOT=Z:/cache\n")
+                        "AICS_LLM_PROVIDER=\nAICS_IMAGE_PROVIDER=\nAICS_UPSCALE_PROVIDER=\n")
     process = os.environ.copy()
     process.pop("PYTHONPATH", None)
-    for name in ("AICS_CHATTERBOX_RUNTIME_ROOT", "AICS_CHATTERBOX_MODEL_ROOT", "AICS_CHATTERBOX_CACHE_ROOT"):
-        process.pop(name, None)
     process["AICS_ENV_FILE"] = str(env_file)
-    result = subprocess.run([sys.executable, str(repo / "run_test_chatterbox.py")],
-                            cwd=tmp_path, env=process, text=True, capture_output=True, timeout=20)
-    assert result.returncode != 0
-    assert "AICS_CHATTERBOX_RUNTIME_ROOT directory does not exist" in result.stderr
+    process["QT_QPA_PLATFORM"] = "offscreen"
+    for name in ("AICS_LLM_PROVIDER", "AICS_IMAGE_PROVIDER", "AICS_UPSCALE_PROVIDER", "OPENAI_API_KEY"):
+        process.pop(name, None)
+    process["AICS_CHATTERBOX_RUNTIME_ROOT"] = "Z:/also-absent"
+    report = tmp_path / "launch.json"
+    result = subprocess.run([sys.executable, str(repo / launcher), "--release-smoke", str(report)],
+                            cwd=tmp_path, env=process, text=True, capture_output=True, timeout=45)
+    assert result.returncode == 0, result.stderr
+    import json
+    assert json.loads(report.read_text())["window_visible"] is True
+    assert "Checking Chatterbox runtime" not in result.stdout
     assert "No module named 'app'" not in result.stderr
-
-
-def test_launcher_process_path_overrides_dotenv(tmp_path):
-    repo = Path(__file__).resolve().parents[3]
-    env_file = tmp_path / "launcher.env"
-    models = tmp_path / "models"
-    models.mkdir()
-    env_file.write_text("AICS_CHATTERBOX_RUNTIME_ROOT=Z:/missing-from-file\n"
-                        f"AICS_CHATTERBOX_MODEL_ROOT={models.as_posix()}\n"
-                        "AICS_CHATTERBOX_CACHE_ROOT=Z:/cache\n")
-    runtime = tmp_path / "runtime override"
-    runtime.mkdir()
-    process = os.environ.copy()
-    process.pop("PYTHONPATH", None)
-    process["AICS_ENV_FILE"] = str(env_file)
-    process["AICS_CHATTERBOX_RUNTIME_ROOT"] = str(runtime)
-    for name in ("AICS_CHATTERBOX_MODEL_ROOT", "AICS_CHATTERBOX_CACHE_ROOT"):
-        process.pop(name, None)
-    result = subprocess.run([sys.executable, str(repo / "run_test_chatterbox.py")],
-                            cwd=tmp_path, env=process, text=True, capture_output=True, timeout=20)
-    assert result.returncode != 0
-    assert "AICS_CHATTERBOX_RUNTIME_ROOT directory does not exist" not in result.stderr
-    assert "Checking Chatterbox runtime" in result.stdout
-    assert str(runtime) in result.stdout
 
 
 def test_real_env_is_ignored_and_example_is_tracked():

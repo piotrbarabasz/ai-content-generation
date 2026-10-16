@@ -14,6 +14,7 @@ def test_tts_catalog_schema_round_trips_to_camel_case_payload() -> None:
         "chatterbox_v3",
         "piper",
         "xtts_v2_eval",
+        "openai",
     )
 
     chatterbox_provider = payload["providers"][0]
