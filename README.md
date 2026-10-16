@@ -17,7 +17,8 @@ uses SQLite and files; application services keep provider and media work isolate
   **Project storage** to preview and explicitly remove eligible cache/work/orphans.
 - Plan scenes, edit visual prompts, import or generate images, and manage selected
   visuals through the editor.
-- Generate section audio through supported optional runtimes, edit a timeline,
+- Generate OpenAI narration with durable settings, paid-operation budgets and
+  resumable chunks; retain historical local-provider audio. Edit a timeline,
   preview scenes, and render playable MP4 with FFmpeg.
 - Run deterministic mock workflows and the offline automated tests without AI
   credentials, GPU access or model downloads.
@@ -54,7 +55,7 @@ python -m pip install -e ".[dev]"
 Start the desktop editor with:
 
 ```sh
-python -m app.desktop
+python run_app.py
 ```
 
 Or install the `ai-content-studio` command entry point through the editable
@@ -74,12 +75,16 @@ local media tools and synthetic fixtures; provider smoke tests are separate.
 
 ## Optional providers and API
 
-The desktop can use optional OpenAI text/image APIs and local image and TTS
-runtimes. API keys are read through explicit environment configuration; for
-example, OpenAI features require `OPENAI_API_KEY`. Local Chatterbox, Piper and
-image runtimes have separate setup and hardware requirements. XTTS remains
-evaluation-only. Installing the base package or dev extra does not install model
-weights or optional heavyweight runtimes.
+The primary narration backend is OpenAI Speech. Set `OPENAI_API_KEY` in your
+ignored `.env`; audio generation requires a separate estimated-cost approval.
+The normal launcher needs no local TTS runtime, CUDA, PyTorch or voice checkpoint.
+Historical narration remains playable, and replacing it requires explicit migration.
+See [OpenAI narration setup and acceptance](docs/desktop/D078_OPENAI_NARRATION.md)
+for controls, budgets, model retirement and the opt-in live smoke command.
+
+OpenAI text/image APIs and local image runtimes remain optional. Legacy Chatterbox,
+Piper and evaluation-only XTTS tooling is retained with separate setup requirements.
+Installing the base package or dev extra does not install local model weights.
 
 - [Environment configuration](docs/desktop/ENVIRONMENT_CONFIGURATION.md)
 - [Runtime profiles](docs/tts/RUNTIME_PROFILES.md)

@@ -322,6 +322,7 @@ def test_future_ui_selection_path_preserves_identity_and_cache_boundaries(
     assert catalog_status == 200
     assert tuple(provider["id"] for provider in catalog["providers"]) == (
         "chatterbox_v3",
+        "openai",
     )
     selection = catalog["providers"][0]
     model = selection["models"][0]

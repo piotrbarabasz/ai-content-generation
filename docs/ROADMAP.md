@@ -57,3 +57,7 @@ finishing/caption offsets, alongside the legacy card mode.
 M7 includes [D077 automatic narration duration repair](desktop/D077_DURATION_REPAIR.md):
 measured speaking-rate calibration, bounded selective chapter rewrites and TTS,
 with explicit paid-call opt-in before the existing narration duration gate.
+
+M7 includes [D078 OpenAI narration](desktop/D078_OPENAI_NARRATION.md):
+revisioned delivery controls, explicit legacy migration, approved estimated-spend
+limits and resumable measured audio through the normal desktop launcher.

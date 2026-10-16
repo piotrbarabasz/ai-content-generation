@@ -403,3 +403,41 @@ def test_request_cap_and_lowered_policy_limits_are_enforced(env):
 def test_policy_contract_rejects_unbounded_or_implicit_authorization(values):
     with pytest.raises(ValueError):
         DurationRepairPolicy(**values)
+
+
+def test_d078_cloud_measurements_drive_duration_repair_without_images(tmp_path):
+    from app.desktop.cloud_audio import CloudAudioServices
+    from app.providers.openai_tts import OpenAITTSProvider
+    from app.providers.tts_result import TTSSynthesisResult
+    from app.application.plan_duration import plan_duration_result, selected_narration
+    class SyntheticSpeech(OpenAITTSProvider):
+        def synthesize(self, text, voice_config=None):
+            seconds = len(text.split()) / 1.5
+            stream = BytesIO()
+            with wave.open(stream, 'wb') as writer:
+                writer.setparams((1,2,24000,0,'NONE','not compressed'))
+                writer.writeframes(b'\x01\x00' * round(seconds*24000))
+            payload=stream.getvalue()
+            return TTSSynthesisResult(payload,24000,round(seconds*24000)/24000,'wav','openai')
+    env=Environment(tmp_path/'duration-cloud',476)
+    try:
+        audio=CloudAudioServices(env.session,provider=SyntheticSpeech(environment={'OPENAI_API_KEY':'offline'}))
+        choice=audio.choices(env.session.project.language)[0]
+        sections=env.session.active_script.sections
+        original_script=env.session.active_script
+        audio.approve_operation(audio.estimate(sections,choice),5,max_attempts=1)
+        async def generate_all():
+            for section in sections:
+                assert await audio.generate(section,choice)=='completed'
+        asyncio.run(generate_all())
+        measurements=[selected_narration(audio,s,choice,'original') for s in sections]
+        duration=plan_duration_result(env.plan,measurements,len(sections))
+        assert duration.state=='BLOCKED' and duration.actual>660
+        snapshot=env.service.measure(env.plan,audio,choice)
+        proposal=env.service.propose(env.plan,snapshot)
+        assert proposal.adjustments and all(a.expected_delta_seconds<0 for a in proposal.adjustments)
+        assert env.session.active_script==original_script and env.provider.calls==[]
+        assert not any('image' in m.artifact_type for m in audio.index.manifests())
+        assert audio.estimate(sections,choice)['reuse']==18
+    finally:
+        env.session.close()

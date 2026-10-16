@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 CONCRETE_PROVIDERS = {
+    "openai",
     "chatterbox_v3",
     "piper",
     "xtts_v2_eval",
@@ -82,7 +83,7 @@ def test_production_catalog_registration_is_explicit_and_excludes_experiments() 
         and isinstance(keyword.value.value, str)
     ]
 
-    assert registered == ["chatterbox_v3", "piper", "xtts_v2_eval"]
+    assert registered == ["chatterbox_v3", "piper", "xtts_v2_eval", "openai"]
     assert all("moss" not in provider.lower() for provider in registered)
     assert all("experimental" not in provider.lower() for provider in registered)
 

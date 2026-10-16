@@ -73,6 +73,20 @@ def build_tts_provider(
         raise TTSFactoryError("TTS provider configuration must be a ProviderConfig instance.")
     if provider_config.provider_type is not ProviderType.TTS:
         raise TTSFactoryError("ProviderConfig must have provider_type 'tts'.")
+    if provider_config.provider_name == "openai":
+        from app.domain.narration import NarrationSettings
+        from .openai_tts import OpenAITTSProvider
+        values = dict(provider_config.settings)
+        key_env = values.pop("apiKeyEnv", "OPENAI_API_KEY")
+        if type(key_env) is not str or not key_env.isidentifier():
+            raise TTSFactoryError("Use a named environment variable for the speech credential.")
+        try:
+            provider = OpenAITTSProvider(settings=NarrationSettings(**values), api_key_env=key_env)
+        except (ValueError, TypeError) as exc:
+            raise TTSFactoryError("Invalid OpenAI narration settings.") from exc
+        target = registry or ProviderRegistry()
+        target.register(provider)
+        return target.resolve_from_config(provider_config)
     try:
         settings = TTSSettings.from_mapping(
             provider_config.settings, provider=provider_config.provider_name

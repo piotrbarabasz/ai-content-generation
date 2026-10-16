@@ -41,10 +41,10 @@ def test_user_data_is_absolute_and_separate_from_installation(tmp_path):
 
 
 def test_installed_audio_is_unavailable_without_active_private_runtime(tmp_path):
-    from app.desktop.product_composition import compose_installed_audio, compose_installed_chatterbox_audio
+    from app.desktop.product_composition import compose_installed_piper_audio, compose_installed_chatterbox_audio
 
     paths = UserDataPaths.discover({"LOCALAPPDATA": str(tmp_path)})
-    assert compose_installed_audio(object(), paths=paths) is None
+    assert compose_installed_piper_audio(object(), paths=paths) is None
     assert compose_installed_chatterbox_audio(object(), paths=paths) is None
 
 

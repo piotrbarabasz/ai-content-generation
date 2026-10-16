@@ -118,6 +118,11 @@ class DesktopPipelineDriver:
     def validate_narration(self, plan):
         self.editor.video_plan.script_service.require_narration(plan)
 
+    async def authorize_narration(self, sections, config):
+        authorize = getattr(self.editor.audio, "authorize_sections", None)
+        if authorize is not None and not await authorize(sections, config.voice_choice):
+            raise AutomaticWorkflowCanceled("NARRATION_BUDGET")
+
     def plan_script_progress(self, plan):
         service = self.editor.video_plan.script_service
         states = service.progress(plan) if service is not None else ()

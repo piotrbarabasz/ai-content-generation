@@ -233,3 +233,15 @@ def test_repair_failures_and_cancel_never_launch_images(failure):
     with pytest.raises(expected):
         asyncio.run(AutomaticWorkflow(driver).run(config()))
     assert "image" not in driver.calls and "plan-check" not in driver.calls
+
+
+def test_narration_budget_rejection_stops_automatic_before_voice_or_images():
+    class BudgetDriver(PlanDriver):
+        async def authorize_narration(self, sections, configuration):
+            assert tuple(sections)==self.sections
+            self.calls.append('budget')
+            raise AutomaticWorkflowCanceled('NARRATION_BUDGET')
+    driver=BudgetDriver()
+    with pytest.raises(AutomaticWorkflowCanceled, match='NARRATION_BUDGET'):
+        asyncio.run(AutomaticWorkflow(driver).run(config()))
+    assert driver.calls==['script','budget']

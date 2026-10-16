@@ -47,7 +47,10 @@ definitions exist only in the desktop plan.
   Images adapter with verified PNG/JPEG publication. Mock transcription, captions,
   assets and rendering continue to prove their contracts; the mock renderer returns
   a reference rather than playable video.
-- Chatterbox V3 and Piper are optional real TTS adapters. XTTS-v2 is evaluation-only.
+- OpenAI Speech is the primary desktop TTS adapter with revisioned project/section
+  delivery controls, paid-operation estimates/approvals and durable response/chunk
+  recovery. See [D078](../desktop/D078_OPENAI_NARRATION.md). Chatterbox V3 and Piper
+  remain optional legacy adapters; XTTS-v2 is evaluation-only.
   Narration bytes, resumable chunks, cache integrity, previews and tempo already
   exist. Catalog discovery needs no model installation.
 - Publishing has a mock, an optional YouTube transport and an approval-gated

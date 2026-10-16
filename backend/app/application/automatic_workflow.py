@@ -130,6 +130,9 @@ class AutomaticWorkflow:
                         config.final_resolution, config.audio_variant)
 
             standard = selected_plan is not None and selected_plan.format == VideoFormat.STANDARD
+            authorize = getattr(self.driver, "authorize_narration", None)
+            if callable(authorize):
+                await self._operation("NARRATION_BUDGET", lambda: authorize(sections, config))
             if standard:
                 for section in sections:
                     await self._ensure_voice(section, config)
@@ -153,6 +156,8 @@ class AutomaticWorkflow:
                         raise AutomaticWorkflowBlocked("PLAN_DURATION", duration.summary +
                             "\nPreview and enable bounded automatic duration repair in Plan, or adjust narration manually.")
                     sections = tuple(self.driver.saved_sections())
+                    if callable(authorize):
+                        await self._operation("NARRATION_BUDGET", lambda: authorize(sections, config))
                     if callable(narration_check):
                         await self._operation("NARRATION", lambda: narration_check(selected_plan))
                     for section in sections:
