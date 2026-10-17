@@ -20,9 +20,7 @@ class ProjectTimelineEdits:
 
     def history(self):
         children, ids = {}, set()
-        for manifest in self.store.list_artifacts():
-            if manifest.artifact_type != "desktop_timeline_edit":
-                continue
+        for manifest in self.store.find_manifests("desktop_timeline_edit"):
             payload = self.store.read_artifact(manifest.storage_key)
             if sha256(payload).hexdigest() != manifest.checksum:
                 raise ValueError("Timeline history checksum mismatch.")

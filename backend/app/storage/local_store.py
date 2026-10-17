@@ -15,7 +15,7 @@ from app.domain.types import JsonDict
 
 from .paths import contained_path, import_path, relative_key, storage_root
 from .artifact_store import StreamingArtifactStore
-from .artifact_index import ProjectArtifactIndex
+from .artifact_index import ProjectArtifactIndex, matches_metadata
 from .manifest import ArtifactManifest, _coerce_metadata
 
 
@@ -214,16 +214,35 @@ class LocalArtifactStore(StreamingArtifactStore):
 
     def open_artifact(self, key: str) -> BinaryIO:
         normalized = _normalize_key(key)
-        if not any(manifest.storage_key == normalized for manifest in self.list_artifacts()):
+        if self.manifest_by_key(normalized) is None:
             raise FileNotFoundError(key)
         return self._artifact_path(normalized).open("rb")
 
     def open_artifact_id(self, artifact_id: str) -> BinaryIO:
         """IDs are opaque and owned by this catalog, never filesystem references."""
-        manifest = next((m for m in self.list_artifacts() if m.artifact_id == artifact_id), None)
+        manifest = self.manifest_by_id(artifact_id)
         if manifest is None:
             raise FileNotFoundError(artifact_id)
         return self._artifact_path(manifest.storage_key).open("rb")
+
+    def manifest_by_id(self, artifact_id):
+        if self._index is not None:
+            return self._index.manifest_by_id(artifact_id)
+        return next((m for m in self.list_artifacts() if m.artifact_id == artifact_id), None)
+
+    def manifest_by_key(self, storage_key):
+        normalized = _normalize_key(storage_key)
+        if self._index is not None:
+            return self._index.manifest_by_key(normalized)
+        return next((m for m in self.list_artifacts() if m.storage_key == normalized), None)
+
+    def find_manifests(self, artifact_type=None, *, metadata=None, include_missing=False):
+        filters = {key: (value, include_missing) for key, value in (metadata or {}).items()}
+        if self._index is not None:
+            return self._index.find_manifests(artifact_type, filters)
+        return tuple(m for m in self.list_artifacts()
+                     if (artifact_type is None or m.artifact_type == artifact_type)
+                     and matches_metadata(m, filters))
 
     def list_artifacts(self, prefix: str = "") -> tuple[ArtifactManifest, ...]:
         normalized_prefix = _normalize_prefix(prefix)

@@ -13,6 +13,7 @@ from app.domain.narration import NarrationSettings
 from app.domain.publication import PublicationSnapshot
 from app.providers.openai_tts import OpenAITTSProvider
 from app.storage.manifest import ArtifactManifest
+from app.storage.artifact_index import matches_metadata
 from app.storage.narration import ProjectNarration
 from app.storage.paths import contained_path
 from app.storage.project_repository import ProjectRepository
@@ -55,10 +56,13 @@ def read_only_scan(workspace, *, job_id=None, provider=None):
             raise ValueError('Indexed artifact checksum mismatch')
         return raw
     store = SimpleNamespace(root=contained_path(root, 'artifacts'), read_artifact=read, list_artifacts=lambda: manifests)
+    by_id = {m.artifact_id: m for m in manifests}
+    store.manifest_by_id = by_id.get
     narration = ProjectNarration.__new__(ProjectNarration)
     narration.session, narration.store = session, store
-    narration.records = SimpleNamespace(history=lambda kind: tuple(sorted(
-        (m for m in manifests if m.artifact_type == 'narrative_' + kind and m.metadata.get('project_id') == project_id),
+    narration.records = SimpleNamespace(history=lambda kind, metadata=None: tuple(sorted(
+        (m for m in manifests if m.artifact_type == 'narrative_' + kind and m.metadata.get('project_id') == project_id
+         and matches_metadata(m, {k: (v, True) for k, v in (metadata or {}).items()})),
         key=lambda m: (m.created_at, m.artifact_id))), read=lambda m: json.loads(read(m.storage_key)))
     service = CloudAudioServices.__new__(CloudAudioServices)
     service.session, service.store, service.narration = session, store, narration

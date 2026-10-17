@@ -13,6 +13,17 @@ from .project_repository import ProjectRepository, UnsupportedSchemaError
 INDEX_APPLICATION_ID = 0x41494341  # AICA
 
 
+def matches_metadata(manifest, filters):
+    """Mirror JSON-path filters for legacy sidecars and frozen owner snapshots."""
+    for path, (expected, include_missing) in filters.items():
+        value = manifest.metadata
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        if value != expected and not (include_missing and value is None):
+            return False
+    return True
+
+
 class ProjectArtifactIndex:
     """Use only while the owning D003 session is open, on its coordinator thread."""
 
@@ -74,4 +85,47 @@ class ProjectArtifactIndex:
     def manifests(self) -> tuple[ArtifactManifest, ...]:
         with self._connection() as connection:
             rows = connection.execute("SELECT manifest_json FROM artifacts ORDER BY storage_key").fetchall()
+        return tuple(ArtifactManifest.from_payload(json.loads(row[0])) for row in rows)
+
+    def manifest_by_id(self, artifact_id):
+        return self._manifest("artifact_id", artifact_id)
+
+    def manifest_by_key(self, storage_key):
+        return self._manifest("storage_key", storage_key)
+
+    def _manifest(self, column, value):
+        # Column names are private constants; values remain bound parameters.
+        with self._connection() as connection:
+            row = connection.execute(
+                f"SELECT artifact_id, storage_key, checksum, size_bytes, manifest_json FROM artifacts WHERE {column}=?",
+                (value,)).fetchone()
+        if row is None:
+            return None
+        manifest = ArtifactManifest.from_payload(json.loads(row[4]))
+        if (manifest.artifact_id, manifest.storage_key, manifest.checksum, manifest.size_bytes) != row[:4]:
+            raise ValueError("Artifact manifest differs from its registered index identity.")
+        return manifest
+
+    def find_manifests(self, artifact_type, metadata):
+        """Filter existing JSON headers in SQLite, reconstruct only matching manifests.
+
+        Metadata has no new index/schema requirement. None as the type permits
+        value-ID searches across types. Missing metadata is retained for callers
+        which must validate legacy/unknown scope rather than silently skip it.
+        """
+        clauses, parameters = [], []
+        if artifact_type is not None:
+            clauses.append("json_extract(manifest_json, '$.artifact_type') = ?")
+            parameters.append(artifact_type)
+        for key, (value, include_missing) in metadata.items():
+            path = '$.metadata.' + key
+            clause = "json_extract(manifest_json, ?) = ?"
+            parameters.extend((path, value))
+            if include_missing:
+                clause = "(" + clause + " OR json_extract(manifest_json, ?) IS NULL)"
+                parameters.append(path)
+            clauses.append(clause)
+        with self._connection() as connection:
+            rows = connection.execute("SELECT manifest_json FROM artifacts WHERE " +
+                (" AND ".join(clauses) or "1") + " ORDER BY storage_key", parameters).fetchall()
         return tuple(ArtifactManifest.from_payload(json.loads(row[0])) for row in rows)

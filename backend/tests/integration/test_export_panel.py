@@ -33,6 +33,9 @@ class FakeStore:
     def list_artifacts(self):
         return self.manifests
 
+    def manifest_by_id(self, artifact_id):
+        return next((value for value in self.manifests if value.artifact_id == artifact_id), None)
+
     def open_artifact_id(self, artifact_id):
         manifest = next(value for value in self.manifests if value.artifact_id == artifact_id)
         return (self.root / manifest.storage_key).open("rb")

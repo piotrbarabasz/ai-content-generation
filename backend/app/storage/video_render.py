@@ -20,6 +20,7 @@ from app.domain.publication import PUBLICATION_KEY, PublicationConflictError
 from app.domain.render_result import OPERATION, RenderedVideo, render_request
 from app.domain.timeline import AudioSpan, TimelineMedia, TimelineRevision
 from .local_store import LocalArtifactStore
+from .artifact_index import matches_metadata
 from .paths import contained_path
 from .result_publication import ResultArtifactIndex
 from .timeline import ProjectTimelineMedia
@@ -124,6 +125,13 @@ class ProjectVideoRender:
         index = SimpleNamespace(repository=frozen_repository, root=self.index.root,
             project_id=self.index.project_id, manifests=lambda: manifests,
             selected=lambda: dict(heads))
+        by_id = {m.artifact_id: m for m in manifests}
+        by_key = {m.storage_key: m for m in manifests}
+        index.manifest_by_id = by_id.get
+        index.manifest_by_key = by_key.get
+        index.find_manifests = lambda kind, filters: tuple(m for m in manifests
+            if (kind is None or m.artifact_type == kind)
+            and matches_metadata(m, filters))
         result = copy(self)
         result.index = index
         result.store = LocalArtifactStore(index.root, index=index)
@@ -181,9 +189,8 @@ class ProjectVideoRender:
         artifact_id = self.index.selected().get("project:video_render")
         if artifact_id is None or (expected_artifact_id is not None and artifact_id != expected_artifact_id):
             return None
-        manifest = next((item for item in self.store.list_artifacts()
-                         if item.artifact_id == artifact_id and item.artifact_type == "video_render"), None)
-        if manifest is None:
+        manifest = self.store.manifest_by_id(artifact_id)
+        if manifest is None or manifest.artifact_type != "video_render":
             return None
         evidence = manifest.metadata.get("render")
         if (not isinstance(evidence, dict) or evidence.get("checksum") != manifest.checksum

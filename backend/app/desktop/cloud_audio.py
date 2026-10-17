@@ -487,18 +487,20 @@ class CloudAudioServices(AudioServices):
 
     def history_audio(self, section):
         values = []
-        for m in self.index.manifests():
+        for m in self.store.find_manifests(metadata={"section_audio.section_id": section.section_id}):
             data = m.metadata.get("section_audio", {})
             if data.get("section_id") == section.section_id:
                 values.append((f"Retained audio {m.artifact_id[-8:]}", m.artifact_id, None))
-        for v in self.narration.history("preview"):
+        for v in self.narration.history("preview", section_id=section.section_id):
             if v["section_id"] == section.section_id:
                 s = NarrationSettings.from_payload(v["settings"])
                 values.append((f"Preview {s.voice} {s.speed:.2f}x · {v['measured_seconds']:.2f}s", v["artifact_id"], v["id"]))
         return tuple(values)
 
     def retained_playback(self, artifact_id):
-        manifest = next(m for m in self.index.manifests() if m.artifact_id == artifact_id)
+        manifest = self.store.manifest_by_id(artifact_id)
+        if manifest is None:
+            raise ValueError("Retained narration artifact is not registered in this project.")
         payload = self.store.read_artifact(manifest.storage_key)
         pcm, _ = inspect_pcm_wav(payload)
         if sha256(payload).hexdigest() != manifest.checksum or not pcm.frame_count:

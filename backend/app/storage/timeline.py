@@ -1,5 +1,7 @@
 """Read-only bridge from D011/D013/D016 selections to exact timeline inputs."""
 
+from copy import copy
+
 from app.domain.timeline import AudioSpan, TimelineMedia
 from .scene_images import ProjectSceneImages
 from .section_tempo import SectionTempoArtifacts
@@ -7,6 +9,9 @@ from .section_tempo import SectionTempoArtifacts
 
 class ProjectTimelineMedia:
     def boundaries(self, media):
+        return self._operation()._boundaries(media)
+
+    def _boundaries(self, media):
         """Only measured sentence edges; approximate timing permits no new cut."""
         timing = self.plans.timing(media.timing_id)
         accepted = self.plans.acceptance(timing.acceptance_id)
@@ -37,6 +42,20 @@ class ProjectTimelineMedia:
         self.repository = index.repository
 
     def resolve(self, source):
+        # Every resolve, including the compiler's final pass, starts fresh.
+        # Reuse only already verified immutable records within this one read.
+        return self._operation()._resolve(source)
+
+    def _operation(self):
+        result = copy(self)
+        result.plans = copy(self.plans)
+        result.plans._records = {}
+        result.images = copy(self.images)
+        result.images.scenes = result.plans
+        result.images._verified = {}
+        return result
+
+    def _resolve(self, source):
         timing = self.plans.timing(source.timing_id)
         accepted = self.plans.acceptance(timing.acceptance_id)
         section = self.repository.get_section(accepted.plan.revision_id)

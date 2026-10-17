@@ -1614,9 +1614,20 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Boundary note:** Background preparation is required because the existing synchronous prerequisite validation/staging blocks the GUI before the asynchronous encoder starts. No live repository is transferred to a worker; final publication/selection keeps its existing owner-thread gate.
 - **Implementation evidence:** [D080 behavior and operator verification](D080_FINAL_RENDER_READINESS.md).
 
+### D081 — Indexed artifact reads and scoped preview history (Performance PR 1)
+
+- **Status:** Implemented; focused regressions pass. Full backend: 2,565 passed, 12 skipped, one pre-existing duration-repair failure reproduced on untouched `fb0c1a6`. See [D081 evidence](../../reports/INDEXED_ARTIFACT_READS_PR1.md) for measurements and limits.
+- **Goal:** Reduce catalog reconstruction and repeated retained-record reads on Timeline validation.
+- **Milestone:** M11; **Priority:** P1.
+- **Dependencies:** Inspected D004 publication/index ownership, D013 scene records, D016 image lineage, D018 compiler, D040 selections, D078 narration and D080 frozen render inputs at `fb0c1a6`. Indexed ID/key reads are absent at this base.
+- **Scope:** Existing SQLite ID/key indexes; metadata filtering before history deserialization; operation-local reuse of retained scene records; compatible legacy and frozen catalogs; deterministic offline regressions and the original audit's synthetic fixtures.
+- **Acceptance criteria:** No full-catalog enumeration for project point reads; unchanged ownership, containment, byte verification, selection history and currentness gates; reopen and legacy compatibility; focused/full tests and comparable scan/parse/SQL/latency measurements.
+- **Out of scope:** Persistence redesign, global caches, weakened verification, preview threading changes, staging/encoding changes, production writes, paid calls, cache/history deletion or automatic merge.
+- **Boundary note:** User explicitly selected Performance PR 1 independently of D080, whose boundary excludes general performance work. This task records that requested boundary before implementation.
+
 ## Backlog provenance and deferred scope
 
-There are **79 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **80 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1634,6 +1645,7 @@ D076 adds the shared reusable channel library and verified clip finishing maps.
 D077 adds opt-in measured narration duration repair before visual generation.
 D078 replaces primary narration with OpenAI Speech, explicit migration and paid-operation controls.
 D079 adds reviewed narration attempt recovery; D080 restores final rendering from retained timelines.
+D081 narrows artifact reads and scoped history on the preview/currentness path.
 None is
 completed merely by publishing this plan.
 

@@ -17,6 +17,7 @@ class ProjectSceneImages:
         self.scenes = ProjectScenePlans(repository, store)
         self.repository, self.store, self.project_id = repository, store, self.scenes.project_id
         self.limits = limits if limits is not None else ImageLimits()
+        self._verified = None  # Private to one Timeline media resolution, never retained.
 
     def _scene(self, acceptance_id, scene_id, *, current):
         accepted = self.scenes.acceptance(acceptance_id)
@@ -77,11 +78,13 @@ class ProjectSceneImages:
     def image(self, artifact_id, *, _visiting=frozenset()):
         if artifact_id in _visiting:
             raise ValueError("Cyclic image source lineage.")
-        matches = [m for m in self.store.list_artifacts() if m.artifact_id == artifact_id
-                   and m.artifact_type == "scene_image" and m.metadata.get("project_id") == self.project_id]
-        if len(matches) != 1:
+        if self._verified is not None and artifact_id in self._verified:
+            return self._verified[artifact_id]
+        manifest = self.store.manifest_by_id(artifact_id)
+        if (manifest is None or manifest.artifact_type != "scene_image"
+                or manifest.metadata.get("project_id") != self.project_id):
             raise ValueError("Unknown image artifact in this project.")
-        image = SceneImage.from_manifest(matches[0])
+        image = SceneImage.from_manifest(manifest)
         scene = self._scene(image.acceptance_id, image.scene_id, current=False)
         if image.project_id != self.project_id or image.section_revision_id != scene.revision_id:
             raise ValueError("Image belongs to a different project scene revision.")
@@ -100,18 +103,19 @@ class ProjectSceneImages:
                     != (image.project_id, image.acceptance_id, image.scene_id, image.section_revision_id)
                     or source.provenance not in ("imported", "generated")):
                 raise ValueError("Motion master must reference its original accepted scene source.")
+        if self._verified is not None:
+            self._verified[artifact_id] = image
         return image
 
     def history(self, scene_id):
-        manifests = sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id))
+        manifests = sorted(self.store.find_manifests("scene_image", metadata={"scene_id": scene_id}),
+                           key=lambda m: (m.created_at, m.artifact_id))
         return tuple(self.image(m.artifact_id) for m in manifests
                      if m.artifact_type == "scene_image" and m.metadata.get("scene_id") == scene_id)
 
     def selection_history(self, scene_id):
         children = {}
-        for manifest in self.store.list_artifacts():
-            if manifest.artifact_type != "scene_image_selection" or manifest.metadata.get("scene_id") != scene_id:
-                continue
+        for manifest in self.store.find_manifests("scene_image_selection", metadata={"scene_id": scene_id}):
             payload = self.store.read_artifact(manifest.storage_key)
             if sha256(payload).hexdigest() != manifest.checksum:
                 raise ValueError("Image selection checksum mismatch.")

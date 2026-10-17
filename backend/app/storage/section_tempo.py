@@ -31,7 +31,7 @@ class SectionTempoArtifacts:
         self.work_root = index.repository.workspace / "work" / "tempo"
 
     def _manifest(self, artifact_id):
-        return next((m for m in self.index.manifests() if m.artifact_id == artifact_id), None)
+        return self.store.manifest_by_id(artifact_id)
 
     def _read(self, artifact_id):
         manifest = self._manifest(artifact_id)
