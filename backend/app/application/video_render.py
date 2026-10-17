@@ -20,8 +20,15 @@ class VideoRenderService:
         self.publication, self.coordinator, self.artifacts, self.renderer = publication, coordinator, artifacts, renderer
 
     def enqueue(self, timeline, *, captions=None):
-        request = render_request(timeline, self.renderer.identity(), captions)
         self.artifacts.current(timeline)
+        return self._enqueue(timeline, captions)
+
+    async def enqueue_async(self, timeline, *, captions=None):
+        await self.artifacts.current_async(timeline)
+        return self._enqueue(timeline, captions)
+
+    def _enqueue(self, timeline, captions):
+        request = render_request(timeline, self.renderer.identity(), captions)
         return self.publication.enqueue("project:video_render", request,
             expected_sections={c.media.section_id: c.media.section_revision_id for c in timeline.clips})
 
@@ -51,7 +58,8 @@ class VideoRenderService:
                         else factory(job.request.algorithm_version)) if callable(factory) else self.renderer
             if renderer.identity() != identity:
                 raise ValueError("Renderer executable identity changed after enqueue.")
-            root = self.artifacts.stage(timeline, captions=captions)
+            progress("staging", 0, len(timeline.clips))
+            root = await self.artifacts.stage_async(timeline, captions=captions, canceled=canceled)
             result = await renderer.render(
                 timeline, root, captions=captions, canceled=canceled, progress=progress)
             if renderer.identity() != identity:

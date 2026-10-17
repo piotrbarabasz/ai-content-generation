@@ -56,6 +56,21 @@ class GenerationThread(QThread):
             self.outcome.emit(None, str(exc))
 
 
+class RenderCheckThread(QThread):
+    outcome = Signal(int, str)
+
+    def __init__(self, token, check, parent):
+        super().__init__(parent)
+        self.token, self.check = token, check
+
+    def run(self):
+        try:
+            self.check()
+            self.outcome.emit(self.token, "")
+        except Exception as exc:
+            self.outcome.emit(self.token, f"Timeline invalid or stale: {exc}")
+
+
 class ProjectEditor(QMainWindow):
     def __init__(self, projects, provider=None, audio_factory=None, scene_factory=None, timeline_factory=None,
                  preview_factory=None, regeneration_factory=None, workflow_mode="manual", publishing_factory=None):
@@ -84,6 +99,10 @@ class ProjectEditor(QMainWindow):
         self.audio.readiness_changed.connect(self._queue_diagnostics)
         self.session = self.snapshot = self.selected_id = None
         self.worker = None
+        self._render_check_token = 0
+        self._render_checks = []
+        self._render_ready = False
+        self._render_reason = "Open a project to render its saved timeline."
         self.dirty = False
         self.loading = False
         self.pipeline_diagnostics = PipelineDiagnostics()
@@ -197,6 +216,19 @@ class ProjectEditor(QMainWindow):
         self.final_render_button = QPushButton("Build / rebuild final render")
         self.final_render_button.clicked.connect(self._rebuild_final_render)
         export_layout.addWidget(self.final_render_button)
+        self.final_render_status = QLabel(self._render_reason)
+        self.final_render_status.setWordWrap(True)
+        export_layout.addWidget(self.final_render_status)
+        self.render_refresh_button = QPushButton("Refresh render availability")
+        self.render_refresh_button.clicked.connect(lambda: self._run(self._bind_regeneration))
+        export_layout.addWidget(self.render_refresh_button)
+        self.final_render_cancel = QPushButton("Cancel final render")
+        self.final_render_cancel.clicked.connect(self.regeneration.cancel)
+        export_layout.addWidget(self.final_render_cancel)
+        self.final_render_result = QLabel("")
+        self.final_render_result.setWordWrap(True)
+        export_layout.addWidget(self.final_render_result)
+        self.regeneration.progress_changed.connect(self.final_render_status.setText)
         self.advanced_regeneration = QToolButton()
         self.advanced_regeneration.setText("Advanced · selective regeneration")
         self.advanced_regeneration.setCheckable(True)
@@ -329,6 +361,7 @@ class ProjectEditor(QMainWindow):
     def _visual_media_changed(self):
         self.preview.timeline_changed(self.timeline.edit)
         self.diagnose_pipeline()
+        self._request_render_readiness()
 
     def _motion_changed(self):
         self.preview.stop()
@@ -361,6 +394,7 @@ class ProjectEditor(QMainWindow):
         self.preview.timeline_changed(edit)
         self.export_panel.refresh()
         self._queue_diagnostics()
+        self._request_render_readiness()
 
     def _scene_plan_changed(self):
         section = self.snapshot.section(self.selected_id) if self.snapshot and self.selected_id else None
@@ -373,6 +407,12 @@ class ProjectEditor(QMainWindow):
         self.diagnose_pipeline()
 
     def _rebuild_final_render(self):
+        if not self.final_render_button.isEnabled():
+            return
+        if getattr(self.regeneration.services, "final_render", None) is not None:
+            self.final_render_result.clear()
+            self.regeneration.start_final_render()
+            return
         index = self.regeneration.outputs.findData("project:video_render")
         if index < 0:
             self.regeneration.status.setText("Final rendering is unavailable for the current project configuration.")
@@ -384,6 +424,7 @@ class ProjectEditor(QMainWindow):
         if not self.loading:
             self.dirty = True
             self.audio.set_draft(True)
+            self._sync_render_controls()
 
     def _ready(self, clean=True):
         if self.quality_panel.busy:
@@ -421,6 +462,7 @@ class ProjectEditor(QMainWindow):
         self.auto_run_button.setEnabled(not busy and self.session is not None
                                         and self.workflow_mode.currentData() == "automatic"
                                         and not self.automatic_busy)
+        self._sync_render_controls()
 
     def _run(self, action):
         try:
@@ -538,12 +580,70 @@ class ProjectEditor(QMainWindow):
                 if choice is None:
                     raise ValueError("Choose an audio voice before rebuilding narration.")
                 return self.audio.services.selection(choice)
-            self.regeneration.bind(self.regeneration_factory(self.session, self.audio.services,
-                self.visuals.services, self.timeline.services, self.preview.services, selection))
-            self.final_render_button.setEnabled(
-                self.regeneration.outputs.findData("project:video_render") >= 0
-            )
+            try:
+                self.regeneration.bind(self.regeneration_factory(self.session, self.audio.services,
+                    self.visuals.services, self.timeline.services, self.preview.services, selection))
+            except Exception as exc:
+                logging.getLogger("aics.pipeline").exception("Final render composition failed")
+                self.regeneration.bind(None)
+                self._render_reason = f"Final render service unavailable: {exc}"
+                self._render_ready = False
+                self._render_check_token += 1
+                self._sync_render_controls()
+                return
             self.export_panel.refresh()
+        self._request_render_readiness()
+
+    def _sync_render_controls(self):
+        busy = self.regeneration.busy or self.automatic_busy
+        editing = self.dirty or self.worker is not None or self.video_plan.busy
+        self.final_render_button.setEnabled(self._render_ready and not busy and not editing)
+        self.render_refresh_button.setEnabled(self.session is not None and not busy)
+        self.final_render_cancel.setEnabled(self.regeneration.busy)
+        reason = ("Final render already running; use Cancel final render." if self.regeneration.busy
+                  else "Wait for the automatic workflow to finish." if self.automatic_busy
+                  else "Save drafts and finish script generation before rendering." if editing
+                  else self._render_reason)
+        self.final_render_status.setText(reason)
+        self.final_render_button.setToolTip(reason)
+
+    def _request_render_readiness(self):
+        self._render_check_token += 1
+        token = self._render_check_token
+        self._render_ready = False
+        final = getattr(self.regeneration.services, "final_render", None)
+        try:
+            if self.session is None:
+                raise ValueError("Open a project to render its saved timeline.")
+            if final is None:
+                raise ValueError("Final render service unavailable for this project configuration.")
+            if final.render is None:
+                raise ValueError(final.render_error or "Final render service unavailable.")
+            edit = self.timeline.edit
+            if edit is None or not edit.timeline.clips:
+                raise ValueError("Timeline missing: save a nonempty timeline before rendering.")
+            frozen = final.render.artifacts.frozen()
+            self._render_reason = "Checking saved timeline media for final rendering..."
+            worker = RenderCheckThread(token, lambda: frozen.current(edit.timeline), self)
+            self._render_checks.append(worker)
+            worker.outcome.connect(self._render_checked)
+            worker.finished.connect(lambda: self._render_check_finished(worker))
+            worker.start()
+        except Exception as exc:
+            self._render_reason = str(exc)
+        self._sync_render_controls()
+
+    def _render_check_finished(self, worker):
+        self._render_checks.remove(worker)
+        worker.deleteLater()
+
+    def _render_checked(self, token, error):
+        if token != self._render_check_token:
+            return
+        self._render_ready = not error
+        self._render_reason = error or ("Verified final render available; ready to reuse or rebuild."
+            if self.export_panel.manifest is not None else "Ready for final rendering from the saved timeline.")
+        self._sync_render_controls()
 
     def _regenerating(self, busy):
         for index in range(3):
@@ -552,9 +652,7 @@ class ProjectEditor(QMainWindow):
         self.section_choice.setEnabled(not busy)
         self.buttons["Create project"].setEnabled(not busy)
         self.buttons["Open project"].setEnabled(not busy)
-        self.final_render_button.setEnabled(
-            not busy and self.regeneration.outputs.findData("project:video_render") >= 0
-        )
+        self._sync_render_controls()
         if busy:
             self.audio.stop()
             self.preview.stop()
@@ -565,6 +663,11 @@ class ProjectEditor(QMainWindow):
             raise ValueError("Finish audio, image, or preview work before regeneration.")
 
     def _regenerated(self):
+        if self.regeneration.last_target == "project:video_render":
+            self.export_panel.refresh()
+            self.final_render_result.setText(self.regeneration.status.text())
+            self._request_render_readiness()
+            return
         if self.timeline.services:
             self.timeline.run(self.timeline.refresh)
         self._run(self._bind_regeneration)
@@ -747,9 +850,7 @@ class ProjectEditor(QMainWindow):
         if self.video_plan.busy:
             for index in range(1, self.tabs.count()):
                 self.tabs.setTabEnabled(index, False)
-        self.final_render_button.setEnabled(
-            not busy and self.regeneration.outputs.findData("project:video_render") >= 0
-        )
+        self._sync_render_controls()
 
     def diagnose_pipeline(self):
         if self.session is None:
@@ -876,11 +977,16 @@ class ProjectEditor(QMainWindow):
         finally:
             self.automatic_busy = False
             self._update_workflow_controls()
+            self._request_render_readiness()
             loop.close()
             self.automatic_loop = self.automatic_task = None
             self.automatic_workflow = self.automatic_driver = None
 
     def closeEvent(self, event):
+        if any(worker.isRunning() for worker in self._render_checks):
+            self.status.setText("Waiting for final render media verification before closing.")
+            event.ignore()
+            return
         application_dialog=getattr(self,"channel_library_dialog",None)
         if application_dialog is not None and application_dialog.busy:
             application_dialog.cancel()

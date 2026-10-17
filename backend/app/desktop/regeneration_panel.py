@@ -9,10 +9,13 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPus
 class RegenerationPanel(QWidget):
     busy_changed = Signal(bool)
     finished = Signal()
+    progress_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.services = self.task = self.loop = None
+        self.last_target = None
+        self._progress = lambda: self.services.progress
         self.before_start = lambda: None
         layout = QVBoxLayout(self)
         self.outputs = QComboBox()
@@ -50,15 +53,30 @@ class RegenerationPanel(QWidget):
         self.cancel_button.setEnabled(False)
 
     def start(self):
+        self._start()
+
+    def start_final_render(self):
+        final = getattr(self.services, "final_render", None)
+        if final is None:
+            return
+        self._start(final)
+
+    def _start(self, final=None):
         if self.busy or self.services is None:
             return
         try:
             self.before_start()
         except Exception as exc:
             self.status.setText(str(exc))
+            self.progress_changed.emit(self.status.text())
             return
+        self.last_target = "project:video_render" if final is not None else self.outputs.currentData()
         self.loop = asyncio.new_event_loop()
-        self.task = self.loop.create_task(self.services.run(self.outputs.currentData()))
+        self.task = self.loop.create_task(final.run_final_render() if final is not None
+                                          else self.services.run(self.outputs.currentData()))
+        self._progress = final.render_progress if final is not None else lambda: self.services.progress
+        self.status.setText("Preparing final render" if final is not None else "Preparing regeneration")
+        self.progress_changed.emit(self.status.text())
         self.rebuild.setEnabled(False)
         self.outputs.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -69,7 +87,8 @@ class RegenerationPanel(QWidget):
         self.loop.call_soon(self.loop.stop)
         self.loop.run_forever()
         if not self.task.done():
-            self.status.setText(self.services.progress)
+            self.status.setText(self._progress())
+            self.progress_changed.emit(self.status.text())
             return
         self.timer.stop()
         try:
@@ -78,6 +97,7 @@ class RegenerationPanel(QWidget):
         except (Exception, asyncio.CancelledError) as exc:
             self.status.setText(str(exc) or "Canceled")
         finally:
+            self.progress_changed.emit(self.status.text())
             self.task = None
             self.loop.close()
             self.loop = None
