@@ -1,10 +1,14 @@
 """Verified render inputs and immutable publication of selected D018 snapshots."""
 
 from contextlib import contextmanager
+import asyncio
+from copy import copy
 from dataclasses import replace
 from hashlib import file_digest
 import json
 import shutil
+from threading import Event
+from types import SimpleNamespace
 from uuid import uuid4
 
 from PIL import Image, ImageOps
@@ -19,6 +23,7 @@ from .local_store import LocalArtifactStore
 from .paths import contained_path
 from .result_publication import ResultArtifactIndex
 from .timeline import ProjectTimelineMedia
+from app.runtime.media_process import RenderCanceled
 
 
 def timeline_inputs(timeline):
@@ -65,14 +70,18 @@ class RenderResultIndex(ResultArtifactIndex):
         remaining = replace(request, inputs=tuple(e for e in request.inputs if e.artifact_id is None))
         if not super()._artifact_inputs_match(connection, remaining, visiting):
             return False
+        # Keep the final gate's byte/currentness checks, but resolve all clips
+        # against one fresh owner-captured catalog rather than requerying it for
+        # every nested media lookup. No verification receipt survives this call.
+        media = ProjectVideoRender(self, self.media.store).frozen().media
         try:
             for source, clip in zip(timeline_inputs(timeline), timeline.clips):
-                selected = self.media.resolve(source)
+                selected = media.resolve(source)
                 full = selected.audio
                 normalized = replace(clip.media, audio=replace(clip.media.audio,
                                                                start_sample=full.start_sample,
                                                                end_sample=full.end_sample))
-                boundaries = self.media.boundaries(clip.media)
+                boundaries = media.boundaries(clip.media)
                 if (normalized != selected or clip.media.audio.start_sample not in boundaries
                         or clip.media.audio.end_sample not in boundaries):
                     return False
@@ -86,6 +95,69 @@ class ProjectVideoRender:
         if not isinstance(index, RenderResultIndex) or store._index is not index:
             raise ValueError("Render publication requires the owning render-aware index/store.")
         self.index, self.store, self.media = index, store, index.media
+
+    def frozen(self):
+        """Capture read-only inputs on the owner; workers never receive SQLite.
+
+        Only render verification/staging uses this private snapshot. Publication
+        continues through the live owner's unchanged D040 gate.
+        """
+        repository = self.index.repository
+        project, script = repository.project(), repository.active_script()
+        manifests, heads = self.index.manifests(), self.index.selected()
+        sections = {section.id: section for section in script.sections}
+        for manifest in manifests:
+            metadata = manifest.metadata
+            image = metadata.get("scene_image")
+            audio = metadata.get("section_audio")
+            revision = (metadata.get("revision_id") or
+                        (image.get("section_revision_id") if isinstance(image, dict) else None) or
+                        (audio.get("revision_id") if isinstance(audio, dict) else None))
+            if isinstance(revision, str) and revision not in sections:
+                try:
+                    sections[revision] = repository.get_section(revision)
+                except KeyError:
+                    pass  # An unrelated corrupt history must not block capture.
+        frozen_repository = SimpleNamespace(workspace=repository.workspace,
+            project=lambda: project, active_script=lambda: script,
+            get_section=lambda revision: sections[revision])
+        index = SimpleNamespace(repository=frozen_repository, root=self.index.root,
+            project_id=self.index.project_id, manifests=lambda: manifests,
+            selected=lambda: dict(heads))
+        result = copy(self)
+        result.index = index
+        result.store = LocalArtifactStore(index.root, index=index)
+        result.media = ProjectTimelineMedia(index, result.store)
+        return result
+
+    async def current_async(self, timeline):
+        frozen = self.frozen()
+        await asyncio.to_thread(frozen.current, timeline)
+        if (self.index.repository.active_script() != frozen.index.repository.active_script()
+                or self.index.selected() != frozen.index.selected()
+                or self.index.manifests() != frozen.index.manifests()):
+            raise ValueError("Project media changed during verification; refresh render availability.")
+
+    async def stage_async(self, timeline, *, captions=None, canceled=lambda: False):
+        frozen, stop = self.frozen(), Event()
+        worker = asyncio.create_task(asyncio.to_thread(
+            frozen.stage, timeline, captions=captions, canceled=stop.is_set))
+        try:
+            while not worker.done():
+                if canceled():
+                    stop.set()
+                await asyncio.sleep(.02)
+            root = await worker
+            if canceled():
+                raise RenderCanceled("Render canceled during staging; staged files retained.")
+            return root
+        except asyncio.CancelledError:
+            stop.set()
+            try:
+                await asyncio.shield(worker)
+            except RenderCanceled:
+                pass
+            raise
 
     def motion_current(self, manifest=None):
         """Retain old videos, but expose changed project motion as stale."""
@@ -142,15 +214,19 @@ class ProjectVideoRender:
                     or clip.media.audio.end_sample not in boundaries):
                 raise ValueError("Render requires the exact currently selected timeline inputs.")
 
-    def stage(self, timeline, *, captions=None):
+    def stage(self, timeline, *, captions=None, canceled=lambda: False):
         # A unique private directory per invocation retains failed bytes for
         # diagnosis and cannot overwrite a previous attempt or source artifact.
         workspace = self.index.repository.workspace
         root = contained_path(workspace, "work/render/" + uuid4().hex)
         root.mkdir(parents=True)
         for i, clip in enumerate(timeline.clips):
+            if canceled():
+                raise RenderCanceled("Render canceled during staging; staged files retained.")
             self._stage_clip(root, i, clip)
         if captions is not None:
+            if canceled():
+                raise RenderCanceled("Render canceled before caption staging.")
             self._stage_captions(root, timeline, captions)
         return root
 

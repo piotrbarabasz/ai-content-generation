@@ -435,7 +435,7 @@ task, and D040 precedes generation even though it belongs to M8.
 | M4 — Script and scene pipeline | Structured sections, semantic scene plan and editable prompts | D013, D014, D015 |
 | M5 — Visual pipeline | Imported/generated image artifacts and explicit selection | D016, D017 |
 | M6 — Timeline and rendering | Versioned timeline, real MP4 and coherent proxy preview | D018, D019, D046 |
-| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077, D078, D079 |
+| M7 — Desktop editor | Project/section/audio/scene panels, Timeline Lite and plan-driven scripting | D020, D021, D022, D023, D063, D064, D065, D067, D068, D069, D070, D071, D072, D073, D075, D076, D077, D078, D079, D080 |
 | M8 — Regeneration and recovery | Conditional publication and end-to-end selective regeneration | D024, D040 |
 | M9 — Installable MVP | Early packaging proof, distributable installer and all 16 acceptance steps | D002, D025, D041 |
 | M10 — Production AI integrations | Real providers, managed GPU, references, alignment and captions | D026, D027, D028, D029, D030, D031, D032, D057, D059, D060, D061, D062, D066 |
@@ -1599,9 +1599,24 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Synthetic PCM and mocked SDK; retained-response/provenance, exhaustion, exceptional retry, cancellation, budget and Automatic regressions; full backend suite and diff check.
 - **Boundary note:** The old ledger collapses unknown exceptions and pre-dispatch exhaustion into `failed_or_uncertain`. Recovering the original transport exception is impossible when it was not retained; new diagnostics must preserve this uncertainty rather than invent a cause or invoice.
 
+### D080 — Restore final render availability from retained timelines
+
+- **Status:** Implemented on `fix/final-render-readiness`; all nine new readiness tests pass, including real synthetic FHD export. Full backend: 2552 passed, 12 skipped, one pre-existing narration-duration test failure reproduced on untouched `22fdd47`. Original 64-clip project operator acceptance remains unverified; not marked Complete.
+- **Milestone:** M7
+- **Priority:** P1
+- **Goal:** A completed saved timeline can start the existing verified final MP4 workflow without regenerating assets.
+- **Dependencies:** D019, D023, D040, D065, D078. Inspected renderer/publication, saved timeline, editor wiring and cloud audio at `22fdd47`; cloud audio no longer supplies the legacy `production` port expected by regeneration composition.
+- **Scope:** Remove the legacy-audio and proxy-preview prerequisites for final rendering; visible, synchronized render readiness/progress/errors; render-only action and reuse; bounded background read verification/staging with SQLite retained on its owner thread; synthetic UI/render regressions.
+- **Out of scope:** Paid calls or production-project modifications, audio/image/timeline regeneration, cache cleanup, general performance refactor, architecture migration or automatic merge.
+- **Main code areas:** Desktop regeneration/editor/export wiring, existing render service/storage, focused integration tests.
+- **Acceptance criteria:** Reopen/saved timeline/no-preview/missing tools/stale/busy/error/cancel/success states; actual short synthetic FFmpeg publication enables playback/save and downstream original-video consumers; no asset regeneration; focused/full backend tests and diff check. Real 64-scene render remains operator acceptance only.
+- **Test strategy:** Temporary SQLite/projects, retained synthetic PCM/images, offscreen Qt button callbacks, worker thread/heartbeat assertions, short local FFmpeg smoke, asset hashes and zero provider-call assertions.
+- **Boundary note:** Background preparation is required because the existing synchronous prerequisite validation/staging blocks the GUI before the asynchronous encoder starts. No live repository is transferred to a worker; final publication/selection keeps its existing owner-thread gate.
+- **Implementation evidence:** [D080 behavior and operator verification](D080_FINAL_RENDER_READINESS.md).
+
 ## Backlog provenance and deferred scope
 
-There are **78 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **79 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1618,6 +1633,7 @@ D075 adds narrative planning, retained script continuity and explicit editorial 
 D076 adds the shared reusable channel library and verified clip finishing maps.
 D077 adds opt-in measured narration duration repair before visual generation.
 D078 replaces primary narration with OpenAI Speech, explicit migration and paid-operation controls.
+D079 adds reviewed narration attempt recovery; D080 restores final rendering from retained timelines.
 None is
 completed merely by publishing this plan.
 

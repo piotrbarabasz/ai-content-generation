@@ -64,3 +64,7 @@ limits and resumable measured audio through the normal desktop launcher.
 
 M7 includes [D079 narration attempt recovery](desktop/D079_NARRATION_RECOVERY.md):
 read-only eligibility scans, verified response recovery and a bounded, operator-reviewed retry.
+
+M7 includes [D080 final render readiness](desktop/D080_FINAL_RENDER_READINESS.md):
+render retained timelines independently of proxy/cloud generation, with visible
+readiness, local progress and verified original-video publication.

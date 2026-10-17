@@ -1,5 +1,6 @@
 """Composition over retained project state; all writes use existing services."""
 
+import asyncio
 import json
 
 from app.application.invalidation import evaluate_freshness
@@ -28,6 +29,7 @@ class ProjectRegeneration:
         self.session, self.index, self.store = session, index, store
         self.audio, self.audio_selection, self.run_audio = audio, audio_selection, run_audio
         self.scenes, self.timeline, self.preview, self.render = scenes, timeline, preview, render
+        self.render_error = ""
         self.image_settings = image_settings or (lambda scene_id: {"width": 512, "height": 512})
         self.jobs = index.jobs
         self.coordinator = JobCoordinator(self.jobs)
@@ -40,6 +42,59 @@ class ProjectRegeneration:
             self.coordinator.cancel(self.attempt.id)
         if self.preview is not None:
             self.preview.cancel()
+
+    def render_progress(self):
+        if self.attempt is not None:
+            progress = self.jobs.get_attempt(self.attempt.id).progress
+            if progress is not None:
+                return f"Final render: {progress.phase} ({progress.completed}/{progress.total})"
+        return self.service.progress
+
+    async def run_final_render(self):
+        """Render only the saved timeline. Never traverse asset generation steps."""
+        from app.application.regeneration import StepOutcome
+        if self.service.busy:
+            raise ValueError("Regeneration is already running.")
+        self.service.busy, self.service.canceled = True, False
+        key = "project:video_render"
+        try:
+            self.service.progress = "Verifying saved timeline for final rendering"
+            if self.render is None:
+                raise ValueError(self.render_error or "Final render service unavailable.")
+            edit = self.timeline.current() if self.timeline is not None else None
+            if edit is None or not edit.timeline.clips:
+                raise ValueError("Save a nonempty timeline before final rendering.")
+            timeline = edit.timeline
+            await self.render.artifacts.current_async(timeline)
+            request = self._bound(render_request(timeline, self.render.renderer.identity()),
+                {c.media.section_id: self.session.repository.get_section(c.media.section_revision_id)
+                 for c in timeline.clips}.values())
+            frozen = self.render.artifacts.frozen()
+            if await asyncio.to_thread(ProjectRegeneration._fresh_artifact,
+                                       frozen.index, frozen.store, key, request):
+                if self.timeline.current() != edit or self.index.selected() != frozen.index.selected():
+                    raise ValueError("Render selection changed during verification; refresh before rendering.")
+                return (StepOutcome(key, "reused", "Verified final render already available."),)
+            if self.service.canceled:
+                return (StepOutcome(key, "canceled"),)
+            if self.timeline.current() != edit:
+                raise ValueError("Saved timeline changed; refresh before rendering.")
+            attempt = self._resume(key, request)
+            if attempt is None:
+                attempt = await self.render.enqueue_async(timeline)
+            if self.service.canceled:
+                self.coordinator.cancel(attempt.id)
+                return (StepOutcome(key, "canceled"),)
+            await self._run_job(attempt, self.render.run)
+            result = self.index.result(self.jobs.get_attempt(attempt.id))
+            if not result.selected_at_publication:
+                return (StepOutcome(key, "obsolete", "Render retained; timeline inputs changed."),)
+            return (StepOutcome(key, "rebuilt", "Final video ready."),)
+        except Exception as exc:
+            return (StepOutcome(key, "canceled" if self.service.canceled else "failed", str(exc)),)
+        finally:
+            self.service.busy = False
+            self.service.progress = "Finished"
 
     def _queue_ready(self):
         if self.jobs.paused:
@@ -99,8 +154,12 @@ class ProjectRegeneration:
         return PublicationSnapshot(self.session.project.id, "regeneration-check", tuple(sections)).bind(request)
 
     def _fresh(self, key, request):
-        selected = self.index.selected().get(key)
-        manifest = next((m for m in self.store.list_artifacts() if m.artifact_id == selected), None)
+        return self._fresh_artifact(self.index, self.store, key, request)
+
+    @staticmethod
+    def _fresh_artifact(index, store, key, request):
+        selected = index.selected().get(key)
+        manifest = next((m for m in store.list_artifacts() if m.artifact_id == selected), None)
         if manifest is None:
             return False
         declaration = DependencyDeclaration.from_payload(manifest.metadata["desktop_dependencies"])
@@ -116,7 +175,7 @@ class ProjectRegeneration:
             matches = result.state == "fresh"
         if not matches:
             return False
-        with self.store.open_artifact_id(selected) as source:
+        with store.open_artifact_id(selected) as source:
             from hashlib import file_digest
             return file_digest(source, "sha256").hexdigest() == manifest.checksum
 
