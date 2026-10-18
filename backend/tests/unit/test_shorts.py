@@ -280,6 +280,47 @@ def test_analyze_cancellation_and_provider_failure_publish_nothing(service):
     assert not service.artifacts.history('analysis')
 
 
+def test_analysis_reuses_only_matching_successful_inputs(service):
+    calls=[]
+    class LLM:
+        model='one'
+        def generation_identity(self):return {'model':self.model}
+        def generate_structured(self,_,schema):
+            calls.append(self.model)
+            ids=schema['properties']['candidates']['items']['properties']['interval_id']['enum']
+            return {'candidates':[{'interval_id':x,'title':'Title','hook_assessment':'Review',
+                'reason':'Coverage','headline':'Known fact'} for x in ids[:3]]}
+    service.publishing.llm=LLM()
+    first=asyncio.run(service.analyze())
+    assert asyncio.run(service.analyze()).artifact_id==first.artifact_id and calls==['one']
+    service.publishing.llm.model='two'
+    assert asyncio.run(service.analyze()).artifact_id!=first.artifact_id
+    asyncio.run(service.analyze(target=46))
+    old=service.publishing.source
+    service.publishing.source=lambda kind:(replace(old(kind)[0],checksum='b'*64),*old(kind)[1:])
+    asyncio.run(service.analyze(target=46))
+    assert calls==['one','two','two','two']
+
+
+def test_impossible_distinct_count_does_not_send_paid_request(service):
+    def forbidden(*_):pytest.fail('Impossible analysis must not call a provider')
+    service.publishing.llm=NS(generate_structured=forbidden)
+    with pytest.raises(ValueError,match='Only 3.*Lower Candidates'):
+        asyncio.run(service.analyze(count=4))
+    assert not service.artifacts.history('analysis')
+
+
+def test_cancellation_after_discovery_does_not_call_llm(service):
+    def forbidden(*_):pytest.fail('Canceled analysis must not call a provider')
+    service.publishing.llm=NS(generate_structured=forbidden)
+    stopped=[False];pool=service.pool
+    def discover(*args):
+        result=pool(*args);stopped[0]=True;return result
+    service.pool=discover
+    with pytest.raises(RenderCanceled):asyncio.run(service.analyze(canceled=lambda:stopped[0]))
+    assert not service.artifacts.history('analysis')
+
+
 def test_stale_accepted_candidates_can_be_rejected_and_do_not_block_new_batch(service):
     p=analyzed(service)[0];service.decide(p['id'],True)
     old=service.publishing.source

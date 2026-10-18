@@ -1497,6 +1497,8 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D071 - Shorts & Repurposing Engine
 
+- **Bug repair boundary (2026-10-18):** User-selected Original Excerpt analysis repair: immediate/phased and persistent UI feedback, responsive discovery using owner-captured read-only media snapshots, retained-analysis reuse, first-candidate restoration and offline regression coverage. Preserve source/boundary validation, append-only history and parent media. No paid reproduction, production writes, narration/image/video generation or D072 changes. See [repair evidence and operator steps](D071_SHORTS_ANALYSIS_REPAIR.md).
+
 - **Status:** Implemented MVP ? automated checks and remaining human acceptance are recorded in [D071 Shorts](D071_SHORTS.md).
 - **Milestone:** M7
 - **Priority:** P1

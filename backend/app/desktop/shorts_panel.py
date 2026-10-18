@@ -16,6 +16,7 @@ class ShortsPanel(QWidget):
         super().__init__(parent)
         self.service=self.revision=self.value=self.loop=self.task=None
         self.busy=self.canceled=self.loading=self.dirty=False
+        self.status_error=False
         self.play_end=None
         layout=QVBoxLayout(self); scroll=QScrollArea(); scroll.setWidgetResizable(True)
         self.body=QWidget(); scroll.setWidget(self.body); layout.addWidget(scroll); form=QFormLayout(self.body); form.setSizeConstraint(QLayout.SetMinimumSize)
@@ -26,7 +27,7 @@ class ShortsPanel(QWidget):
         self.target=QSpinBox(); self.target.setRange(30,60); self.target.setValue(45); form.addRow("Target seconds (actual 30-60)",self.target)
         def button(text,callback):
             b=QPushButton(text); b.clicked.connect(lambda:self.run(callback)); form.addRow(b); return b
-        button("Analyze for Shorts",lambda:self.start(self.analyze()))
+        self.analyze_button=button("Analyze for Shorts",lambda:self.start(self.analyze(),"Checking source"))
         self.choices=QComboBox(); form.addRow("Retained candidates",self.choices)
         self.details=QLabel(); self.details.setWordWrap(True); form.addRow(self.details)
         self.title=QLineEdit(); form.addRow("Working title",self.title)
@@ -64,7 +65,7 @@ class ShortsPanel(QWidget):
         refresh=QPushButton("Refresh verified source / retained Shorts"); refresh.clicked.connect(lambda:self.run(self.activate)); layout.addWidget(refresh)
         self.cancel_button=QPushButton("Cancel"); self.cancel_button.clicked.connect(self.cancel); self.cancel_button.setEnabled(False); layout.addWidget(self.cancel_button)
         self.timer=QTimer(self); self.timer.setInterval(10); self.timer.timeout.connect(self.tick)
-        self.choices.currentIndexChanged.connect(lambda:self.run(self.load))
+        self.choices.currentIndexChanged.connect(lambda:self.run(self.load,explicit=False))
         self.source.currentIndexChanged.connect(self.source_info)
         self.begin.currentIndexChanged.connect(self.range_changed); self.end.currentIndexChanged.connect(self.range_changed)
         self.shot.currentIndexChanged.connect(self.shot_changed); self.focal.valueChanged.connect(self.crop_changed)
@@ -91,13 +92,19 @@ class ShortsPanel(QWidget):
     def create_directed(self):
         self.production_mode.setCurrentIndex(1);self.director.create()
 
-    def run(self,callback):
+    def error(self,exc):
+        self.status_error=True; self.status.setText(str(exc) or type(exc).__name__)
+    def run(self,callback,*,explicit=True):
+        if explicit and not self.busy:self.status_error=False
         try:return callback()
-        except Exception as exc:self.status.setText(str(exc))
+        except Exception as exc:self.error(exc)
     def changed(self,*_):
-        if not self.loading:self.dirty=True; self.status.setText("Unsaved Short edits; save before export.")
+        if not self.loading and self.value and self.choices.currentData():
+            self.dirty=True
+            if not self.status_error and not self.busy:self.status.setText("Unsaved Short edits; save before export.")
     def bind(self,service):
         self.player.stop(); self.director.close_service(); self.service=service; self.revision=self.value=None; self.body.setEnabled(False)
+        self.dirty=self.status_error=False
         self.status.setText("Open Shorts to verify the final source and restore retained edits.")
     def activate(self):
         if not self.service or self.busy:return
@@ -115,21 +122,45 @@ class ShortsPanel(QWidget):
         if not value:return
         source,e=value
         self.info.setText(f"VALID {self.source.currentData()}: {source.artifact_id} | {e['width']} x {e['height']} | {float(Fraction(*e['video_duration'])):.3f}s | {e['fps']} FPS")
-    def refresh(self):
-        previous=self.choices.currentData(); self.choices.blockSignals(True); self.choices.clear()
-        for p in self.service.candidates():
-            try:self.service.candidate(p['id']); state="ACCEPTED" if self.service.accepted(p['id']) else "REVIEW / REJECTED"
-            except ValueError:state="STALE"
-            self.choices.addItem(f"{p['title']} [{state}]",p['id'])
-        index=self.choices.findData(previous)
-        if index>=0:self.choices.setCurrentIndex(index)
-        self.choices.blockSignals(False); self.load()
+    def refresh(self,*,first=False):
+        previous=None if first else self.choices.currentData(); self.choices.blockSignals(True)
+        try:
+            self.choices.clear(); first_current=None
+            for p in self.service.candidates():
+                try:
+                    self.service.candidate(p['id']); state="ACCEPTED" if self.service.accepted(p['id']) else "REVIEW / REJECTED"
+                    if first_current is None:first_current=self.choices.count()
+                except ValueError:state="STALE"
+                self.choices.addItem(f"{p['title']} [{state}]",p['id'])
+            index=self.choices.findData(previous)
+            if index>=0:self.choices.setCurrentIndex(index)
+            elif first_current is not None:self.choices.setCurrentIndex(first_current)
+        finally:self.choices.blockSignals(False)
+        self.load()
+        if not self.choices.count() and not self.status_error:
+            self.status.setText("No retained candidates. Click Analyze for Shorts to find verified excerpts.")
     async def analyze(self):
-        m=await self.service.analyze(self.source.currentData(),self.count.value(),self.target.value(),canceled=lambda:self.canceled)
-        self.refresh(); self.status.setText(self.service.artifacts.read(m)['origin'])
+        phase="Checking source"
+        def progress(label):
+            nonlocal phase
+            phase=label; self.status.setText(label+"…")
+        try:
+            m=await self.service.analyze(self.source.currentData(),self.count.value(),self.target.value(),
+                canceled=lambda:self.canceled,progress=progress)
+            self.refresh(first=True)
+            value=self.service.artifacts.read(m)
+            self.status.setText(f"Completed: {len(value['candidates'])} candidates retained. {value['origin']}")
+        except Exception as exc:
+            raise ValueError(f"Shorts analysis failed during {phase}: {str(exc) or type(exc).__name__}. Previous candidates retained.") from exc
     def load(self):
         self.player.stop(); identity=self.choices.currentData()
-        if not identity:return
+        if not identity:
+            self.revision=self.value=None; self.dirty=False
+            self.loading=True
+            try:
+                self.details.clear(); self.title.clear(); self.begin.clear(); self.end.clear(); self.shot.clear()
+            finally:self.loading=False
+            return
         p=self.service.candidate(identity); self.revision,self.value=self.service.edit(identity)
         self.loading=True
         try:
@@ -148,7 +179,7 @@ class ShortsPanel(QWidget):
                 if c.audio_offset<Fraction(*self.value['original_end']) and c.audio_offset+c.duration>Fraction(*self.value['original_start']):
                     self.shot.addItem(c.media.scene_id,c.media.scene_id)
             self.shot_changed(); self.preview.clear(); self.preview.setMinimumSize(0,0); self.caption_preview.clear(); self.dirty=False
-            self.status.setText("Retained Short restored; review the excerpt and save changes before rendering.")
+            if not self.status_error:self.status.setText("Retained Short restored; review the excerpt and save changes before rendering.")
         finally:self.loading=False
     def range_changed(self,*_):
         if self.loading or not self.value or self.begin.currentData() is None or self.end.currentData() is None:return
@@ -214,8 +245,9 @@ class ShortsPanel(QWidget):
             return m
         return copy_artifact(self,self.service.store,m,title='Save Short '+kind,suggested='short'+suffix,revalidate=verify,
             suffix=suffix,file_filter=f"Short {kind} (*{suffix})")
-    def start(self,coroutine):
+    def start(self,coroutine,status="Working"):
         if self.busy:coroutine.close();return
+        self.status_error=False; self.status.setText(status+"…")
         self.player.stop(); self.busy=True; self.canceled=False; self.body.setEnabled(False); self.cancel_button.setEnabled(True)
         self.loop=asyncio.new_event_loop();self.task=self.loop.create_task(coroutine);self.timer.start()
     def cancel(self):
@@ -226,6 +258,6 @@ class ShortsPanel(QWidget):
         if not self.task.done():return
         self.timer.stop()
         try:self.task.result()
-        except Exception as exc:self.status.setText(str(exc))
+        except Exception as exc:self.error(exc)
         finally:
             self.loop.close();self.loop=self.task=None;self.busy=False;self.body.setEnabled(bool(self.source.count()));self.cancel_button.setEnabled(False)

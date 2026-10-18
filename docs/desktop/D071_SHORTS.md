@@ -1,5 +1,9 @@
 # D071 - Shorts & Repurposing Engine
 
+The 2026-10-18 [analysis visibility repair](D071_SHORTS_ANALYSIS_REPAIR.md) records
+the current Original Excerpt analysis phases, detached worker reads, reuse,
+regression evidence and operator verification steps.
+
 ## Integration and ownership
 
 Branch `feat/d071-shorts-repurposing` is based on local D070 commit `cb69d32`.

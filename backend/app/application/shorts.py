@@ -1,11 +1,12 @@
 """Repurpose verified media; parent script, audio, images and Timeline are read-only."""
 import asyncio
-from copy import deepcopy
+from copy import copy, deepcopy
 from fractions import Fraction
 from hashlib import file_digest, sha256
 from io import BytesIO
 import shutil
 from uuid import uuid4
+from types import SimpleNamespace
 import zipfile
 
 from app.domain.caption_track import serialize_srt
@@ -107,12 +108,87 @@ class ShortsService:
                 result.append(item)
         return result
 
-    async def analyze(self, kind="original", count=3, target=45, *, canceled=lambda: False):
+    def analysis_reader(self, kind):
+        """Capture on the SQLite owner; only detached media reads enter workers."""
+        if not hasattr(self.publishing.renders, "frozen"):
+            # Provider-neutral, index-free compositions (including offline fixtures).
+            if self.store._index is not None:
+                raise ValueError("Analysis requires a detached media reader for this project.")
+            return self, lambda: None
+        from app.storage.video_plans import ProjectVideoPlans
+        from app.storage.plan_script import ProjectPlanScripts
+        from app.storage.timeline_edits import ProjectTimelineEdits
+
+        renders = self.publishing.renders.frozen()
+        repository, store = renders.index.repository, renders.store
+        publishing = copy(self.publishing)
+        publishing.renders, publishing.store = renders, store
+        publishing.session = SimpleNamespace(repository=repository, project=self.session.project,
+                                              active_script=self.session.active_script)
+        publishing.plans = ProjectVideoPlans(repository, store)
+        publishing.plan_scripts = ProjectPlanScripts(repository, store, publishing.plans)
+        publishing.timelines = ProjectTimelineEdits(repository, store)
+        publishing._original_verification = None
+        if kind != "original":
+            # Derived-source composition can own other databases (channel library).
+            # Resolve that lineage on its owner; discovery still uses detached media.
+            source, timing = self.source(kind), self.publishing.timing(kind)
+            publishing.source = lambda _: source
+            publishing.timing = lambda _: timing
+        reader = ShortsService(publishing, None)
+
+        def verify_current():
+            live = self.publishing.renders.index
+            if (self.session.active_script != publishing.session.active_script
+                    or live.repository.active_script() != repository.active_script()
+                    or live.selected() != renders.index.selected()
+                    or live.manifests() != renders.index.manifests()):
+                raise ValueError("Project changed during analysis; refresh and analyze the current source.")
+            if kind == "original":
+                # Same owning inputs: reuse the verification performed off-thread
+                # when the UI restores candidates. MP4 bytes remain rechecked.
+                self.publishing._original_verification = publishing._original_verification
+            elif self.source(kind) != source or self.publishing.timing(kind) != timing:
+                raise ValueError("Source changed during analysis; refresh the verified source.")
+        return reader, verify_current
+
+    async def analyze(self, kind="original", count=3, target=45, *, canceled=lambda: False, progress=lambda _: None):
         if type(count) is not int or not 1 <= count <= 10: raise ValueError("Choose 1-10 candidates.")
-        pool = self.pool(kind, target)
-        if not pool: raise ValueError("REVIEW: no coherent 30-60 second chapter interval at verified boundaries.")
+        if type(target) is not int or not 30 <= target <= 60: raise ValueError("Target must be 30-60 seconds.")
+        def check_cancel():
+            if canceled(): raise RenderCanceled("Analysis canceled; retained candidates unchanged.")
+        check_cancel()
+        progress("Checking source")
+        await asyncio.sleep(0)
+        reader, verify_current = self.analysis_reader(kind)
+        await asyncio.to_thread(reader.source, kind)
+        check_cancel()
+        progress("Finding excerpts")
+        pool = await asyncio.to_thread(reader.pool, kind, target)
+        check_cancel()
+        verify_current()
+        self._boundaries.update(reader._boundaries)
+        if not pool:
+            raise ValueError("No valid 30-60 second chapter excerpts at verified boundaries. "
+                             "Review chapter coverage and measured scene/sentence boundaries in Timeline; "
+                             "refresh the verified source after correcting them. No candidates saved.")
         llm = self.publishing.llm
+        provider = (llm.generation_identity() if llm and hasattr(llm, "generation_identity")
+                    else type(llm).__qualname__ if llm else None)
+        analysis_key = content_fingerprint([ALGORITHM, kind, count, target, provider, pool])
+        for manifest in reversed(self.artifacts.history("analysis")):
+            if self.artifacts.read(manifest).get("analysis_key") == analysis_key:
+                return manifest  # Refresh/repeated clicks must not repeat a paid request.
         if llm:
+            end, available = None, 0
+            for item in sorted(pool, key=lambda p: Fraction(*p["end"])):
+                if end is None or Fraction(*item["start"]) >= end:
+                    available += 1
+                    end = Fraction(*item["end"])
+            if available < count:
+                raise ValueError(f"Only {available} non-overlapping verified excerpts are available. "
+                                 "Lower Candidates or review chapter coverage in Timeline; no AI request sent.")
+            progress("AI analysis")
             fields = {k: {"type": "string", "minLength": 1, "maxLength": 500} for k in ("interval_id", "title", "hook_assessment", "reason", "headline")}
             fields["interval_id"] = {"type": "string", "enum": [p["id"] for p in pool]}
             schema = {"type": "object", "additionalProperties": False, "required": ["candidates"], "properties": {
@@ -121,8 +197,9 @@ class ShortsService:
             prompt = ("Select distinct self-contained spoken excerpts from supplied verified intervals only. No invented timestamps or narration. "
                 "Prefer complete explanations with understandable openings and payoffs; reject dangling pronouns and repetitive content. "
                 "Assess existing facts only; headline must be supported by supplied spoken coverage. Editorial review required. Return interval IDs "
-                "and assessments; timing/references are resolved by application. Intervals: " + canonical_json([
-                    {k:p[k] for k in ("id", "title", "section_ids", "scene_ids", "text")} for p in pool]))
+                "and assessments; timing/references are resolved by application. Selected intervals must not overlap. "
+                "Use the supplied start/end coverage to check overlap. Intervals: " + canonical_json([
+                    {k:p[k] for k in ("id", "title", "group_ids", "section_ids", "scene_ids", "start", "end", "text")} for p in pool]))
             value = await asyncio.to_thread(llm.generate_structured, prompt, deepcopy(schema))
             if type(value) is not dict or set(value) != {"candidates"} or type(value["candidates"]) is not list or len(value["candidates"]) != count:
                 raise ValueError("Invalid structured Short analysis.")
@@ -135,19 +212,29 @@ class ShortsService:
                 selected.append({**item, **{k:v[k] for k in fields if k != "interval_id"}})
             origin = "LLM suggestions; editorial review required"
         else:
+            progress("AI analysis (heuristic; no LLM configured)")
             selected = []
             for item in pool:
                 if any(set(item["group_ids"]) & set(p["group_ids"]) or overlap(item,p) for p in selected): continue
                 selected.append(item)
                 if len(selected) == count: break
             origin = "Heuristic section/sentence discovery; no retention or virality prediction"
+        if not selected:
+            raise ValueError("No distinct valid excerpts found. Review chapter coverage and verified boundaries in Timeline.")
         if len({p["id"] for p in selected}) != len(selected) or any(overlap(a,b) for i,a in enumerate(selected) for b in selected[i+1:]):
             raise ValueError("Suggestions repeat or overlap; review distinct intervals.")
-        if canceled(): raise RenderCanceled("Analysis canceled; retained candidates unchanged.")
-        source, _, timeline = self.source(kind)
+        check_cancel()
+        progress("Checking source before saving")
+        source, _, timeline = await asyncio.to_thread(reader.source, kind)
+        verify_current()
         if any(p["source_checksum"] != source.checksum or p["source_id"] != source.artifact_id or p["timeline_id"] != timeline.id for p in selected):
             raise ValueError("Source changed during analysis.")
-        return self.artifacts.save("analysis", {"version": 1, "origin": origin, "requested_count": count,
+        check_cancel()
+        progress("Saving candidates")
+        await asyncio.sleep(0)
+        check_cancel()
+        verify_current()
+        return self.artifacts.save("analysis", {"version": 1, "origin": origin, "analysis_key": analysis_key, "requested_count": count,
             "target_seconds": target, "candidates": selected, "status": "REVIEW"})
 
     def candidates(self):
