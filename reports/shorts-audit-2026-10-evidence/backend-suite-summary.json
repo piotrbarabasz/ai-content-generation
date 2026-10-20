@@ -1,0 +1,22 @@
+{
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "1",
+      "skipped": "12",
+      "tests": "2628",
+      "time": "1362.697",
+      "timestamp": "2026-10-20T14:10:07.490078+02:00",
+      "hostname": "DESKTOP-GR25EFL"
+    }
+  ],
+  "failures": [
+    {
+      "class": "backend.tests.integration.test_duration_repair",
+      "name": "test_d078_cloud_measurements_drive_duration_repair_without_images",
+      "failure": "backend\\tests\\integration\\test_duration_repair.py:432: in test_d078_cloud_measurements_drive_duration_repair_without_images\n    asyncio.run(generate_all())\nC:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\runners.py:190: in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\nC:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\runners.py:118: in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\base_events.py:654: in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\nbackend\\tests\\integration\\test_duration_repair.py:431: in generate_all\n    assert await audio.generate(section,choice)=='completed'\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nbackend\\app\\desktop\\cloud_audio.py:406: in generate\n    raise ValueError(message) from None\nE   ValueError: Section synthesis incomplete; valid chunks remain available for retry."
+    }
+  ],
+  "terminal_summary": "1 failed, 2615 passed, 12 skipped in 1362.99s (0:22:42)"
+}
