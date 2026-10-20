@@ -234,6 +234,7 @@ def test_timeline_history_integrity_checks_still_reject_corruption(setup, corrup
         def __init__(self):
             self._index = SimpleNamespace(repository=repository)
         def list_artifacts(self): return tuple(manifests)
+        def find_manifests(self, kind): return tuple(m for m in manifests if m.artifact_type == kind)
         def read_artifact(self, key): return values[key]
 
     edits = ProjectTimelineEdits(repository, ReadOnlyStore())

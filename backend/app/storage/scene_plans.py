@@ -17,6 +17,7 @@ class ProjectScenePlans:
             raise ValueError("Scene plans require the owning project artifact store.")
         self.repository, self.store = repository, store
         self.project_id = repository.project().id
+        self._records = None  # Enabled only on a private media-resolution copy.
 
     def current(self, section):
         if section.project_id != self.project_id or self.repository.active_script().section(section.section_id) != section:
@@ -26,7 +27,7 @@ class ProjectScenePlans:
         self.current(section)
         if (audio.section_id, audio.revision_id) != (section.section_id, section.id):
             raise ValueError("Scene audio belongs to another section revision.")
-        manifest = next((m for m in self.store.list_artifacts() if m.artifact_id == audio.artifact_id), None)
+        manifest = self.store.manifest_by_id(audio.artifact_id)
         if manifest is None or SectionAudio.from_manifest(manifest) != audio:
             raise ValueError("Scene audio is not the registered artifact measurement.")
         payload = self.store.read_artifact(manifest.storage_key)
@@ -36,8 +37,10 @@ class ProjectScenePlans:
             raise ValueError("Scene audio bytes differ from registered measurements.")
 
     def _read(self, kind, value_id, value_type):
-        matches = [m for m in self.store.list_artifacts() if m.artifact_type == kind
-                   and m.metadata.get("value_id") == value_id]
+        key = (kind, value_id)
+        if self._records is not None and key in self._records:
+            return self._records[key]
+        matches = self.store.find_manifests(kind, metadata={"value_id": value_id})
         if len(matches) != 1 or matches[0].metadata.get("project_id") != self.project_id:
             raise ValueError("Unknown or ambiguous project scene artifact.")
         manifest = matches[0]
@@ -47,6 +50,8 @@ class ProjectScenePlans:
         value = value_type.from_payload(json.loads(payload))
         if value.id != value_id:
             raise ValueError("Scene artifact identity differs from the index.")
+        if self._records is not None:
+            self._records[key] = value
         return value
 
     def _save(self, kind, value):
@@ -59,10 +64,10 @@ class ProjectScenePlans:
                                          **({"acceptance_id": value.acceptance_id} if isinstance(value, SceneTimingSet) else {}),
                                          "module_name": "desktop_scene_planning"})
 
-    def history_records(self, kind, value_type):
+    def history_records(self, kind, value_type, *, filters=None):
         """Read individual immutable headers without resolving historical dependencies."""
-        for m in sorted(self.store.list_artifacts(), key=lambda m: (m.created_at, m.artifact_id)):
-            if m.artifact_type != kind: continue
+        manifests = self.store.find_manifests(kind, metadata=filters, include_missing=True)
+        for m in sorted(manifests, key=lambda m: (m.created_at, m.artifact_id)):
             try:
                 value = self._read(kind, m.metadata["value_id"], value_type)
             except (ValueError, OSError, KeyError, TypeError) as exc:
@@ -71,7 +76,9 @@ class ProjectScenePlans:
 
     def _history(self, kind, value_type, load, *, section_id=None, revision_id=None, acceptance_id=None):
         values = []
-        for m, value, error in self.history_records(kind, value_type):
+        filters = {k: v for k, v in {"section_id": section_id, "revision_id": revision_id,
+                                    "acceptance_id": acceptance_id}.items() if v is not None}
+        for m, value, error in self.history_records(kind, value_type, filters=filters):
             plan = value.plan if isinstance(value, AcceptedScenePlan) else value
             scope = {"section_id": getattr(plan, "section_id", None), "revision_id": getattr(plan, "revision_id", None),
                      "acceptance_id": getattr(value, "acceptance_id", None)} if value else m.metadata

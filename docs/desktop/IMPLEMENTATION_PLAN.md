@@ -1497,6 +1497,10 @@ Every task uses the validation policy at the end in addition to its focused test
 
 ### D071 - Shorts & Repurposing Engine
 
+- **Selection repair boundary (2026-10-18):** User-selected recovery of duplicate/overlapping known LLM interval preferences using the existing verified pool, exact requested count, deterministic chapter preference, per-candidate provenance, and sanitized replayable selection receipts. Preserve the existing analysis fingerprint, strict malformed/unknown-ID rejection, source/boundary validation, editorial approval and all retained history. No automatic provider retry, production-media writes or D072 changes. See [selection repair](D071_SHORTS_SELECTION_REPAIR.md).
+
+- **Bug repair boundary (2026-10-18):** User-selected Original Excerpt analysis repair: immediate/phased and persistent UI feedback, responsive discovery using owner-captured read-only media snapshots, retained-analysis reuse, first-candidate restoration and offline regression coverage. Preserve source/boundary validation, append-only history and parent media. No paid reproduction, production writes, narration/image/video generation or D072 changes. See [repair evidence and operator steps](D071_SHORTS_ANALYSIS_REPAIR.md).
+
 - **Status:** Implemented MVP ? automated checks and remaining human acceptance are recorded in [D071 Shorts](D071_SHORTS.md).
 - **Milestone:** M7
 - **Priority:** P1
@@ -1520,6 +1524,8 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Test strategy:** Deterministic fake LLM/TTS/image providers using real child SQLite/audio publication, desktop editing/cancellation tests, CPU FFmpeg vertical preview/render/probe/full decode and complete backend suite.
 
 ### D073 - Production QA & Acceptance Suite
+
+- **Additional user-selected UI boundary (2026-10-19):** The request titled “D073 — Simplify Shorts UI into a Three-Step Workflow” extends only the existing Original Excerpt desktop presentation: verified-source discovery, selectable candidate cards, explicit editorial acceptance followed by save/render, and validated MP4 export. Technical controls and the separate D072 AI Director remain under collapsed Advanced settings. This boundary preserves D071 analysis/selection repairs, provider accounting, source-currentness checks, append-only decisions/revisions and the existing D073 QA suite. No production-engine, storage-contract or selection-algorithm changes. Dependencies were inspected in the local application, storage, desktop and offline tests; D072 remains a separate partial workflow. See [Shorts UI implementation and validation](D073_SHORTS_UI.md).
 
 - **Status:** Partial - implemented local QA and automated acceptance; human editorial/playback acceptance remains pending. See [D073 production QA](D073_PRODUCTION_QA.md).
 - **Milestone:** M7
@@ -1614,9 +1620,20 @@ Every task uses the validation policy at the end in addition to its focused test
 - **Boundary note:** Background preparation is required because the existing synchronous prerequisite validation/staging blocks the GUI before the asynchronous encoder starts. No live repository is transferred to a worker; final publication/selection keeps its existing owner-thread gate.
 - **Implementation evidence:** [D080 behavior and operator verification](D080_FINAL_RENDER_READINESS.md).
 
+### D081 — Indexed artifact reads and scoped preview history (Performance PR 1)
+
+- **Status:** Implemented; focused regressions pass. Full backend: 2,565 passed, 12 skipped, one pre-existing duration-repair failure reproduced on untouched `fb0c1a6`. See [D081 evidence](../../reports/INDEXED_ARTIFACT_READS_PR1.md) for measurements and limits.
+- **Goal:** Reduce catalog reconstruction and repeated retained-record reads on Timeline validation.
+- **Milestone:** M11; **Priority:** P1.
+- **Dependencies:** Inspected D004 publication/index ownership, D013 scene records, D016 image lineage, D018 compiler, D040 selections, D078 narration and D080 frozen render inputs at `fb0c1a6`. Indexed ID/key reads are absent at this base.
+- **Scope:** Existing SQLite ID/key indexes; metadata filtering before history deserialization; operation-local reuse of retained scene records; compatible legacy and frozen catalogs; deterministic offline regressions and the original audit's synthetic fixtures.
+- **Acceptance criteria:** No full-catalog enumeration for project point reads; unchanged ownership, containment, byte verification, selection history and currentness gates; reopen and legacy compatibility; focused/full tests and comparable scan/parse/SQL/latency measurements.
+- **Out of scope:** Persistence redesign, global caches, weakened verification, preview threading changes, staging/encoding changes, production writes, paid calls, cache/history deletion or automatic merge.
+- **Boundary note:** User explicitly selected Performance PR 1 independently of D080, whose boundary excludes general performance work. This task records that requested boundary before implementation.
+
 ## Backlog provenance and deferred scope
 
-There are **79 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
+There are **80 implementation tasks** (D074 is not defined): D001-D037 preserve the 37 subjects from the
 accepted desktop analysis, with large subjects narrowed through D038-D047. D048-D058
 retain valuable optional work, a local-image extension and the project visual-context
 GUI follow-up; D059-D060 extend the optional local image workflow. D061 adds
@@ -1634,6 +1651,7 @@ D076 adds the shared reusable channel library and verified clip finishing maps.
 D077 adds opt-in measured narration duration repair before visual generation.
 D078 replaces primary narration with OpenAI Speech, explicit migration and paid-operation controls.
 D079 adds reviewed narration attempt recovery; D080 restores final rendering from retained timelines.
+D081 narrows artifact reads and scoped history on the preview/currentness path.
 None is
 completed merely by publishing this plan.
 

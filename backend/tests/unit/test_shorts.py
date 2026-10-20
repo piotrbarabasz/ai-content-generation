@@ -71,15 +71,14 @@ def test_heuristic_valid_references_distinct_topics_and_no_random_trim(service):
     assert all(F(*x['duration'])==30 and x['status']=='REVIEW' and x['section_ids'] and len(x['scene_ids'])==3 for x in p)
     assert 'Heuristic' in service.artifacts.read(service.artifacts.history('analysis')[0])['origin']
 
-@pytest.mark.parametrize('bad',['unknown','timestamp','duplicate','overlap'])
-def test_strict_llm_rejects_invalid_references_fields_or_overlap(service,bad):
+@pytest.mark.parametrize('bad',['unknown','timestamp'])
+def test_strict_llm_rejects_unknown_references_or_invalid_fields(service,bad):
     def generate(prompt,schema):
         ids=schema['properties']['candidates']['items']['properties']['interval_id']['enum']
         assert 'timestamps' in prompt and 'section_ids' in prompt
         result=[{'interval_id':x,'title':'Title','hook_assessment':'Review','reason':'Coverage','headline':'Known fact'} for x in ids[:3]]
         if bad=='unknown':result[0]['interval_id']='foreign'
         elif bad=='timestamp':result[0]['start']=45
-        else:result[1]['interval_id']=result[0]['interval_id']
         return {'candidates':result}
     service.publishing.llm=NS(generate_structured=generate)
     with pytest.raises(ValueError):asyncio.run(service.analyze())
@@ -277,6 +276,47 @@ def test_analyze_cancellation_and_provider_failure_publish_nothing(service):
     def fail(*_):raise RuntimeError('provider unavailable')
     service.publishing.llm=NS(generate_structured=fail)
     with pytest.raises(RuntimeError):asyncio.run(service.analyze())
+    assert not service.artifacts.history('analysis')
+
+
+def test_analysis_reuses_only_matching_successful_inputs(service):
+    calls=[]
+    class LLM:
+        model='one'
+        def generation_identity(self):return {'model':self.model}
+        def generate_structured(self,_,schema):
+            calls.append(self.model)
+            ids=schema['properties']['candidates']['items']['properties']['interval_id']['enum']
+            return {'candidates':[{'interval_id':x,'title':'Title','hook_assessment':'Review',
+                'reason':'Coverage','headline':'Known fact'} for x in ids[:3]]}
+    service.publishing.llm=LLM()
+    first=asyncio.run(service.analyze())
+    assert asyncio.run(service.analyze()).artifact_id==first.artifact_id and calls==['one']
+    service.publishing.llm.model='two'
+    assert asyncio.run(service.analyze()).artifact_id!=first.artifact_id
+    asyncio.run(service.analyze(target=46))
+    old=service.publishing.source
+    service.publishing.source=lambda kind:(replace(old(kind)[0],checksum='b'*64),*old(kind)[1:])
+    asyncio.run(service.analyze(target=46))
+    assert calls==['one','two','two','two']
+
+
+def test_impossible_distinct_count_does_not_send_paid_request(service):
+    def forbidden(*_):pytest.fail('Impossible analysis must not call a provider')
+    service.publishing.llm=NS(generate_structured=forbidden)
+    with pytest.raises(ValueError,match='Only 3.*Lower Candidates'):
+        asyncio.run(service.analyze(count=4))
+    assert not service.artifacts.history('analysis')
+
+
+def test_cancellation_after_discovery_does_not_call_llm(service):
+    def forbidden(*_):pytest.fail('Canceled analysis must not call a provider')
+    service.publishing.llm=NS(generate_structured=forbidden)
+    stopped=[False];pool=service.pool
+    def discover(*args):
+        result=pool(*args);stopped[0]=True;return result
+    service.pool=discover
+    with pytest.raises(RenderCanceled):asyncio.run(service.analyze(canceled=lambda:stopped[0]))
     assert not service.artifacts.history('analysis')
 
 

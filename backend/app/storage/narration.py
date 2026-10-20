@@ -47,8 +47,11 @@ class ProjectNarration:
         self.session, self.store = session, store
         self.records = ProjectNarrativeRecords(session.repository, store)
 
-    def history(self, kind):
-        return tuple(self.records.read(m) for m in self.records.history("narration_" + kind))
+    def history(self, kind, *, scope=None, section_id=None):
+        filters = {k: v for k, v in {"scope": scope, "section_id": section_id}.items() if v is not None}
+        values = (self.records.read(m) for m in self.records.history("narration_" + kind, metadata=filters))
+        # Historical records may lack scope headers; validate/filter their payloads.
+        return tuple(v for v in values if all(v[k] == expected for k, expected in filters.items()))
 
     def save(self, kind, payload):
         value = {"version": 1, "id": new_id("narration_" + kind), **payload}
@@ -56,8 +59,7 @@ class ProjectNarration:
         return value
 
     def project(self):
-        values = self.history("settings")
-        values = [v for v in values if v["scope"] == "project"]
+        values = self.history("settings", scope="project")
         return values[-1] if values else None
 
     def migrated(self):
@@ -70,7 +72,7 @@ class ProjectNarration:
         value = self.project()
         settings = NarrationSettings.from_payload(value["settings"]) if value else NarrationSettings()
         if section_id:
-            values = [v for v in self.history("settings") if v["scope"] == section_id]
+            values = self.history("settings", scope=section_id)
             if values:
                 settings = settings.overridden(values[-1]["overrides"])
         return settings
@@ -89,7 +91,7 @@ class ProjectNarration:
             raise ValueError("Narration override refers to sections outside the active script.")
         self.settings().overridden(overrides)
         for section_id in section_ids:
-            old = [v for v in self.history("settings") if v["scope"] == section_id]
+            old = self.history("settings", scope=section_id)
             self.save("settings", {"scope": section_id, "parent_id": old[-1]["id"] if old else None, "overrides": overrides})
 
     def approve(self, scopes, budget, *, max_attempts=2):

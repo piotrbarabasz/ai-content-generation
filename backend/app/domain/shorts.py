@@ -39,6 +39,60 @@ def overlap(a, b):
     return max(Fraction(0), min(Fraction(*a["end"]), Fraction(*b["end"])) - max(Fraction(*a["start"]), Fraction(*b["start"])))
 
 
+class ShortAnalysisError(ValueError):
+    def __init__(self, category, message):
+        super().__init__(message)
+        self.category = category
+
+
+def excerpt_capacity(pool, selected=()):
+    """Exact maximum interval count compatible with already selected coverage."""
+    available = [p for p in pool if not any(p['id'] == s['id'] or overlap(p, s) for s in selected)]
+    end, count = None, 0
+    for item in sorted(available, key=lambda p: (Fraction(*p['end']), Fraction(*p['start']), p['id'])):
+        if end is None or Fraction(*item['start']) >= end:
+            count += 1
+            end = Fraction(*item['end'])
+    return count
+
+
+def select_excerpts(pool, ranked, count, *, fallback_method='verified_fallback'):
+    """Resolve known preferences using verified intervals only, without provider IO."""
+    available = excerpt_capacity(pool)
+    if available < count:
+        raise ShortAnalysisError('insufficient_candidates',
+            f"Only {available} non-overlapping verified excerpts are available. "
+            "Lower Candidates or review chapter coverage in Timeline.")
+    selected, discarded, seen = [], [], set()
+    for rank, item in enumerate(ranked, 1):
+        conflicts = [p['id'] for p in selected if overlap(item, p)]
+        reason = ('repeated_id' if item['id'] in seen else
+                  'overlapping_interval' if conflicts else None)
+        seen.add(item['id'])
+        # A locally valid preference must leave room to complete the request.
+        # Otherwise a long interval could block several necessary alternatives.
+        if reason is None and excerpt_capacity(pool, [*selected, item]) < count-len(selected)-1:
+            reason = 'overlap_prevents_completion'
+        if reason:
+            discarded.append({'rank': rank, 'interval_id': item['id'], 'reason': reason,
+                              'conflicts_with': conflicts})
+        else:
+            selected.append({**item, 'selection_provenance': {'method': 'llm', 'rank': rank}})
+    while len(selected) < count:
+        groups = {g for p in selected for g in p['group_ids']}
+        # Pool order already prefers whole chapters/sections and target duration.
+        choices = sorted(enumerate(pool), key=lambda pair: (bool(groups.intersection(pair[1]['group_ids'])), pair[0]))
+        for _, item in choices:
+            if any(item['id'] == p['id'] or overlap(item, p) for p in selected): continue
+            if excerpt_capacity(pool, [*selected, item]) < count-len(selected)-1: continue
+            selected.append({**item, 'selection_provenance': {'method': fallback_method}})
+            break
+        else:
+            raise ShortAnalysisError('insufficient_candidates',
+                'Not enough compatible verified excerpts. Lower Candidates or review Timeline chapter coverage.')
+    return selected, discarded
+
+
 def clip_captions(segments, start, end):
     lo, hi = math.ceil(Fraction(start) * 1000), math.floor(Fraction(end) * 1000)
     result, seen = [], set()

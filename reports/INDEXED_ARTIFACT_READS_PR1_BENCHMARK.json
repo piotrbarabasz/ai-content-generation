@@ -1,0 +1,249 @@
+{
+  "base_commit": "fb0c1a646d988646ca2877b8731ff282282f0fb4",
+  "implementation_branch": "perf/indexed-artifact-reads",
+  "notes": "Same harness and retained synthetic fixtures, sequential before/after after pytest completion. Point counts cover 20 opens; other rows cover one operation. Full catalog scans count ProjectArtifactIndex.manifests calls, not SQLite JSON predicate table scans.",
+  "before": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "pyside6": "6.11.2",
+    "fixtures": [
+      {
+        "fixture": "cold12sec_v2",
+        "timeline_id": "timeline_31c1b28f985fd300e017e65244252b615f8b5da6c16b9801c1da6187aae55151",
+        "clips": 2,
+        "duration_seconds": 12,
+        "manifest_count": 17,
+        "catalog_headers_sha256": "721161f0f27b79a232ed6070601d45b5052d73295e1d1e241cc15785702ea1e2",
+        "proxy_cache_key": "c1483c0fe3e6147420bcc9daf25117ea4e3a925d59a7bf8f22500849c8a99691",
+        "proxy_sha256": "2b7784b3b50141037bddb77fa21279d631ecba449137e65d28b99748d67202b3"
+      },
+      {
+        "fixture": "scaling64",
+        "timeline_id": "timeline_2f99e660eb9283b6f59e32666e527c44536c86a58246270ea9d07faca9babbc3",
+        "clips": 64,
+        "duration_seconds": 12.8,
+        "manifest_count": 261,
+        "catalog_headers_sha256": "bc5550211b2951ff4c94ed86f9dc7117faba461090f941b52bf327e1d0e8a052"
+      }
+    ],
+    "results": [
+      {
+        "scenario": "exact_id_open",
+        "repetitions": 20,
+        "elapsed_ms": 75.03470000028756,
+        "per_operation_ms": 3.751735000014378,
+        "counts": {
+          "full_catalog_scans": 20,
+          "manifest_reconstructions": 340,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 77.19509999969887
+      },
+      {
+        "scenario": "exact_key_open",
+        "repetitions": 20,
+        "elapsed_ms": 78.16910000019561,
+        "per_operation_ms": 3.9084550000097806,
+        "counts": {
+          "full_catalog_scans": 20,
+          "manifest_reconstructions": 340,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 78.31720000012865
+      },
+      {
+        "scenario": "two_clip_currentness",
+        "repetitions": 1,
+        "elapsed_ms": 1040.1848000001337,
+        "per_operation_ms": 1040.1848000001337,
+        "counts": {
+          "full_catalog_scans": 232,
+          "manifest_reconstructions": 3944,
+          "sql_statements": 1512
+        },
+        "qt_heartbeat_max_ms": 1045.2808000000005
+      },
+      {
+        "scenario": "two_clip_cached_proxy_service",
+        "repetitions": 1,
+        "elapsed_ms": 2070.377400000325,
+        "per_operation_ms": 2070.377400000325,
+        "counts": {
+          "full_catalog_scans": 468,
+          "manifest_reconstructions": 7956,
+          "sql_statements": 3048
+        },
+        "qt_heartbeat_max_ms": 2070.5815999999686
+      },
+      {
+        "scenario": "exact_id_open_261",
+        "repetitions": 20,
+        "elapsed_ms": 142.90000000073633,
+        "per_operation_ms": 7.145000000036816,
+        "counts": {
+          "full_catalog_scans": 20,
+          "manifest_reconstructions": 5220,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 147.96539999952074
+      },
+      {
+        "scenario": "exact_key_open_261",
+        "repetitions": 20,
+        "elapsed_ms": 146.57339999939722,
+        "per_operation_ms": 7.328669999969861,
+        "counts": {
+          "full_catalog_scans": 20,
+          "manifest_reconstructions": 5220,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 146.71290000023873
+      },
+      {
+        "scenario": "16_clip_readiness",
+        "repetitions": 1,
+        "elapsed_ms": 11847.433599999931,
+        "per_operation_ms": 11847.433599999931,
+        "counts": {
+          "full_catalog_scans": 1248,
+          "manifest_reconstructions": 325728,
+          "sql_statements": 8352
+        },
+        "qt_heartbeat_max_ms": 11847.732899999755
+      },
+      {
+        "scenario": "64_clip_readiness",
+        "repetitions": 1,
+        "elapsed_ms": 57536.50569999991,
+        "per_operation_ms": 57536.50569999991,
+        "counts": {
+          "full_catalog_scans": 4992,
+          "manifest_reconstructions": 1302912,
+          "sql_statements": 33408
+        },
+        "qt_heartbeat_max_ms": 57536.82349999963
+      }
+    ]
+  },
+  "after": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "pyside6": "6.11.2",
+    "fixtures": [
+      {
+        "fixture": "cold12sec_v2",
+        "timeline_id": "timeline_31c1b28f985fd300e017e65244252b615f8b5da6c16b9801c1da6187aae55151",
+        "clips": 2,
+        "duration_seconds": 12,
+        "manifest_count": 17,
+        "catalog_headers_sha256": "721161f0f27b79a232ed6070601d45b5052d73295e1d1e241cc15785702ea1e2",
+        "proxy_cache_key": "c1483c0fe3e6147420bcc9daf25117ea4e3a925d59a7bf8f22500849c8a99691",
+        "proxy_sha256": "2b7784b3b50141037bddb77fa21279d631ecba449137e65d28b99748d67202b3"
+      },
+      {
+        "fixture": "scaling64",
+        "timeline_id": "timeline_2f99e660eb9283b6f59e32666e527c44536c86a58246270ea9d07faca9babbc3",
+        "clips": 64,
+        "duration_seconds": 12.8,
+        "manifest_count": 261,
+        "catalog_headers_sha256": "bc5550211b2951ff4c94ed86f9dc7117faba461090f941b52bf327e1d0e8a052"
+      }
+    ],
+    "results": [
+      {
+        "scenario": "exact_id_open",
+        "repetitions": 20,
+        "elapsed_ms": 104.06020000027638,
+        "per_operation_ms": 5.203010000013819,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 20,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 104.30359999918437
+      },
+      {
+        "scenario": "exact_key_open",
+        "repetitions": 20,
+        "elapsed_ms": 122.56049999996321,
+        "per_operation_ms": 6.128024999998161,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 20,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 122.71289999989676
+      },
+      {
+        "scenario": "two_clip_currentness",
+        "repetitions": 1,
+        "elapsed_ms": 571.2698999996064,
+        "per_operation_ms": 571.2698999996064,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 96,
+          "sql_statements": 636
+        },
+        "qt_heartbeat_max_ms": 577.0127999994656
+      },
+      {
+        "scenario": "two_clip_cached_proxy_service",
+        "repetitions": 1,
+        "elapsed_ms": 1108.8336000002528,
+        "per_operation_ms": 1108.8336000002528,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 196,
+          "sql_statements": 1296
+        },
+        "qt_heartbeat_max_ms": 1109.0500999998767
+      },
+      {
+        "scenario": "exact_id_open_261",
+        "repetitions": 20,
+        "elapsed_ms": 135.02489999973477,
+        "per_operation_ms": 6.7512449999867385,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 20,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 136.19180000023334
+      },
+      {
+        "scenario": "exact_key_open_261",
+        "repetitions": 20,
+        "elapsed_ms": 110.76620000039838,
+        "per_operation_ms": 5.538310000019919,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 20,
+          "sql_statements": 120
+        },
+        "qt_heartbeat_max_ms": 116.2451999998666
+      },
+      {
+        "scenario": "16_clip_readiness",
+        "repetitions": 1,
+        "elapsed_ms": 3658.0227000004015,
+        "per_operation_ms": 3658.0227000004015,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 640,
+          "sql_statements": 4480
+        },
+        "qt_heartbeat_max_ms": 3662.682400000449
+      },
+      {
+        "scenario": "64_clip_readiness",
+        "repetitions": 1,
+        "elapsed_ms": 19938.456300000325,
+        "per_operation_ms": 19938.456300000325,
+        "counts": {
+          "full_catalog_scans": 0,
+          "manifest_reconstructions": 2560,
+          "sql_statements": 17920
+        },
+        "qt_heartbeat_max_ms": 19938.615899999604
+      }
+    ]
+  }
+}

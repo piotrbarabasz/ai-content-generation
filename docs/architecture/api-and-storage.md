@@ -282,6 +282,19 @@ The D004 publication protocol leaves the revision schema unchanged. D042 now
 upgrades the project container to v2 independently of this protocol. Both
 catalogs reuse `ArtifactManifest`; only registered keys are readable as artifacts.
 
+D081 uses the existing artifact-ID primary key and unique storage-key index for
+`LocalArtifactStore.manifest_by_id`, `manifest_by_key` and artifact opens. Each
+query keeps the live owner, format and database-path checks; resolved file paths
+still pass containment checks. Scoped scene/image/timeline/narration histories
+filter JSON headers in SQLite before reconstructing Python manifests. These
+metadata predicates still scan SQLite rows; no schema or metadata index is added.
+Legacy sidecar stores retain their catalog fallback. Missing historical scope
+headers retain payload validation. New narration records include scope headers.
+One Timeline media resolution reuses verified scene records and image lineage
+on private copies. Each subsequent resolution, including the compiler's second
+pass and the preview's second gate, verifies afresh. Frozen render/read-only
+adapters use operation-local maps and never receive a live SQLite connection.
+
 The catalog commits after complete file publication; SQLite and the filesystem
 are not one transaction. Recovery removes incomplete staging, finishes cleanup
 of committed publications, and reports unindexed complete files without adopting

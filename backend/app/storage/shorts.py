@@ -24,6 +24,15 @@ class ProjectShorts:
     def latest(self, kind, candidate_id):
         values = [m for m in self.history(kind) if m.metadata.get("candidate_id") == candidate_id]
         return values[-1] if values else None
+    def analysis_response(self, analysis_key):
+        """Only checksum-verified, explicitly scoped selection receipts are replayed."""
+        for manifest in reversed(self.history('analysis_response')):
+            if manifest.metadata.get('analysis_key') == analysis_key:
+                value = self.read(manifest)
+                if value.get('version') != 1 or value.get('analysis_key') != analysis_key:
+                    raise ValueError('Invalid retained Short selection receipt.')
+                return manifest, value['response']
+        return None, None
     def verify(self, m):
         m = self.one(m.artifact_id, "video")
         e = m.metadata.get("shorts", {})
