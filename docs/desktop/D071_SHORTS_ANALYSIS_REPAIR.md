@@ -1,5 +1,10 @@
 # D071 Shorts analysis visibility repair
 
+The subsequent [robust selection repair](D071_SHORTS_SELECTION_REPAIR.md) supersedes
+the duplicate/overlap rejection described here. Malformed/unknown-ID responses
+still fail; conflicts between known verified preferences now use deterministic
+fallback with explicit provenance and no second service-level provider request.
+
 Inspected branch: `perf/indexed-artifact-reads`, base `a792c6a`, 2026-10-18.
 The existing untracked preview audit was left untouched. This is the user-selected
 D071 repair; it does not change D072 or regenerate narration, images or video.

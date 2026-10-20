@@ -12,7 +12,8 @@ import zipfile
 from app.domain.caption_track import serialize_srt
 from app.domain.dependencies import canonical_json, content_fingerprint
 from app.domain.plan_script import planned_section_identity
-from app.domain.shorts import (ALGORITHM, ShortStyle, clip_captions, mapped_interval, output_identity, overlap, overlays, ratio, speech_interval)
+from app.domain.shorts import (ALGORITHM, ShortStyle, ShortAnalysisError, clip_captions, excerpt_capacity,
+    mapped_interval, output_identity, overlap, overlays, ratio, select_excerpts, speech_interval)
 from app.providers.shorts import ShortsRenderer
 from app.runtime.media_process import RenderCanceled
 from app.storage.paths import contained_path
@@ -139,10 +140,12 @@ class ShortsService:
 
         def verify_current():
             live = self.publishing.renders.index
+            # Appending independent selection evidence does not change source inputs.
             if (self.session.active_script != publishing.session.active_script
                     or live.repository.active_script() != repository.active_script()
                     or live.selected() != renders.index.selected()
-                    or live.manifests() != renders.index.manifests()):
+                    or tuple(m for m in live.manifests() if m.artifact_type != 'shorts_analysis_response')
+                    != tuple(m for m in renders.index.manifests() if m.artifact_type != 'shorts_analysis_response')):
                 raise ValueError("Project changed during analysis; refresh and analyze the current source.")
             if kind == "original":
                 # Same owning inputs: reuse the verification performed off-thread
@@ -169,7 +172,7 @@ class ShortsService:
         verify_current()
         self._boundaries.update(reader._boundaries)
         if not pool:
-            raise ValueError("No valid 30-60 second chapter excerpts at verified boundaries. "
+            raise ShortAnalysisError('insufficient_candidates', "No valid 30-60 second chapter excerpts at verified boundaries. "
                              "Review chapter coverage and measured scene/sentence boundaries in Timeline; "
                              "refresh the verified source after correcting them. No candidates saved.")
         llm = self.publishing.llm
@@ -177,17 +180,16 @@ class ShortsService:
                     else type(llm).__qualname__ if llm else None)
         analysis_key = content_fingerprint([ALGORITHM, kind, count, target, provider, pool])
         for manifest in reversed(self.artifacts.history("analysis")):
-            if self.artifacts.read(manifest).get("analysis_key") == analysis_key:
+            retained = self.artifacts.read(manifest)
+            if retained.get("analysis_key") == analysis_key and len(retained['candidates']) == count:
                 return manifest  # Refresh/repeated clicks must not repeat a paid request.
+        available = excerpt_capacity(pool)
+        if available < count:
+            raise ShortAnalysisError('insufficient_candidates',
+                f"Only {available} non-overlapping verified excerpts are available. "
+                "Lower Candidates or review chapter coverage in Timeline; no AI request sent.")
+        response_manifest = None
         if llm:
-            end, available = None, 0
-            for item in sorted(pool, key=lambda p: Fraction(*p["end"])):
-                if end is None or Fraction(*item["start"]) >= end:
-                    available += 1
-                    end = Fraction(*item["end"])
-            if available < count:
-                raise ValueError(f"Only {available} non-overlapping verified excerpts are available. "
-                                 "Lower Candidates or review chapter coverage in Timeline; no AI request sent.")
             progress("AI analysis")
             fields = {k: {"type": "string", "minLength": 1, "maxLength": 500} for k in ("interval_id", "title", "hook_assessment", "reason", "headline")}
             fields["interval_id"] = {"type": "string", "enum": [p["id"] for p in pool]}
@@ -197,30 +199,43 @@ class ShortsService:
             prompt = ("Select distinct self-contained spoken excerpts from supplied verified intervals only. No invented timestamps or narration. "
                 "Prefer complete explanations with understandable openings and payoffs; reject dangling pronouns and repetitive content. "
                 "Assess existing facts only; headline must be supported by supplied spoken coverage. Editorial review required. Return interval IDs "
-                "and assessments; timing/references are resolved by application. Selected intervals must not overlap. "
+                "and assessments in editorial preference order, highest first; timing/references are resolved by application. "
+                "Selected intervals must not overlap. "
                 "Use the supplied start/end coverage to check overlap. Intervals: " + canonical_json([
                     {k:p[k] for k in ("id", "title", "group_ids", "section_ids", "scene_ids", "start", "end", "text")} for p in pool]))
-            value = await asyncio.to_thread(llm.generate_structured, prompt, deepcopy(schema))
+            response_manifest, value = self.artifacts.analysis_response(analysis_key)
+            if response_manifest is None:
+                value = await asyncio.to_thread(llm.generate_structured, prompt, deepcopy(schema))
             if type(value) is not dict or set(value) != {"candidates"} or type(value["candidates"]) is not list or len(value["candidates"]) != count:
-                raise ValueError("Invalid structured Short analysis.")
-            selected = []
+                raise ShortAnalysisError('invalid_response', "Invalid structured Short analysis.")
+            ranked = []
             for v in value["candidates"]:
                 if type(v) is not dict or set(v) != set(fields) or any(type(x) is not str or not x.strip() or len(x)>500 for x in v.values()):
-                    raise ValueError("Invalid Short assessment fields.")
+                    raise ShortAnalysisError('invalid_response', "Invalid Short assessment fields.")
                 item = next((p for p in pool if p["id"] == v["interval_id"]), None)
-                if item is None: raise ValueError("LLM referenced an unknown interval/section/scene.")
-                selected.append({**item, **{k:v[k] for k in fields if k != "interval_id"}})
-            origin = "LLM suggestions; editorial review required"
+                if item is None:
+                    raise ShortAnalysisError('unknown_candidate_id', "LLM referenced an unknown interval/section/scene.")
+                ranked.append({**item, **{k:v[k] for k in fields if k != "interval_id"}})
+            if response_manifest is None:
+                # Retain only bounded known selection fields, never transport bodies,
+                # headers, credentials, exceptions or a prompt. This is not an analysis
+                # or an approval; replay always repeats validation against the pool.
+                progress('Retaining AI selection evidence')
+                response_manifest = self.artifacts.save('analysis_response', {
+                    'version': 1, 'analysis_key': analysis_key,
+                    'response': {'candidates': [{k:v[k] for k in fields} for v in value['candidates']]},
+                    'status': 'UNREVIEWED_SELECTION_EVIDENCE'}, analysis_key=analysis_key)
+            selected, discarded = select_excerpts(pool, ranked, count)
+            ai_count = sum(p['selection_provenance']['method'] == 'llm' for p in selected)
+            origin = (f"{ai_count} AI-selected, {count-ai_count} verified fallback selections. "
+                      "Editorial review required.")
         else:
             progress("AI analysis (heuristic; no LLM configured)")
-            selected = []
-            for item in pool:
-                if any(set(item["group_ids"]) & set(p["group_ids"]) or overlap(item,p) for p in selected): continue
-                selected.append(item)
-                if len(selected) == count: break
+            selected, discarded = select_excerpts(pool, [], count, fallback_method='heuristic')
             origin = "Heuristic section/sentence discovery; no retention or virality prediction"
-        if not selected:
-            raise ValueError("No distinct valid excerpts found. Review chapter coverage and verified boundaries in Timeline.")
+        if len(selected) != count:
+            raise ShortAnalysisError('insufficient_candidates',
+                "Not enough distinct valid excerpts found. Lower Candidates or review chapter coverage and verified boundaries in Timeline.")
         if len({p["id"] for p in selected}) != len(selected) or any(overlap(a,b) for i,a in enumerate(selected) for b in selected[i+1:]):
             raise ValueError("Suggestions repeat or overlap; review distinct intervals.")
         check_cancel()
@@ -235,7 +250,8 @@ class ShortsService:
         check_cancel()
         verify_current()
         return self.artifacts.save("analysis", {"version": 1, "origin": origin, "analysis_key": analysis_key, "requested_count": count,
-            "target_seconds": target, "candidates": selected, "status": "REVIEW"})
+            "target_seconds": target, "candidates": selected, "discarded_preferences": discarded,
+            "response_artifact_id": response_manifest.artifact_id if response_manifest else None, "status": "REVIEW"})
 
     def candidates(self):
         values = {}

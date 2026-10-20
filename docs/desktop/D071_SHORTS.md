@@ -3,6 +3,9 @@
 The 2026-10-18 [analysis visibility repair](D071_SHORTS_ANALYSIS_REPAIR.md) records
 the current Original Excerpt analysis phases, detached worker reads, reuse,
 regression evidence and operator verification steps.
+The subsequent [robust selection repair](D071_SHORTS_SELECTION_REPAIR.md) resolves
+known duplicate/overlapping preferences without another provider call, records
+fallback provenance and retains replayable unapproved selection evidence.
 
 ## Integration and ownership
 
@@ -17,7 +20,7 @@ its verified D068/D069 composition mapping. It uses the existing configured LLM
 only on explicit Analyze; its strict schema permits supplied interval IDs and
 editorial assessments, never timestamps or invented scene references. Without an
 LLM, chapter/section/sentence coverage produces explicitly labeled heuristic
-REVIEW candidates, with distinct groups and no overlap. Whole chapters and
+REVIEW candidates, preferring distinct chapters and always excluding overlap. Whole chapters and
 sections are preferred over shorter boundary combinations. Conclusion-only
 coverage is excluded. Suggestions are not evidence of audience retention.
 
@@ -29,7 +32,7 @@ small frame remainder with silence. An excerpt edge coinciding with a branding
 insertion must also be an exact video frame; ambiguous card edges fail closed. Excerpts cannot cross an inserted branding
 card. Every actual frame-aligned output must remain 30-60 seconds.
 
-`ProjectShorts` retains append-only analyses, decisions, edit revisions, media,
+`ProjectShorts` retains append-only selection receipts, analyses, decisions, edit revisions, media,
 SRT, metadata, packages and successful selections through configured storage.
 No parent head is selected or rewritten. Reanalysis retains accepted candidates
 and edits. Identical edit saves reuse the revision; source SHA, Timeline, edit

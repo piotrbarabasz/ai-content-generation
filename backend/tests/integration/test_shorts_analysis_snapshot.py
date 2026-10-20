@@ -43,6 +43,11 @@ def test_detached_source_and_boundary_reads_use_no_live_sqlite(indexed_shorts):
     assert source.artifact_type=='video_render' and edges
     assert reader.store is not s.store and reader.session.repository is not s.session.repository
     verify()  # Live owner comparison stays on the calling thread.
+    before={m.storage_key:s.store.read_artifact(m.storage_key) for m in s.store.list_artifacts()}
+    s.artifacts.save('analysis_response', {'version':1,'analysis_key':'test','response':{'candidates':[]}},
+                     analysis_key='test')
+    verify()  # Independent response evidence is not a change to source inputs.
+    assert all(s.store.read_artifact(key)==value for key,value in before.items())
     assert s.publishing._original_verification==reader.publishing._original_verification
     s.store.save_artifact('change.json','{}',{'artifact_type':'test_change'})
     with pytest.raises(ValueError,match='Project changed'):verify()

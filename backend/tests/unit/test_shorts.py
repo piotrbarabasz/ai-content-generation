@@ -71,15 +71,14 @@ def test_heuristic_valid_references_distinct_topics_and_no_random_trim(service):
     assert all(F(*x['duration'])==30 and x['status']=='REVIEW' and x['section_ids'] and len(x['scene_ids'])==3 for x in p)
     assert 'Heuristic' in service.artifacts.read(service.artifacts.history('analysis')[0])['origin']
 
-@pytest.mark.parametrize('bad',['unknown','timestamp','duplicate','overlap'])
-def test_strict_llm_rejects_invalid_references_fields_or_overlap(service,bad):
+@pytest.mark.parametrize('bad',['unknown','timestamp'])
+def test_strict_llm_rejects_unknown_references_or_invalid_fields(service,bad):
     def generate(prompt,schema):
         ids=schema['properties']['candidates']['items']['properties']['interval_id']['enum']
         assert 'timestamps' in prompt and 'section_ids' in prompt
         result=[{'interval_id':x,'title':'Title','hook_assessment':'Review','reason':'Coverage','headline':'Known fact'} for x in ids[:3]]
         if bad=='unknown':result[0]['interval_id']='foreign'
         elif bad=='timestamp':result[0]['start']=45
-        else:result[1]['interval_id']=result[0]['interval_id']
         return {'candidates':result}
     service.publishing.llm=NS(generate_structured=generate)
     with pytest.raises(ValueError):asyncio.run(service.analyze())
