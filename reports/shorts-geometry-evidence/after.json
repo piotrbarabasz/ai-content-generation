@@ -1,0 +1,107 @@
+{
+  "90": {
+    "coded": [
+      1080,
+      1920
+    ],
+    "decoded": [
+      1920,
+      1080
+    ],
+    "side_data": [
+      {
+        "side_data_type": "Display Matrix",
+        "displaymatrix": "\n00000000:            0      -65536           0\n00000001:        65536           0           0\n00000002:            0           0  1073741824\n",
+        "rotation": 90
+      }
+    ],
+    "adapter_probe_error": "Shorts does not support rotation/display-matrix metadata (rotation [90]). Normalize a separate upright MP4 copy with square pixels and no display matrix, then verify/select it. The original is unchanged.",
+    "preview_error": "Shorts does not support rotation/display-matrix metadata (rotation [90]). Normalize a separate upright MP4 copy with square pixels and no display matrix, then verify/select it. The original is unchanged.",
+    "preview_commands": [
+      [
+        "ffprobe.exe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_streams",
+        "-of",
+        "json",
+        "source.mp4"
+      ]
+    ],
+    "source_unchanged": true
+  },
+  "270": {
+    "coded": [
+      1080,
+      1920
+    ],
+    "decoded": [
+      1920,
+      1080
+    ],
+    "side_data": [
+      {
+        "side_data_type": "Display Matrix",
+        "displaymatrix": "\n00000000:            0       65536           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n",
+        "rotation": -90
+      }
+    ],
+    "adapter_probe_error": "Shorts does not support rotation/display-matrix metadata (rotation [-90]). Normalize a separate upright MP4 copy with square pixels and no display matrix, then verify/select it. The original is unchanged.",
+    "preview_error": "Shorts does not support rotation/display-matrix metadata (rotation [-90]). Normalize a separate upright MP4 copy with square pixels and no display matrix, then verify/select it. The original is unchanged.",
+    "preview_commands": [
+      [
+        "ffprobe.exe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_streams",
+        "-of",
+        "json",
+        "source.mp4"
+      ]
+    ],
+    "source_unchanged": true
+  },
+  "director-1": {
+    "preview": "success",
+    "decoded": [
+      1080,
+      1920
+    ],
+    "commands": [
+      [
+        "ffmpeg.exe",
+        "-nostdin",
+        "-v",
+        "error",
+        "-n",
+        "-loop",
+        "1",
+        "-framerate",
+        "1",
+        "-i",
+        "image-0.png",
+        "-filter_complex_threads",
+        "1",
+        "-filter_complex",
+        "[0:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed0];[framed0]format=yuv420p[v0];[v0]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene0];[scene0]concat=n=1:v=1:a=0[whole]",
+        "-map",
+        "[whole]",
+        "-ss",
+        "0.5",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "preview.png"
+      ]
+    ]
+  },
+  "director-2": {
+    "preview_error": "Director preview requires exactly one scene rebased to frame 0 with a positive frame span and FPS; use the selected-scene preview. Full boards are supported by render().",
+    "commands": []
+  }
+}

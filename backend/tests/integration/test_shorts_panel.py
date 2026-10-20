@@ -13,13 +13,16 @@ from app.providers.openai_llm import OpenAILLMProvider
 from app.storage.local_store import LocalArtifactStore
 from app.desktop.shorts_panel import ShortsPanel
 from tests.unit.test_shorts import service, analyzed, ready
+from tests.shorts_playback_support import fake_players
 
 @pytest.fixture
-def panel(service):
+def panel(service,fake_players):
     app=QApplication.instance() or QApplication([])
     p=ShortsPanel();p.bind(service)
     service.publishing.sources=lambda:[('original',service.fixture_source,service.publishing.source('original')[1])]
     yield p
+    if p.busy:
+        p.cancel();wait_until(lambda:not p.busy)
     p.player.stop();p.close()
 
 
@@ -29,7 +32,7 @@ def no_paid_requests(monkeypatch):
     monkeypatch.setattr(OpenAILLMProvider, "generate_structured", forbidden)
 
 
-def wait_until(condition, timeout=5):
+def wait_until(condition, timeout=20):
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
         QApplication.processEvents()
@@ -56,7 +59,7 @@ def mock_llm(service, response=None):
 
 
 def test_analyze_click_timer_persistence_refresh_and_no_duplicate_paid_request(panel):
-    s=panel.service;calls=mock_llm(s);panel.activate()
+    s=panel.service;calls=mock_llm(s);panel.activate();wait_until(lambda:not panel.busy)
     phases=[];set_text=panel.status.setText
     panel.status.setText=lambda text:(phases.append(text),set_text(text))[-1]
     owner=threading.get_ident();save=s.artifacts.save;save_threads=[]
@@ -81,31 +84,31 @@ def test_analyze_click_timer_persistence_refresh_and_no_duplicate_paid_request(p
     assert len(calls)==1 and len(s.artifacts.history('analysis'))==1
     s.publishing.store=LocalArtifactStore(s.store.root)
     reopened=ShortsService(s.publishing,s.renderer)
-    panel.bind(reopened);panel.activate()
+    panel.bind(reopened);panel.activate();wait_until(lambda:not panel.busy)
     assert [p['id'] for p in reopened.candidates()]==[p['id'] for p in values]
-    assert panel.choices.count()==3 and panel.value['candidate_id']==values[0]['id']
-    panel.choices.clear()
+    assert panel.choices.count()==3 and panel.value['candidate_id']==values[0]['id'],panel.status.text()
+    panel.choices.clear();wait_until(lambda:not panel.busy)
     refresh=next(b for b in panel.findChildren(QPushButton)
                  if b.text()=='Refresh verified source / retained Shorts')
-    QTest.mouseClick(refresh,Qt.LeftButton)
+    QTest.mouseClick(refresh,Qt.LeftButton);wait_until(lambda:not panel.busy)
     assert panel.choices.count()==3 and panel.value and not panel.dirty
 
 
 def test_no_intervals_is_actionable_and_empty_controls_never_become_dirty(panel):
     s=panel.service;calls=mock_llm(s)
     s.publishing.renders.media.boundaries=lambda m:()
-    panel.activate();panel.title.setText('No selected candidate');panel.mode.setCurrentText('fill')
+    panel.activate();wait_until(lambda:not panel.busy);panel.title.setText('No selected candidate');panel.mode.setCurrentText('fill')
     assert not panel.dirty and 'Unsaved' not in panel.status.text()
     click_analyze(panel);wait_until(lambda:not panel.busy)
     message=panel.status.text()
     assert 'No valid 30-60' in message and 'Timeline' in message and 'Finding excerpts' in message
     assert not calls and not s.artifacts.history('analysis') and not panel.value
-    panel.title.setText('Another signal');panel.changed();panel.load()
+    panel.title.setText('Another signal');panel.changed();panel.load();wait_until(lambda:not panel.busy)
     assert panel.status.text()==message and not panel.dirty
 
 
 def test_slow_discovery_keeps_qt_timer_responsive_and_blocks_duplicate_dispatch(panel,monkeypatch):
-    s=panel.service;calls=mock_llm(s);panel.activate()
+    s=panel.service;calls=mock_llm(s);panel.activate();wait_until(lambda:not panel.busy)
     started=threading.Event();release=threading.Event();owner=threading.get_ident();pool=s.pool
     def slow(*args):
         assert threading.get_ident()!=owner
@@ -127,7 +130,7 @@ def test_slow_discovery_keeps_qt_timer_responsive_and_blocks_duplicate_dispatch(
 
 @pytest.mark.parametrize('failure', ['provider','shape','fields','unknown'])
 def test_analysis_failure_is_visible_and_preserves_retained_candidates(panel,failure):
-    s=panel.service;analyzed(s);panel.activate();previous=s.candidates()
+    s=panel.service;analyzed(s);panel.activate();wait_until(lambda:not panel.busy);previous=s.candidates()
     def response():
         if failure=='provider':raise RuntimeError('Mock LLM unavailable')
         if failure=='shape':return {'candidates':[]}
@@ -141,15 +144,15 @@ def test_analysis_failure_is_visible_and_preserves_retained_candidates(panel,fai
     assert ('unavailable' in message if failure=='provider' else
             any(t in message for t in ('Invalid','unknown','repeat')))
     assert len(calls)==1 and s.candidates()==previous and len(s.artifacts.history('analysis'))==1
-    QTest.mouseClick(panel.cards[1].select_button,Qt.LeftButton)
+    QTest.mouseClick(panel.cards[1].select_button,Qt.LeftButton);wait_until(lambda:not panel.busy)
     assert panel.status.text()==message
-    panel.title.setText('Manual edit after failure');panel.choices.setCurrentIndex(1);panel.changed()
+    panel.title.setText('Manual edit after failure');panel.choices.setCurrentIndex(1);wait_until(lambda:not panel.busy);panel.changed()
     QApplication.processEvents()
     assert panel.status.text()==message and panel.choices.count()==3
 
 
 def test_publication_failure_keeps_previous_analysis_and_selection(panel,monkeypatch):
-    s=panel.service;analyzed(s);panel.activate();previous=panel.value['candidate_id']
+    s=panel.service;analyzed(s);panel.activate();wait_until(lambda:not panel.busy);previous=panel.value['candidate_id']
     mock_llm(s)
     save=s.artifacts.save
     def fail(kind,*args,**kwargs):
@@ -167,13 +170,13 @@ def test_conflicting_preferences_display_exact_count_provenance_and_first_select
     def repeated():
         return {'candidates':[{'interval_id':pool[0]['id'],'title':'AI title',
             'hook_assessment':'AI assessment','reason':'AI reason','headline':'AI headline'}]*3}
-    calls=mock_llm(s,repeated);panel.activate()
+    calls=mock_llm(s,repeated);panel.activate();wait_until(lambda:not panel.busy)
     click_analyze(panel);wait_until(lambda:not panel.busy)
     assert panel.status.text()==('Completed: 3 candidates. 1 AI-selected, '
         '2 verified fallback selections. Editorial review required.')
     assert panel.choices.count()==3 and panel.choices.currentIndex()==0 and not panel.dirty
     assert 'AI-selected' in panel.details.text()
-    panel.choices.setCurrentIndex(1)
+    panel.choices.setCurrentIndex(1);wait_until(lambda:not panel.busy)
     assert 'Verified fallback' in panel.details.text() and 'not AI-ranked' in panel.details.text()
     assert panel.title.text()==pool[1]['title'] and 'AI assessment' not in panel.details.text()
     click_analyze(panel);wait_until(lambda:not panel.busy)
@@ -182,7 +185,7 @@ def test_conflicting_preferences_display_exact_count_provenance_and_first_select
 
 def test_success_selects_first_current_candidate_and_keeps_stale_history(panel):
     from dataclasses import replace
-    s=panel.service;old_candidates=analyzed(s);panel.activate()
+    s=panel.service;old_candidates=analyzed(s);panel.activate();wait_until(lambda:not panel.busy)
     source=s.publishing.source
     s.publishing.source=lambda kind:(replace(source(kind)[0],checksum='c'*64),*source(kind)[1:])
     click_analyze(panel);wait_until(lambda:not panel.busy)
@@ -193,19 +196,19 @@ def test_success_selects_first_current_candidate_and_keeps_stale_history(panel):
 
 
 def test_workspace_restore_crop_controls_and_edit_revision(panel):
-    s=panel.service;values=analyzed(s);panel.activate()
+    s=panel.service;values=analyzed(s);panel.activate();wait_until(lambda:not panel.busy)
     assert panel.choices.count()==3 and panel.begin.count()==10
     panel.mode.setCurrentText('fill');panel.focal.setValue(.2);panel.hook.setText('Known fact');panel.hook_on.setChecked(True)
-    panel.save();panel.decision(True)
+    panel.save();wait_until(lambda:not panel.busy);panel.decision(True);wait_until(lambda:not panel.busy)
     revision=panel.revision
-    panel.bind(s);panel.activate()
+    panel.bind(s);panel.activate();wait_until(lambda:not panel.busy)
     assert panel.revision.artifact_id==revision.artifact_id and panel.mode.currentText()=='fill'
     assert panel.focal.value()==.2 and panel.hook.text()=='Known fact' and panel.hook_on.isChecked()
     assert s.accepted(values[0]['id'])
 
 
 def test_busy_cancel_and_dirty_export_guard(panel):
-    analyzed(panel.service);panel.activate();panel.title.setText('Manual title')
+    analyzed(panel.service);panel.activate();wait_until(lambda:not panel.busy);panel.title.setText('Manual title')
     with pytest.raises(ValueError,match='Save'):panel.output()
     async def pending():
         while not panel.canceled:await asyncio.sleep(.01)
@@ -220,7 +223,7 @@ def test_busy_cancel_and_dirty_export_guard(panel):
 def test_vertical_preview_reserves_full_height_without_overlapping_controls(panel):
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QPushButton
-    analyzed(panel.service);panel.activate();panel.resize(1050,850);panel.show()
+    analyzed(panel.service);panel.activate();wait_until(lambda:not panel.busy);panel.resize(1050,850);panel.show()
     panel.advanced_toggle.setChecked(True)
     pixmap=QPixmap(270,480);pixmap.fill()
     panel.preview.setPixmap(pixmap);panel.preview.setMinimumSize(270,480)
@@ -235,7 +238,7 @@ def test_source_info_follows_verified_source_choice(panel):
     e=s.publishing.source('original')[1];source=s.publishing.source
     s.publishing.source=lambda kind:(branded,*source(kind)[1:]) if kind=='branded' else source(kind)
     s.publishing.sources=lambda:[('original',original,e),('branded',branded,e)]
-    panel.activate();panel.source.setCurrentIndex(1)
+    panel.activate();wait_until(lambda:not panel.busy);panel.source.setCurrentIndex(1)
     assert 'branded' in panel.info.text() and 'Verified source' in panel.info.text()
     assert 'verified-brand' in panel.info.toolTip() and 'VALID branded' in panel.info.toolTip()
 
@@ -247,7 +250,7 @@ def test_simple_empty_and_verified_source_states_do_not_dispatch(panel):
     assert not p.analyze_button.isEnabled() and p.analyze_button.toolTip()
     assert p.step2.isHidden() and p.step3.isHidden() and p.advanced.isHidden()
     assert p.production_mode.currentText()=='Original Excerpt'
-    p.activate()
+    p.activate();wait_until(lambda:not p.busy)
     assert p.state is ShortsState.READY_TO_ANALYZE and p.analyze_button.isEnabled()
     assert p.analyze_button.text()=='Find 3 Shorts' and p.target.value()==45
     assert '90s' in p.info.text() and 'Verified source' in p.info.text()
@@ -259,7 +262,7 @@ def test_simple_empty_and_verified_source_states_do_not_dispatch(panel):
 
 def test_cards_selection_preview_and_no_implicit_acceptance(panel,monkeypatch):
     from pathlib import Path
-    p=panel;p.activate();click_analyze(p);wait_until(lambda:not p.busy)
+    p=panel;p.activate();wait_until(lambda:not p.busy);click_analyze(p);wait_until(lambda:not p.busy)
     assert len(p.cards)==3 and not p.step2.isHidden()
     assert all('30s' in card.summary.text() and 'Topic' in card.summary.text()
                and 'Review needed' in card.summary.text() for card in p.cards)
@@ -267,12 +270,12 @@ def test_cards_selection_preview_and_no_implicit_acceptance(panel,monkeypatch):
     set_source=p.player.setSource
     monkeypatch.setattr(p.player,'setSource',lambda url:(played.append(url.toLocalFile()),set_source(url))[-1])
     monkeypatch.setattr(p.player,'play',lambda:None)
-    QTest.mouseClick(p.cards[1].play_button,Qt.LeftButton)
+    QTest.mouseClick(p.cards[1].play_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.value['candidate_id']==p.cards[1].identity and p.cards[1].select_button.isChecked()
     assert played[-1]
     assert {Path(path) for path in played if path}=={p.service.store._artifact_path(p.service.fixture_source.storage_key)}
     assert p.play_end==60000
-    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton)
+    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.cards[1].select_button.isChecked()
     assert not p.create_button.isEnabled() and 'Editorial review required' in p.review_reason.text()
     with pytest.raises(ValueError,match='Explicitly accept'):p.create_short()
@@ -282,12 +285,12 @@ def test_cards_selection_preview_and_no_implicit_acceptance(panel,monkeypatch):
 def test_create_saves_acceptance_renders_and_exports_verified_mp4(panel,monkeypatch,tmp_path):
     from PySide6.QtWidgets import QFileDialog
     from app.desktop.shorts_panel import ShortsState
-    p=panel;analyzed(p.service);p.activate();p.title.setText('A reviewed title')
+    p=panel;analyzed(p.service);p.activate();wait_until(lambda:not p.busy);p.title.setText('A reviewed title')
     calls=mock_llm(p.service)  # Rendering must not dispatch the configured LLM.
     p.accept_check.setChecked(True)
     assert not p.service.artifacts.history('decision')
     QTest.mouseClick(p.create_button,Qt.LeftButton)
-    assert p.busy and p.cancel_button.isEnabled() and 'Rendering' in p.status.text()
+    assert p.busy and p.cancel_button.isEnabled() and 'Checking source' in p.status.text()
     wait_until(lambda:not p.busy)
     assert p.state is ShortsState.SHORT_READY and not p.step3.isHidden()
     assert '1080 x 1920' in p.output_info.text() and '30s' in p.output_info.text()
@@ -296,14 +299,14 @@ def test_create_saves_acceptance_renders_and_exports_verified_mp4(panel,monkeypa
     assert 'Rendered' in p.cards[0].summary.text() and 'Accepted' in p.cards[0].summary.text()
     destination=tmp_path/'saved.mp4'
     monkeypatch.setattr(QFileDialog,'getSaveFileName',lambda *_:(str(destination),'MP4'))
-    QTest.mouseClick(p.export_button,Qt.LeftButton)
+    QTest.mouseClick(p.export_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert destination.read_bytes()==p.service.artifacts.records.verified_bytes(p.output())
     assert not p.status_error
     assert not calls
 
 
 def test_create_reuses_saved_revision_and_retains_history(panel):
-    p=panel;candidate=analyzed(p.service)[0];ready(p.service,candidate);p.activate()
+    p=panel;candidate=analyzed(p.service)[0];ready(p.service,candidate);p.activate();wait_until(lambda:not p.busy)
     previous=p.revision
     p.edit_selected();QTest.mouseClick(p.create_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.revision==previous and len(p.service.artifacts.history('edit'))==1
@@ -315,31 +318,102 @@ def test_create_reuses_saved_revision_and_retains_history(panel):
     assert p.service.artifacts.read(previous)['title']==candidate['title']
 
 
+def test_ready_card_play_and_explicit_original_keep_displayed_identity_and_export(panel,monkeypatch,tmp_path):
+    from pathlib import Path
+    from PySide6.QtWidgets import QFileDialog
+    from app.desktop.shorts_playback import DisplayedMedia
+    p=panel;s=p.service;values=analyzed(s);video=ready(s,values[0]);p.activate();wait_until(lambda:not p.busy)
+    p.select_card(values[0]['id'],True);wait_until(lambda:not p.busy)
+    assert p.playback.kind is DisplayedMedia.VERIFIED_SHORT and p.play_end is None
+    assert Path(p.player.source().toLocalFile())==s.store._artifact_path(video.storage_key)
+    assert 'Verified Short' in p.media_label.text() and p.video.width()*16==p.video.height()*9
+    p.play_source();wait_until(lambda:not p.busy)
+    assert p.playback.kind is DisplayedMedia.ORIGINAL_EXCERPT and p.play_end==30000
+    assert Path(p.player.source().toLocalFile())==s.store._artifact_path(s.fixture_source.storage_key)
+    assert 'Original excerpt' in p.media_label.text() and p.review_columns.indexOf(p.media_view)>=0
+    assert p.video.aspectRatioMode()==Qt.KeepAspectRatio
+    destination=tmp_path/'selected.mp4'
+    monkeypatch.setattr(QFileDialog,'getSaveFileName',lambda *_:(str(destination),''))
+    p.copy('video');wait_until(lambda:not p.busy)
+    assert destination.read_bytes()==s.store.read_artifact(video.storage_key)
+    assert destination.read_bytes()!=s.store.read_artifact(s.fixture_source.storage_key)
+    p.select_card(values[1]['id'],True);wait_until(lambda:not p.busy)
+    assert p.playback.kind is DisplayedMedia.ORIGINAL_EXCERPT and p.play_end==60000
+    assert not p.verified_output and p.step3.isHidden()
+    p.select_card(values[0]['id'],True);wait_until(lambda:not p.busy)
+    assert p.playback.kind is DisplayedMedia.VERIFIED_SHORT and p.play_end is None
+    assert len(s.artifacts.history('video'))==1
+
+
+@pytest.mark.parametrize('code',['ResourceError','FormatError'])
+def test_playback_error_persists_without_invalidating_output(panel,code):
+    from PySide6.QtMultimedia import QMediaPlayer
+    from app.desktop.shorts_playback import DisplayedMedia
+    p=panel;s=p.service;candidate=analyzed(s)[0];video=ready(s,candidate);p.activate();wait_until(lambda:not p.busy)
+    p.player.errorOccurred.emit(getattr(QMediaPlayer,code),'Synthetic decoder failure')
+    message=p.status.text()
+    assert 'verified short' in message and 'still saved' in message
+    assert p.playback.kind is DisplayedMedia.PLAYBACK_ERROR and not p.media_error.isHidden()
+    p.check_output();p.refresh();wait_until(lambda:not p.busy)
+    assert p.status.text()==message and p.media_error.text()==message
+    assert p.verified_output.artifact_id==video.artifact_id and p.export_button.isEnabled()
+    p.play_short();wait_until(lambda:not p.busy)
+    assert not p.playback.error_message and p.media_error.isHidden()
+    assert p.playback.kind is DisplayedMedia.VERIFIED_SHORT
+
+
+def test_pending_callbacks_cannot_cross_candidate_stop_or_project(panel,tmp_path):
+    from app.desktop.shorts_playback import DisplayedMedia
+    p=panel;s=p.service;values=analyzed(s);p.player.auto_ready=False;p.activate();wait_until(lambda:not p.busy)
+    p.select_card(values[1]['id'],True);wait_until(lambda:not p.busy)
+    old_callbacks=[slot for _,slot in p.playback._connections]
+    p.select_card(values[2]['id'],True);wait_until(lambda:not p.busy)
+    for callback in old_callbacks[:3]:callback(30000)
+    assert not p.player.played and p.playback.pending
+    p.player.loaded()
+    assert p.player.played[-1][1]==60000 and p.play_end==90000
+    p.select_card(values[1]['id'],True);wait_until(lambda:not p.busy);p.playback.stop();p.player.loaded()
+    p.player.positionChanged.emit(60000)  # Queued pre-Stop boundary notification.
+    assert p.player.playbackState().name=='StoppedState'
+    p.play_source();wait_until(lambda:not p.busy);assert p.player.played[-1][1]==30000
+    callbacks=[slot for _,slot in p.playback._connections]
+    other=service.__wrapped__(tmp_path/'other-project')
+    other.publishing.sources=lambda:[('original',other.fixture_source,other.publishing.source('original')[1])]
+    other_values=analyzed(other)
+    p.bind(other)
+    for callback in callbacks[:3]:callback(30000)
+    assert p.playback.kind is DisplayedMedia.NO_MEDIA and p.player.source().isEmpty()
+    assert 'No media' in p.media_label.text()
+    p.activate();wait_until(lambda:not p.busy);p.select_card(other_values[0]['id'],True);wait_until(lambda:not p.busy)
+    assert p.playback.request.context==(id(other),other_values[0]['id'])
+    assert p.player.source().toLocalFile().replace('\\','/')==other.store._artifact_path(other.fixture_source.storage_key).as_posix()
+
+
 def test_switching_cards_preserves_invalid_unsaved_drafts_and_refresh(panel):
-    p=panel;values=analyzed(p.service);p.activate()
+    p=panel;values=analyzed(p.service);p.activate();wait_until(lambda:not p.busy)
     p.title.setText('Unfinished first title');p.mode.setCurrentText('fill');p.focal.setValue(.25)
     p.hook_on.setChecked(True);p.hook.setText('Draft hook');p.hook_on.setChecked(False)
     p.accent.setText('FF')  # A partial RGB value must survive navigation too.
-    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton)
+    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.value['candidate_id']==values[1]['id'] and not p.dirty
     p.title.setText('Second draft')
-    QTest.mouseClick(p.cards[0].select_button,Qt.LeftButton)
+    QTest.mouseClick(p.cards[0].select_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.title.text()=='Unfinished first title' and p.mode.currentText()=='fill'
     assert p.focal.value()==.25 and p.accent.text()=='FF' and p.dirty
     assert p.hook.text()=='Draft hook' and not p.hook_on.isChecked()
     assert p.draft()['style']['hook']==''
-    p.activate()
+    p.activate();wait_until(lambda:not p.busy)
     assert p.title.text()=='Unfinished first title' and p.accent.text()=='FF' and p.dirty
     assert not p.service.artifacts.history('edit')
     p.accent.setText('FFFFFF');p.accept_check.setChecked(True);p.create_short()
     wait_until(lambda:not p.busy)
-    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton)
+    QTest.mouseClick(p.cards[1].select_button,Qt.LeftButton);wait_until(lambda:not p.busy)
     assert p.title.text()=='Second draft' and p.dirty and not p.accept_check.isChecked()
 
 
 def test_invalid_create_and_render_failure_remain_actionable(panel):
-    p=panel;analyzed(p.service);p.activate();p.accept_check.setChecked(True)
-    p.title.clear();p.run(p.create_short)
+    p=panel;analyzed(p.service);p.activate();wait_until(lambda:not p.busy);p.accept_check.setChecked(True)
+    p.title.clear();p.run(p.create_short);wait_until(lambda:not p.busy)
     assert 'Invalid Short edit' in p.status.text() and not p.service.artifacts.history('decision')
     assert not p.busy and not p.service.renderer.calls
     p.title.setText('Valid title');p.service.renderer.failure=True;p.run(p.create_short)
@@ -352,11 +426,11 @@ def test_invalid_create_and_render_failure_remain_actionable(panel):
 
 
 def test_changed_boundaries_need_fresh_review_after_switching_cards(panel):
-    p=panel;values=analyzed(p.service);p.service.decide(values[0]['id'],True);p.activate()
+    p=panel;values=analyzed(p.service);p.service.decide(values[0]['id'],True);p.activate();wait_until(lambda:not p.busy)
     assert p.accept_check.isChecked()
     p.end.setCurrentIndex(p.end.findData([40,1]))
     assert not p.accept_check.isChecked() and p.dirty
-    p.select_card(values[1]['id']);p.select_card(values[0]['id'])
+    p.select_card(values[1]['id']);wait_until(lambda:not p.busy);p.select_card(values[0]['id']);wait_until(lambda:not p.busy)
     assert p.end.currentData()==[40,1] and not p.accept_check.isChecked()
     assert not p.create_button.isEnabled()
     assert p.service.accepted(values[0]['id'])  # Historical decision is preserved.
@@ -364,7 +438,7 @@ def test_changed_boundaries_need_fresh_review_after_switching_cards(panel):
 
 def test_render_progress_cancel_and_project_switch_guard(panel,monkeypatch):
     from app.runtime.media_process import RenderCanceled
-    p=panel;analyzed(p.service);p.activate();p.accept_check.setChecked(True)
+    p=panel;analyzed(p.service);p.activate();wait_until(lambda:not p.busy);p.accept_check.setChecked(True)
     started=[]
     async def pending(*args,**kwargs):
         kwargs['progress']('Encoding selected Short',.2);started.append(True)
@@ -383,9 +457,9 @@ def test_render_progress_cancel_and_project_switch_guard(panel,monkeypatch):
 def test_reopen_restores_render_and_stale_export_is_blocked(panel,monkeypatch,tmp_path):
     from dataclasses import replace
     from PySide6.QtWidgets import QFileDialog
-    p=panel;s=p.service;candidate=analyzed(s)[0];ready(s,candidate);p.activate()
+    p=panel;s=p.service;candidate=analyzed(s)[0];ready(s,candidate);p.activate();wait_until(lambda:not p.busy)
     revision=p.revision
-    p.bind(ShortsService(s.publishing,s.renderer));p.activate()
+    p.bind(ShortsService(s.publishing,s.renderer));p.activate();wait_until(lambda:not p.busy)
     assert p.revision==revision and p.accept_check.isChecked() and not p.step3.isHidden()
     source=s.publishing.source
     target=tmp_path/'must-not-exist.mp4'
@@ -393,13 +467,13 @@ def test_reopen_restores_render_and_stale_export_is_blocked(panel,monkeypatch,tm
         s.publishing.source=lambda kind:(replace(source(kind)[0],checksum='e'*64),*source(kind)[1:])
         return str(target),'MP4'
     monkeypatch.setattr(QFileDialog,'getSaveFileName',dialog)
-    p.run(lambda:p.copy('video'))
+    p.run(lambda:p.copy('video'));wait_until(lambda:not p.busy)
     assert p.status_error and 'STALE' in p.status.text() and not target.exists()
 
 
 def test_advanced_shared_settings_invalidate_preview_and_output(panel,monkeypatch):
     from PySide6.QtGui import QPixmap
-    p=panel;candidate=analyzed(p.service)[0];ready(p.service,candidate);p.activate()
+    p=panel;candidate=analyzed(p.service)[0];ready(p.service,candidate);p.activate();wait_until(lambda:not p.busy)
     assert p.advanced.isHidden()
     p.advanced_toggle.setChecked(True)
     assert not p.advanced.isHidden()
@@ -418,21 +492,21 @@ def test_advanced_shared_settings_invalidate_preview_and_output(panel,monkeypatc
     def with_captions(candidate,edit):
         copy={**edit,'style':{**edit['style'],'captions':False,'burn':False}}
         return prepare(candidate,copy)
-    monkeypatch.setattr(p.service,'prepare',with_captions);p.check_captions()
+    monkeypatch.setattr(p.service,'prepare',with_captions);p.check_captions();wait_until(lambda:not p.busy)
     assert p.caps.isEnabled() and p.external_captions.isEnabled()
     p.external_captions.setChecked(True)
     assert p.caps.isChecked() and p.draft()['style']['captions']
     p.burn.setChecked(True);p.caps.setChecked(False)
     assert not p.external_captions.isChecked() and not p.burn.isChecked()
     p.caps.setChecked(True);p.burn.setChecked(True)
-    monkeypatch.setattr(p.service,'prepare',prepare);p.check_captions()
+    monkeypatch.setattr(p.service,'prepare',prepare);p.check_captions();wait_until(lambda:not p.busy)
     assert not p.caps.isEnabled() and not p.remove_captions_button.isHidden()
     QTest.mouseClick(p.remove_captions_button,Qt.LeftButton)
     assert not p.caps.isChecked() and not p.burn.isChecked() and p.remove_captions_button.isHidden()
 
 
 def test_advanced_director_entry_does_not_dispatch_generation(panel):
-    p=panel;calls=mock_llm(p.service);analyzed(p.service);p.activate();calls.clear()
+    p=panel;calls=mock_llm(p.service);analyzed(p.service);p.activate();wait_until(lambda:not p.busy);calls.clear()
     p.advanced_toggle.setChecked(True);p.production_mode.setCurrentIndex(1)
     assert not p.director.isHidden() and p.original_scroll.isHidden() and not p.return_button.isHidden()
     assert p.director.service is None and not calls and not p.service.renderer.calls
@@ -441,7 +515,7 @@ def test_advanced_director_entry_does_not_dispatch_generation(panel):
 
 
 def test_empty_analysis_result_cannot_report_success(panel,monkeypatch):
-    p=panel;analyzed(p.service);p.activate();previous=[c.identity for c in p.cards]
+    p=panel;analyzed(p.service);p.activate();wait_until(lambda:not p.busy);previous=[c.identity for c in p.cards]
     manifest=p.service.artifacts.save('analysis',{'candidates':[],'origin':'empty fixture'})
     async def empty(*_,**__):return manifest
     monkeypatch.setattr(p.service,'analyze',empty)
@@ -465,7 +539,7 @@ def test_simple_layout_primary_actions_fit_desktop_viewport(panel,size,stage):
         panel.setFont(QFont(QFontDatabase.applicationFontFamilies(font_id)[0],9))
     p=panel;values=analyzed(p.service)
     if stage=='output':ready(p.service,values[0])
-    p.activate();p.resize(*size);p.show()
+    p.activate();wait_until(lambda:not p.busy);p.resize(*size);p.show()
     for _ in range(3):QApplication.processEvents()
     primary=p.export_button if stage=='output' else p.create_button
     viewport=p.original_scroll.viewport()

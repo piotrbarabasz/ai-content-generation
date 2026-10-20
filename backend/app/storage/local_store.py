@@ -126,6 +126,10 @@ class LocalArtifactStore(StreamingArtifactStore):
             self._publishing = False
 
     def _import_stream(self, name, source, metadata):
+        manifest, stage = self._stage_stream(name, source, metadata)
+        return self._commit_import(manifest, stage)
+
+    def _stage_stream(self, name, source, metadata, *, expected=None):
         metadata_dict = _coerce_metadata(metadata)
         manifest = ArtifactManifest.create(
             name=name,
@@ -184,11 +188,43 @@ class LocalArtifactStore(StreamingArtifactStore):
         if self._checked(stage / "payload").stat().st_size != size:
             raise OSError("Staged file size does not match transferred bytes.")
         manifest.checksum, manifest.size_bytes = digest.hexdigest(), size
+        if expected is not None and (manifest.checksum, size) != expected:
+            raise ValueError("Media bytes changed after verification; previous output retained.")
         _write_json(self._checked(stage / "complete.json"), manifest.to_payload())
         os.replace(self._checked(stage / "complete.json"), self._checked(stage / "intent.json"))  # Private journal only.
         artifact_path = self._artifact_path(manifest.storage_key)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         _publish_file(self._checked(stage / "payload"), self._artifact_path(manifest.storage_key))
+        return manifest, stage
+
+    async def import_file_async(self, name, path, metadata, *, checksum, size_bytes,
+                                canceled=lambda: False):
+        """Transfer/journal bytes in a worker; commit the catalog on its owner."""
+        from copy import copy
+        from app.runtime.media_worker import media_worker, check_canceled
+        if self._publishing:
+            raise RuntimeError("A publication is already running on this store.")
+        if self._index is not None:
+            self._index.repository.project()
+        metadata = json.loads(json.dumps(metadata))
+        detached = copy(self)
+        detached._index = None  # No live repository/SQLite reaches the worker.
+        self._publishing = True
+        def transfer(stop):
+            with Path(path).open('rb') as stream:
+                class Checked:
+                    def read(self, count):
+                        check_canceled(stop)
+                        return stream.read(count)
+                return detached._stage_stream(name, Checked(), metadata,
+                                               expected=(checksum, size_bytes))
+        try:
+            manifest, stage = await media_worker(transfer, canceled=canceled)
+            return self._commit_import(manifest, stage)
+        finally:
+            self._publishing = False
+
+    def _commit_import(self, manifest, stage):
         # Catalog commit is last. Failures leave a journal for deterministic recovery;
         # never delete a final file on an ambiguous commit outcome.
         if self._index is not None:

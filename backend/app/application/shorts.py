@@ -2,9 +2,8 @@
 import asyncio
 from copy import copy, deepcopy
 from fractions import Fraction
-from hashlib import file_digest, sha256
-from io import BytesIO
-import shutil
+from hashlib import sha256
+import os
 from uuid import uuid4
 from types import SimpleNamespace
 import zipfile
@@ -18,6 +17,8 @@ from app.providers.shorts import ShortsRenderer
 from app.runtime.media_process import RenderCanceled
 from app.storage.paths import contained_path
 from app.storage.shorts import ProjectShorts
+from app.storage.media_snapshot import MediaSnapshotStore
+from app.runtime.media_worker import media_worker, check_canceled
 
 
 class ShortsService:
@@ -26,6 +27,92 @@ class ShortsService:
         self.store, self.session = publishing.store, publishing.session
         self.artifacts = ProjectShorts(self.store, self.session.project.id)
         self._boundaries = {}
+        self._rendering = set()
+
+    def media_reader(self):
+        """Capture SQLite on its owner, then compose file-only media readers."""
+        reader, verify_current = self.analysis_reader('original')
+        if reader is self:
+            reader = copy(self)
+            reader.publishing = copy(self.publishing)
+            reader.session = SimpleNamespace(project=self.session.project,active_script=self.session.active_script,
+                repository=SimpleNamespace(workspace=self.session.repository.workspace))
+            reader.publishing.session = reader.session
+        publishing = reader.publishing
+        publishing._original_verification = getattr(self.publishing,'_original_verification',None)
+        repository = publishing.session.repository
+        store = MediaSnapshotStore(reader.store, repository=repository)
+        reader.store = publishing.store = store
+        reader.artifacts = ProjectShorts(store, self.session.project.id)
+        reader.renderer = copy(self.renderer)
+        reader._boundaries = dict(self._boundaries)
+        if hasattr(publishing.renders, 'index'):
+            from app.storage.timeline import ProjectTimelineMedia
+            from app.storage.video_plans import ProjectVideoPlans
+            from app.storage.plan_script import ProjectPlanScripts
+            from app.storage.timeline_edits import ProjectTimelineEdits
+            from app.storage.captions import ProjectCaptionTracks
+            from app.storage.publishing_package import ProjectPublishing
+            from app.storage.branding import ProjectBranding
+            from app.storage.delivery import ProjectDelivery
+            publishing.renders = copy(publishing.renders)
+            store._index.selected = publishing.renders.index.selected
+            store._index.project_id = publishing.renders.index.project_id
+            publishing.renders.index = store._index
+            publishing.renders.store = store
+            publishing.renders.media = ProjectTimelineMedia(publishing.renders.index, store)
+            publishing.plans = ProjectVideoPlans(repository, store)
+            publishing.plan_scripts = ProjectPlanScripts(repository, store, publishing.plans)
+            publishing.timelines = ProjectTimelineEdits(repository, store)
+            publishing.captions = ProjectCaptionTracks(repository, store)
+            publishing.artifacts = ProjectPublishing(store, self.session.project.id)
+            if publishing.finishing:
+                finishing = copy(publishing.finishing)
+                finishing.session, finishing.renders = publishing.session, publishing.renders
+                finishing.branding = ProjectBranding(store, self.session.project.id)
+                finishing.video_plans, finishing.plan_scripts, finishing.timelines = publishing.plans, publishing.plan_scripts, publishing.timelines
+                # ChannelLibrary opens/closes its own connection per operation;
+                # do not pass a lazy owner-thread composition callback to workers.
+                finishing._channel_library = publishing.finishing.channel_library
+                finishing.channel_library_factory = None
+                publishing.finishing = finishing
+            if publishing.delivery:
+                delivery = copy(publishing.delivery)
+                delivery.session, delivery.renders = publishing.session, publishing.renders
+                delivery.finishing = publishing.finishing
+                delivery.artifacts = ProjectDelivery(store, self.session.project.id)
+                publishing.delivery = delivery
+        # Receipts live only within this detached operation. Every later action
+        # captures and verifies fresh bytes; no stat-only persistent hash cache.
+        def memoize(method):
+            cache = {}
+            def memo(*args):
+                if args not in cache: cache[args] = method(*args)
+                return cache[args]
+            return memo
+        if hasattr(publishing, 'original'):
+            publishing.original = memoize(publishing.original)
+        publishing.source = memoize(publishing.source)
+        publishing.timing = memoize(publishing.timing)
+        reader.source = memoize(reader.source)
+        if reader.renderer:
+            reader.renderer.identity = memoize(reader.renderer.identity)
+        return reader, verify_current
+
+    async def read_async(self, operation, *args, canceled=lambda: False, **kwargs):
+        reader, verify_current = self.media_reader()
+        def read(stop):
+            reader.store.canceled = stop
+            result = (getattr(reader, operation)(*args, **kwargs) if isinstance(operation, str)
+                      else operation(reader))
+            reader.store.validate_reads()
+            return result
+        result = await media_worker(read, canceled=canceled)
+        verify_current()
+        reader.store.validate_reads()
+        reader.store.publish(self.store)
+        self._boundaries.update(reader._boundaries)
+        return result
 
     def source(self, kind="original"):
         value = self.publishing.source(kind)
@@ -333,23 +420,70 @@ class ShortsService:
         overlays(style, segments)
         return source, evidence, timeline, start, end, shots, style, segments, caption_id
 
-    def stage(self, source):
+    def stage(self, source, *, canceled=lambda: False):
         root = contained_path(self.session.repository.workspace, "work/shorts/" + uuid4().hex); root.mkdir(parents=True)
+        cache = contained_path(self.session.repository.workspace, "work/shorts-sources/" + source.checksum + "/source.mp4")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if cache.exists():
+            # A staging cache is not evidence that the selected artifact still
+            # exists with its declared bytes. Verify both before source reuse.
+            self.verify_file(self.store._artifact_path(source.storage_key), source.checksum, source.size_bytes, canceled=canceled)
+            self.verify_file(cache, source.checksum, source.size_bytes, canceled=canceled)
+            check_canceled(canceled)
+            try:
+                os.link(cache, root/'source.mp4')
+                return root
+            except OSError:
+                pass  # Filesystems without hard links keep the verified-copy path.
+        digest, size = sha256(), 0
         with self.store.open_artifact_id(source.artifact_id) as stream, (root/"source.mp4").open("xb") as target:
-            shutil.copyfileobj(stream, target, 1024*1024)
-        with (root/"source.mp4").open("rb") as stream:
-            if file_digest(stream, "sha256").hexdigest() != source.checksum: raise ValueError("Source changed while staging.")
+            while block := stream.read(1024*1024):
+                check_canceled(canceled)
+                if target.write(block) != len(block): raise OSError("Incomplete source copy; check free disk space.")
+                digest.update(block); size += len(block)
+        if (digest.hexdigest(), size) != (source.checksum, source.size_bytes):
+            raise ValueError("Source changed while staging; refresh the verified source.")
+        check_canceled(canceled)
+        try: os.link(root/'source.mp4', cache)
+        except OSError: pass  # A concurrent verified preparation may have won.
         return root
 
-    async def preview(self, identity, edit, time=None, *, canceled=lambda: False):
+    @staticmethod
+    def verify_file(path, checksum, size, *, canceled=lambda: False):
+        digest, measured = sha256(), 0
+        with path.open('rb') as stream:
+            while block := stream.read(1024*1024):
+                check_canceled(canceled)
+                digest.update(block); measured += len(block)
+        if (digest.hexdigest(), measured) != (checksum, size):
+            raise ValueError("Media checksum/size changed; restore the source or prepare it again.")
+
+    async def stage_async(self, source, *, canceled=lambda: False):
+        reader, verify_current = self.media_reader()
+        def stage(stop):
+            reader.store.canceled=stop
+            return reader.stage(source,canceled=stop)
+        root = await media_worker(stage, canceled=canceled)
+        verify_current()
+        return root
+
+    async def preview(self, identity, edit, time=None, *, canceled=lambda: False, progress=lambda *_: None):
         if self.renderer is None: raise ValueError("Configure trusted local FFmpeg/FFprobe for Shorts previews.")
-        p = self.candidate(identity)
-        source,e,t,a,b,shots,style,segments,_ = self.prepare(p, edit)
+        progress('Checking source')
+        source,e,t,a,b,shots,style,segments,_ = await self.read_async(
+            lambda r:r.prepare(r.candidate(identity), edit), canceled=canceled)
         relative = Fraction(time) if time is not None else Fraction(0)
         if not 0 <= relative < b-a: raise ValueError("Preview time outside excerpt.")
-        raw = await self.renderer.preview(self.stage(source), e, a+relative, shots,
+        progress('Preparing excerpt')
+        root = await self.stage_async(source, canceled=canceled)
+        progress('Generating vertical preview')
+        raw = await self.renderer.preview(root, e, a+relative, shots,
             style, segments, canceled=canceled, relative=relative)
-        if self.source(p["source_kind"])[0].artifact_id != source.artifact_id: raise ValueError("Source changed during preview.")
+        progress('Verifying')
+        current = await self.read_async(lambda r:r.prepare(r.candidate(identity),edit), canceled=canceled)
+        if current[:8] != (source,e,t,a,b,shots,style,segments): raise ValueError("Source changed during preview.")
+        await media_worker(lambda stop:self.verify_file(root/'source.mp4',source.checksum,source.size_bytes,canceled=stop), canceled=canceled)
+        progress('Ready')
         return raw
 
     def identity(self, p, revision):
@@ -369,23 +503,40 @@ class ShortsService:
         return m
 
     async def render(self, identity, *, canceled=lambda: False, progress=lambda *_: None):
-        p = self.candidate(identity)
-        if not self.accepted(identity): raise ValueError("Accept the excerpt after editorial/audio review before rendering.")
-        revision = self.artifacts.latest("edit", identity)
-        if revision is None: raise ValueError("Save a Short edit first.")
-        values, output_id, fingerprint = self.identity(p, revision)
-        if canceled(): raise RenderCanceled("Short canceled before rendering.")
-        cached = self.artifacts.cached(fingerprint)
+        if self._rendering: raise ValueError('A Short render is already running; wait or cancel it first.')
+        self._rendering.add(identity)
+        try:
+            return await self._render(identity, canceled=canceled, progress=progress)
+        finally:
+            self._rendering.discard(identity)
+
+    async def _render(self, identity, *, canceled, progress):
+        progress('Checking source')
+        def inputs(reader):
+            p = reader.candidate(identity)
+            if not reader.accepted(identity): raise ValueError("Accept the excerpt after editorial/audio review before rendering.")
+            revision = reader.artifacts.latest('edit',identity)
+            if revision is None: raise ValueError('Save a Short edit first.')
+            values, output_id, fingerprint = reader.identity(p,revision)
+            return p,revision,values,output_id,fingerprint,reader.artifacts.cached(fingerprint),reader.publishing.plans.selected().working_title
+        p,revision,values,output_id,fingerprint,cached,parent_title = await self.read_async(inputs,canceled=canceled)
         if cached: return cached
+        def final_gate(reader):
+            latest=reader.artifacts.latest('edit',identity)
+            if latest is None or latest.artifact_id!=revision.artifact_id or not reader.accepted(identity) or reader.identity(reader.candidate(identity),revision)[1]!=output_id:
+                raise ValueError('Short edit/source/decision changed while rendering; previous selection retained.')
         source,e,t,a,b,shots,style,segments,caption = values
-        root = self.stage(source)
-        edit = self.artifacts.read(revision)
-        audio_bounds = speech_interval(Fraction(*edit["original_start"]), Fraction(*edit["original_end"]), self.publishing.timing(p["source_kind"]))
+        progress('Preparing excerpt')
+        root = await self.stage_async(source,canceled=canceled)
+        edit = output_id['edit']
+        timing = await self.read_async(lambda r:r.publishing.timing(p['source_kind']),canceled=canceled)
+        audio_bounds = speech_interval(Fraction(*edit["original_start"]), Fraction(*edit["original_end"]), timing)
+        progress('Encoding')
         report = await self.renderer.render(root,e,a,b,shots,style,segments,canceled=canceled,progress=progress,audio_bounds=audio_bounds)
         if canceled(): raise RenderCanceled("Short canceled before publication.")
-        latest = self.artifacts.latest("edit", identity)
-        if latest.artifact_id != revision.artifact_id or self.identity(p, revision)[1] != output_id or not self.accepted(identity):
-            raise ValueError("Short edit/source/decision changed while rendering.")
+        progress('Verifying')
+        await media_worker(lambda stop:self.verify_file(root/'source.mp4',source.checksum,source.size_bytes,canceled=stop),canceled=canceled)
+        await self.read_async(final_gate,canceled=canceled)
         if (not report.get("fully_decoded") or report.get("status") != "READY" or report.get("source_start") != ratio(a)
                 or report.get("source_end") != ratio(b) or (report.get("width"),report.get("height")) != (1080,1920)
                 or report.get("video_codec") != "h264" or report.get("audio_codec") != "aac"
@@ -393,39 +544,48 @@ class ShortsService:
                 or abs(Fraction(*report["video_duration"])-(b-a)) > Fraction(2,1000000) or report.get("frame_count") != (b-a)*Fraction(str(e["fps"]))
                 or abs(Fraction(*report["audio_duration"])-(b-a)) > Fraction(1024,48000)):
             raise ValueError("Incomplete or invalid Short evidence; previous valid selection retained.")
-        with (root/"short.mp4").open("rb") as stream:
-            class Checked:
-                def __init__(self): self.digest, self.size = sha256(), 0
-                def read(self, n):
-                    if canceled(): raise RenderCanceled("Short publication canceled.")
-                    raw=stream.read(n); self.digest.update(raw); self.size+=len(raw)
-                    if not raw and (self.digest.hexdigest()!=report["checksum"] or self.size!=report["size_bytes"]):
-                        raise ValueError("Short bytes changed after decode.")
-                    return raw
-            video = self.store.import_stream("short.mp4", Checked(), {"artifact_type":"shorts_video", "module_name":"desktop_shorts",
-                "project_id":self.session.project.id, "candidate_id":identity, "fingerprint":fingerprint, "identity":output_id, "shorts":report})
-        edit = self.artifacts.read(revision)
+        progress('Saving')
+        video = await self.store.import_file_async('short.mp4',root/'short.mp4',
+            {"artifact_type":"shorts_video", "module_name":"desktop_shorts", "project_id":self.session.project.id,
+             "candidate_id":identity, "fingerprint":fingerprint, "identity":output_id, "shorts":report},
+            checksum=report['checksum'],size_bytes=report['size_bytes'],canceled=canceled)
         metadata = {"parent_project_id":self.session.project.id, "source_artifact_id":source.artifact_id, "source_checksum":source.checksum,
             "timeline_id":t.id, "start":ratio(a), "end":ratio(b), "original_start":edit["original_start"], "original_end":edit["original_end"],
             "duration":report["video_duration"], "title":edit["title"], "section_ids":list(dict.fromkeys(s["section_id"] for s in shots)),
-            "framing":style.to_payload(), "caption_identity":caption, "renderer":self.renderer.identity(), "algorithm":ALGORITHM,
+            "framing":style.to_payload(), "caption_identity":caption, "renderer":output_id['renderer'], "algorithm":ALGORITHM,
             "output_checksum":video.checksum, "video_artifact_id":video.artifact_id, "edit_revision_id":revision.artifact_id,
             "video_codec":"h264", "audio_codec":"aac", "resolution":[1080,1920], "fps":report["fps"]}
         meta = self.artifacts.save("metadata",metadata,candidate_id=identity,video_id=video.artifact_id)
         srt = self.store.save_artifact("captions.srt", serialize_srt(segments), {"artifact_type":"shorts_srt", "module_name":"desktop_shorts",
             "project_id":self.session.project.id,"video_id":video.artifact_id}) if segments else None
         # A small per-Short archive, not a second publishing package engine.
-        archive = BytesIO()
-        with zipfile.ZipFile(archive,"w",zipfile.ZIP_STORED) as z:
-            with z.open("short-01/short.mp4","w") as target, self.store.open_artifact_id(video.artifact_id) as stream: shutil.copyfileobj(stream,target,1024*1024)
-            z.writestr("short-01/metadata.json",canonical_json(metadata))
-            description = edit["title"] + "\n\nExcerpt from: " + self.publishing.plans.selected().working_title
-            z.writestr("short-01/description.txt",description)
-            if srt: z.writestr("short-01/captions.srt",self.artifacts.records.verified_bytes(srt))
-        package = self.store.save_artifact("short-package.zip",archive.getvalue(), {"artifact_type":"shorts_package","module_name":"desktop_shorts",
-            "project_id":self.session.project.id,"video_id":video.artifact_id})
+        archive = root/'short-package.zip'
+        video_path = self.store._artifact_path(video.storage_key)
+        def package_bytes(stop):
+            with zipfile.ZipFile(archive,'x',zipfile.ZIP_STORED) as z:
+                with z.open('short-01/short.mp4','w') as target, video_path.open('rb') as stream:
+                    digest,size=sha256(),0
+                    while block:=stream.read(1024*1024):
+                        check_canceled(stop);target.write(block);digest.update(block);size+=len(block)
+                    if (digest.hexdigest(),size)!=(video.checksum,video.size_bytes):raise ValueError('Short changed during packaging.')
+                z.writestr('short-01/metadata.json',canonical_json(metadata))
+                z.writestr('short-01/description.txt',edit['title']+'\n\nExcerpt from: '+parent_title)
+                if srt:z.writestr('short-01/captions.srt',serialize_srt(segments))
+            digest,size=sha256(),0
+            with archive.open('rb') as stream:
+                while block:=stream.read(1024*1024):
+                    check_canceled(stop);digest.update(block);size+=len(block)
+            return digest.hexdigest(),size
+        checksum,size = await media_worker(package_bytes,canceled=canceled)
+        package = await self.store.import_file_async('short-package.zip',archive,
+            {"artifact_type":"shorts_package","module_name":"desktop_shorts","project_id":self.session.project.id,"video_id":video.artifact_id},
+            checksum=checksum,size_bytes=size,canceled=canceled)
+        # Re-read fresh source bytes and the revision/approval after every await.
+        progress('Verifying')
+        await self.read_async(final_gate,canceled=canceled)
         self.artifacts.save("selection",{"candidate_id":identity,"video_id":video.artifact_id,"metadata_id":meta.artifact_id,
             "srt_id":srt.artifact_id if srt else None,"package_id":package.artifact_id},candidate_id=identity)
+        progress('Ready')
         return video
 
     async def render_accepted(self, *, canceled=lambda:False, progress=lambda *_:None):

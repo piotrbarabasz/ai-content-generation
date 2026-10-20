@@ -32,7 +32,7 @@ class DirectorAudioProviders:
         for s in self.services:s.canceled=value
 
 
-def compose_director(shorts,candidate_id,*,audio_factory=None,image_provider=None,language=None):
+def compose_director(shorts,candidate_id,*,audio_factory=None,image_provider=None,language=None,_verified_candidate=None):
     def installed(session):
         chatterbox=compose_installed_chatterbox_audio(session)
         configured=(audio_factory or compose_installed_audio)(session)
@@ -42,4 +42,4 @@ def compose_director(shorts,candidate_id,*,audio_factory=None,image_provider=Non
     def scope(parent,candidate,lang):return DerivedProductionScope(parent,candidate,installed,lang)
     ffmpeg,ffprobe=media_executables()
     renderer=FFmpegDirectorRenderer(ffmpeg,ffprobe) if ffmpeg and ffprobe else None
-    return ShortsDirectorService(shorts,candidate_id,scope,renderer,language=language,image_provider=image_provider)
+    return ShortsDirectorService(shorts,candidate_id,scope,renderer,language=language,image_provider=image_provider,_verified_candidate=_verified_candidate)

@@ -1,12 +1,11 @@
 """Explicit source-grounded production; every stage is separate from the parent film."""
 import asyncio
-from copy import deepcopy
+from copy import copy,deepcopy
 from dataclasses import asdict
 from fractions import Fraction
-from hashlib import file_digest,sha256
+from hashlib import sha256
 from io import BytesIO
 import json
-import shutil
 import re
 from uuid import uuid4
 from PIL import Image
@@ -23,18 +22,63 @@ from app.storage.image_decoder import decode_image,ImageLimits
 from app.storage.paths import contained_path
 from app.storage.shorts_director import ProjectShortsDirector
 from app.tts.assembly import inspect_pcm_wav
+from app.storage.media_snapshot import MediaSnapshotStore
+from app.runtime.media_worker import media_worker,check_canceled
+from types import SimpleNamespace
 
 
 class ShortsDirectorService:
-    def __init__(self,shorts,candidate_id,scope_factory,renderer: DirectorRenderer | None,*,language=None,image_provider=None):
+    def __init__(self,shorts,candidate_id,scope_factory,renderer: DirectorRenderer | None,*,language=None,image_provider=None,_verified_candidate=None):
         self.shorts,self.parent,self.renderer=shorts,shorts.session,renderer
         self.language=language or self.parent.project.language
         self.candidate_id=candidate_id;self.image_provider=image_provider
-        p=self.source()
+        # Desktop construction may supply the just-verified detached result.
+        # The child SQLite scope is still opened exclusively on this owner.
+        p=_verified_candidate if _verified_candidate is not None else self.source()
+        if p['id']!=candidate_id:raise ValueError('Director candidate changed during creation.')
         if not shorts.accepted(candidate_id):raise ValueError('Accept the source story before explicitly creating an AI-directed version.')
         self.records=ProjectShortsDirector(shorts.store,self.parent.project.id,candidate_id,self.language)
         self.scope=scope_factory(self.parent,p,self.language)
         self._assets=None
+        self._rendering=False
+
+    def media_reader(self):
+        shorts,verify_parent=self.shorts.media_reader()
+        reader=copy(self);reader.shorts=shorts;reader.parent=shorts.session
+        session=self.scope.session
+        project,script=session.project,session.active_script
+        repository=SimpleNamespace(workspace=self.scope.root,project=lambda:project,active_script=lambda:script)
+        child=MediaSnapshotStore(self.scope.store,repository=repository)
+        reader.scope=SimpleNamespace(root=self.scope.root,store=child,
+            session=SimpleNamespace(project=project,active_script=script,repository=repository))
+        reader.records=ProjectShortsDirector(shorts.store,self.parent.project.id,self.candidate_id,self.language)
+        reader.renderer=copy(self.renderer)
+        reader._assets=deepcopy(self._assets)
+        if reader.renderer:
+            identity=reader.renderer.identity;cache=[]
+            def renderer_identity():
+                if not cache:cache.append(identity())
+                return cache[0]
+            reader.renderer.identity=renderer_identity
+        manifests=tuple(self.scope.store.list_artifacts())
+        def verify_current():
+            verify_parent()
+            if (session.active_script!=script or tuple(self.scope.store.list_artifacts())!=manifests):
+                raise ValueError('Director inputs changed during preparation; refresh and retry.')
+        return reader,verify_current
+
+    async def read_async(self,operation,*args,canceled=lambda:False,**kwargs):
+        reader,verify_current=self.media_reader()
+        def read(stop):
+            reader.shorts.store.canceled=reader.scope.store.canceled=stop
+            value=getattr(reader,operation)(*args,**kwargs) if isinstance(operation,str) else operation(reader)
+            reader.shorts.store.validate_reads();reader.scope.store.validate_reads()
+            return value
+        result=await media_worker(read,canceled=canceled)
+        verify_current()
+        reader.shorts.store.validate_reads();reader.scope.store.validate_reads()
+        reader.shorts.store.publish(self.records.store);reader.scope.store.publish(self.scope.store)
+        return result
     def close(self):self.scope.close()
     def source(self):return self.shorts.candidate(self.candidate_id)
     def context(self):
@@ -64,11 +108,11 @@ class ShortsDirectorService:
         if canceled():raise RenderCanceled('Script generation canceled.')
         provider=self.shorts.publishing.llm
         if provider is None:raise ValueError('Configure a structured LLM; AI Director does not silently substitute an extraction heuristic.')
-        context=self.context();current,_=self.script();expected=current.artifact_id if current else None
+        context,current,rate=await self.read_async(lambda r:(r.context(),r.script()[0],r.speaking_rate()),canceled=canceled);expected=current.artifact_id if current else None
         prompt=('Write an independently understandable 30-60 second Short in the requested language. Hook 2-5 seconds, concrete development, meaningful payoff. '
             'No greetings, copied long introductions/conclusions, artificial cliffhanger, fabricated statistics, sources or facts. '
             'Distinguish the hypothetical scenario from established facts. Use ONLY supplied exact source passage IDs. No timestamps or artifact IDs. '
-            'Aim at about '+str(round(target*self.speaking_rate()))+' words using the available measured speaking rate (otherwise editorial estimate 2.2 words/sec). '
+            'Aim at about '+str(round(target*rate))+' words using the available measured speaking rate (otherwise editorial estimate 2.2 words/sec). '
             'Use 5-8 concise editorial beats/sentences, usually <=80 characters per sentence for sentence-level captions. '
             'Beat text must concatenate exactly to full narration; narration must concatenate hook/development/payoff/CTA with single spaces. '
             'Suggested visual concepts must describe one coherent image, no collage, panels, diagrams or written labels. '
@@ -77,9 +121,9 @@ class ShortsDirectorService:
         value=await asyncio.to_thread(provider.generate_structured,prompt,script_schema(context['source_passages'],self.language,target))
         validate_script(value,context['source_passages'],self.language,target,cta_enabled=cta)
         if canceled():raise RenderCanceled('Script generation canceled; working manual text preserved.')
-        if self.context()!=context:raise ValueError('Source changed during generation.')
+        if await self.read_async('context',canceled=canceled)!=context:raise ValueError('Source changed during generation.')
         proposal=self.records.save('proposal',{'script':value,'context':context,'cta_enabled':cta,'origin':'LLM; REVIEW REQUIRED','provider':provider.generation_identity() if hasattr(provider,'generation_identity') else {'provider':provider.provider_name}})
-        if current is None:self._save_script(value,'LLM',expected,generated=True,cta_enabled=cta)
+        if current is None:await self.read_async('_save_script',value,'LLM',expected,generated=True,cta_enabled=cta,canceled=canceled)
         return proposal
     def apply_proposal(self,id,*,replace_current=False):
         proposal=self.records.read(self.records.one(id,'proposal'));current,_=self.script()
@@ -92,17 +136,17 @@ class ShortsDirectorService:
         if m is None:raise ValueError('Create a script first.')
         provider=self.shorts.publishing.llm
         if provider is None:raise ValueError('Configure a structured LLM.')
-        context=self.context()
+        context=await self.read_async('context',canceled=canceled)
         schema={'type':'object','additionalProperties':False,'required':['hook'],'properties':{'hook':{'type':'string','minLength':1,'maxLength':250}}}
         result=await asyncio.to_thread(provider.generate_structured,'Rewrite ONLY the hook, 2-5 seconds, source-supported facts, no invented numbers. Preserve meaning of development/payoff. '+canonical_json({'script':value,'context':context}),schema)
         if type(result) is not dict or set(result)!={'hook'} or type(result['hook']) is not str or not result['hook'].strip() or len(result['hook'])>250:raise ValueError('Invalid hook output.')
         if canceled():raise RenderCanceled('Hook regeneration canceled.')
         numbers=lambda text:set(re.findall(r'\b\d+(?:[.,]\d+)?%?',text))
         if numbers(result['hook'])-numbers(' '.join(context['source_passages'][r]['text'] for r in value['source_refs'])):raise ValueError('Generated hook introduced unsupported numeric claims.')
-        if self.context()!=context:raise ValueError('Source changed during hook generation.')
+        if await self.read_async('context',canceled=canceled)!=context:raise ValueError('Source changed during hook generation.')
         new=deepcopy(value);new['hook']=result['hook'];new['narration']=narration(new)
         new['beats']=[{'text':new[p],'visual_concept':new[p],'source_refs':new['source_refs']} for p in PARTS if new[p]]
-        return self._save_script(new,'hook-only LLM; other manual parts preserved',m.artifact_id,generated=False,cta_enabled=bool(new['cta']))
+        return await self.read_async('_save_script',new,'hook-only LLM; other manual parts preserved',m.artifact_id,generated=False,cta_enabled=bool(new['cta']),canceled=canceled)
     def approve_script(self):
         m,value=self.script()
         if m is None:raise ValueError('No script to review.')
@@ -135,20 +179,23 @@ class ShortsDirectorService:
         return raw,audio,m
     async def generate_narration(self,choice,*,variant='original',canceled=lambda:False,progress=lambda *_:None):
         self.set_voice(choice,variant)
-        m,value=self.approved_script();section=self.scope.section(value['narration'])
+        m,value=await self.read_async('approved_script',canceled=canceled);section=self.scope.section(value['narration'])
         selection,prepared=await self.scope.prepare(choice)
         identity={'script_id':m.artifact_id,'selection':selection,'effective_identity':prepared['effective_identity'],'variant':variant,
             'section_revision_id':section.id,'derived_project_id':self.scope.session.project.id}
         fingerprint=content_fingerprint(identity)
-        for old in reversed(self.records.history('narration')):
-            if old.metadata.get('fingerprint')==fingerprint:
-                try:
-                    self.audio_bytes(self.records.read(old));self.records.save('narration_selection',{'narration_id':old.artifact_id});return old
-                except (ValueError,OSError):continue
+        def cached(reader):
+            for old in reversed(reader.records.history('narration')):
+                if old.metadata.get('fingerprint')==fingerprint:
+                    try:reader.audio_bytes(reader.records.read(old));return old
+                    except (ValueError,OSError):continue
+        old=await self.read_async(cached,canceled=canceled)
+        if old:
+            self.records.save('narration_selection',{'narration_id':old.artifact_id});return old
         if canceled():raise RenderCanceled('Narration canceled before provider execution.')
         manifest,audio=await self.scope.generate(section,choice,variant=variant,canceled=canceled,progress=progress)
         if canceled():raise RenderCanceled('Narration canceled before stage publication.')
-        if self.approved_script()[0].artifact_id!=m.artifact_id:raise ValueError('Script changed during narration.')
+        if (await self.read_async('approved_script',canceled=canceled))[0].artifact_id!=m.artifact_id:raise ValueError('Script changed during narration.')
         if audio.section_id!=section.section_id or audio.revision_id!=section.id or audio.checksum!=manifest.checksum:raise ValueError('Derived narration belongs to another section/provider result.')
         duration=Fraction(audio.frame_count,audio.sample_rate)
         retained=self.records.save('narration',{'script_id':m.artifact_id,'identity':identity,'audio_id':manifest.artifact_id,'checksum':audio.checksum,
@@ -212,14 +259,15 @@ class ShortsDirectorService:
             ShortStyle(mode=actual['mode'],focal_points=((actual['id'],actual['focal']),))
         return b
     async def generate_storyboard(self,*,canceled=lambda:False):
-        n,_,audio,sentences,fps=self.sentences();assets=self.assets();provider=self.shorts.publishing.llm
+        measured,assets,context,script=await self.read_async(lambda r:(r.sentences(),r.assets(),r.context(),r.approved_script()[1]),canceled=canceled)
+        n,_,audio,sentences,fps=measured;provider=self.shorts.publishing.llm
         previous=self.records.latest('storyboard')
         if previous:
             old=self.records.read(previous);by_id={s['id']:s for s in old['scenes']}
             if all(s['id'] in by_id and by_id[s['id']]['text']==s['text'] for s in sentences) and len(sentences)==len(old['scenes']):
                 retimed={'narration_id':n.artifact_id,'fps':str(fps),'scenes':[{**by_id[s['id']],**s} for s in sentences]}
-                self.validate_board(retimed)
-                return previous if old==retimed else self.records.save('storyboard',retimed,origin='retimed; retained visual edits')
+                await self.read_async('validate_board',retimed,canceled=canceled)
+                return previous if old==retimed else await self.read_async('_publish_board',retimed,previous.artifact_id,'retimed; retained visual edits',canceled=canceled)
         if provider is None:raise ValueError('Configure a structured visual director LLM.')
         fields={'scene_id':{'type':'string','enum':[s['id'] for s in sentences]},'asset_ref':{'anyOf':[{'type':'string','enum':list(assets)},{'type':'null'}]},
             **{k:{'type':'string','maxLength':2000} for k in ('concept','prompt','rationale','hold_reason')}}
@@ -228,8 +276,8 @@ class ShortsDirectorService:
         prompt=('Direct visuals for the NEW rewritten speech, not the old documentary edit. Return each supplied sentence scene ID exactly once, in order. '
             'Use a relevant clean verified original/project image when suitable; choose null only if missing. Justify relevance and framing. Never choose by nearest timestamp. '
             'No invented image/scene IDs or timestamps. One coherent photographic composition per scene, portrait safe subject placement, no collages, panels, diagrams, labels or text. '
-            'Keep source style: '+self.context()['visual_style']+'. Justify any >10 second hold. Sentence timing is measured, not editable. '
-            +canonical_json({'new_script':self.approved_script()[1],'measured_sentences':sentences,'verified_assets':assets}))
+            'Keep source style: '+context['visual_style']+'. Justify any >10 second hold. Sentence timing is measured, not editable. '
+            +canonical_json({'new_script':script,'measured_sentences':sentences,'verified_assets':assets}))
         value=await asyncio.to_thread(provider.generate_structured,prompt,schema)
         if type(value) is not dict or set(value)!={'scenes'} or type(value['scenes']) is not list or len(value['scenes'])!=len(sentences):raise ValueError('Invalid structured visual direction.')
         b={'narration_id':n.artifact_id,'fps':str(fps),'scenes':[]}
@@ -237,7 +285,11 @@ class ShortsDirectorService:
             if type(v) is not dict or set(v)!=set(fields) or v['scene_id']!=s['id']:raise ValueError('Invented/reordered/duplicated storyboard scene.')
             b['scenes'].append({**s,**{k:v[k] for k in fields if k!='scene_id'},'mode':'fit','focal':.5,'zoom':'subtle','pan':'off'})
         if canceled():raise RenderCanceled('Storyboard canceled.')
-        self.validate_board(b);return self.records.save('storyboard',b,origin='LLM; visual review required')
+        return await self.read_async('_publish_board',b,previous.artifact_id if previous else None,'LLM; visual review required',canceled=canceled)
+    def _publish_board(self,b,expected,origin):
+        current=self.records.latest('storyboard')
+        if (current.artifact_id if current else None)!=expected:raise ValueError('Storyboard changed during generation; retained edits preserved.')
+        self.validate_board(b);return self.records.save('storyboard',b,origin=origin)
     def save_board(self,b,expected):
         if self.records.latest('storyboard').artifact_id!=expected:raise ValueError('Storyboard changed; reload.')
         self.validate_board(b);return self.records.save('storyboard',b,origin='LLM; visual review required')
@@ -291,19 +343,23 @@ class ShortsDirectorService:
         if token!=current:raise ValueError('Image requests changed; review count/provider again.')
         return self.records.save('image_approval',{'token':token,'count':len(pending),'requests':pending,'approved':True})
     async def generate_missing_images(self,*,canceled=lambda:False,progress=lambda *_:None):
-        board,b=self.storyboard();pending,token=self.missing_images();approval=self.records.latest('image_approval')
+        board_data,pending_data=await self.read_async(lambda r:(r.storyboard(),r.missing_images()),canceled=canceled)
+        board,b=board_data;pending,token=pending_data;approval=self.records.latest('image_approval')
         if pending and (approval is None or self.records.read(approval)['token']!=token):raise ValueError('Explicit approval of the current image count/provider/model is required.')
         for i,item in enumerate(pending):
             if canceled():raise RenderCanceled('Image generation canceled; earlier completed images retained.')
-            if self.storyboard()[0].artifact_id!=board.artifact_id:raise ValueError('Storyboard changed during image generation.')
-            s=next(s for s in b['scenes'] if s['id']==item['scene_id']);request,identity,fingerprint=self.image_request(s)
+            if (await self.read_async('storyboard',canceled=canceled))[0].artifact_id!=board.artifact_id:raise ValueError('Storyboard changed during image generation.')
+            s=next(s for s in b['scenes'] if s['id']==item['scene_id']);request,identity,fingerprint=await self.read_async('image_request',s,canceled=canceled)
             if fingerprint!=item['fingerprint']:raise ValueError('Image provider/request changed after approval.')
             progress('Generating image',i,len(pending));result=await asyncio.to_thread(self.image_provider.generate,request)
             if canceled():raise RenderCanceled('Image generation canceled before publication.')
-            measured=decode_image(result.image_bytes,ImageLimits()) if isinstance(result,ImageGenerationResult) else None
+            measured=await media_worker(lambda stop:decode_image(result.image_bytes,ImageLimits()),canceled=canceled) if isinstance(result,ImageGenerationResult) else None
             if measured is None or (measured['width'],measured['height'],measured['format'])!=(request.width,request.height,request.format) or (result.width,result.height,result.format)!=(request.width,request.height,request.format):raise ValueError('Invalid provider image bytes/dimensions.')
-            if self.storyboard()[0].artifact_id!=board.artifact_id or self.image_request(s)[2]!=fingerprint:raise ValueError('Image inputs changed during generation.')
-            self.records.store.save_artifact('directed-image.'+request.format.lower(),result.image_bytes,self.records.metadata('image',fingerprint=fingerprint,identity=identity,measurements=measured))
+            def publish(reader):
+                if reader.storyboard()[0].artifact_id!=board.artifact_id or reader.image_request(s)[2]!=fingerprint:raise ValueError('Image inputs changed during generation.')
+                return reader.records.store.save_artifact('directed-image.'+request.format.lower(),result.image_bytes,
+                    reader.records.metadata('image',fingerprint=fingerprint,identity=identity,measurements=measured))
+            await self.read_async(publish,canceled=canceled)
         return len(pending)
     def finish(self):
         m=self.records.latest('finish')
@@ -335,18 +391,35 @@ class ShortsDirectorService:
             'captions':caption,'finish':finish,'branding':brand,'renderer':self.renderer.identity(),'derived_project_id':self.scope.session.project.id}
         return identity,content_fingerprint(identity),(b,images,raw,audio,style,segments,logo)
     async def render(self,*,canceled=lambda:False,progress=lambda *_:None):
-        identity,fingerprint,values=self.prepare_render();cached=self.records.cached(fingerprint)
-        if canceled():raise RenderCanceled('Render canceled before execution.')
+        if self._rendering:raise ValueError('A directed Short render is already running; wait or cancel it first.')
+        self._rendering=True
+        try:return await self._render(canceled=canceled,progress=progress)
+        finally:self._rendering=False
+
+    async def _render(self,*,canceled,progress):
+        progress('Checking source')
+        def prepare(reader):
+            identity,fingerprint,values=reader.prepare_render()
+            return identity,fingerprint,values,reader.records.cached(fingerprint)
+        identity,fingerprint,values,cached=await self.read_async(prepare,canceled=canceled)
         if cached:return cached
         b,images,raw,audio,style,segments,logo=values
         root=contained_path(self.scope.root,'work/render/'+uuid4().hex);root.mkdir(parents=True)
-        (root/'audio.wav').write_bytes(raw)
-        for i,(_,payload,_) in enumerate(images):
-            with Image.open(BytesIO(payload)) as image:image.convert('RGB').save(root/f'image-{i}.png')
-        if logo:(root/'logo.png').write_bytes(logo)
+        progress('Preparing excerpt')
+        def stage(stop):
+            with (root/'audio.wav').open('xb') as output:
+                for offset in range(0,len(raw),1024*1024):
+                    check_canceled(stop);output.write(raw[offset:offset+1024*1024])
+            for i,(_,payload,_) in enumerate(images):
+                check_canceled(stop)
+                with Image.open(BytesIO(payload)) as image:image.convert('RGB').save(root/f'image-{i}.png')
+            if logo:(root/'logo.png').write_bytes(logo)
+        await media_worker(stage,canceled=canceled)
+        progress('Encoding')
         report=await self.renderer.render(root,b,audio,style,segments,logo=bool(logo),canceled=canceled,progress=progress)
         if canceled():raise RenderCanceled('Render canceled before publication.')
-        if self.prepare_render()[0]!=identity:raise ValueError('Director inputs changed during rendering; preceding selected output retained.')
+        progress('Verifying')
+        if (await self.read_async('prepare_render',canceled=canceled))[0]!=identity:raise ValueError('Director inputs changed during rendering; preceding selected output retained.')
         if (not report.get('fully_decoded') or (report.get('width'),report.get('height'),report.get('sample_rate'))!=(1080,1920,48000)
             or report.get('fps')!=b['fps'] or report.get('frame_count')!=b['scenes'][-1]['end_frame']
             or report.get('video_codec')!='h264' or report.get('audio_codec')!='aac'
@@ -354,37 +427,45 @@ class ShortsDirectorService:
             or abs(Fraction(*report['audio_duration'])-Fraction(audio.frame_count,audio.sample_rate))>Fraction(1024,48000)):
             raise ValueError('Invalid/partial directed render evidence.')
         path=root/'director.mp4'
-        with path.open('rb') as stream:
-            if file_digest(stream,'sha256').hexdigest()!=report['checksum'] or path.stat().st_size!=report['size_bytes']:raise ValueError('Encoded bytes changed after decode.')
-            stream.seek(0)
-            class Checked:
-                def __init__(self):self.digest,self.size=sha256(),0
-                def read(self,count):
-                    if canceled():raise RenderCanceled('Director canceled during publication.')
-                    block=stream.read(count);self.digest.update(block);self.size+=len(block)
-                    if not block and (self.digest.hexdigest()!=report['checksum'] or self.size!=report['size_bytes']):raise ValueError('Director bytes changed during publication.')
-                    return block
-            video=self.records.store.import_stream('director.mp4',Checked(),self.records.metadata('video',fingerprint=fingerprint,identity=identity,director=report))
+        progress('Saving')
+        video=await self.records.store.import_file_async('director.mp4',path,
+            self.records.metadata('video',fingerprint=fingerprint,identity=identity,director=report),
+            checksum=report['checksum'],size_bytes=report['size_bytes'],canceled=canceled)
         srt=self.records.store.save_artifact('captions.srt',serialize_srt(segments),self.records.metadata('srt',identity=identity['captions']))
-        meta=self.records.save('metadata',{'title':self.approved_script()[1]['title'],'identity':identity,'output_checksum':video.checksum,'video_id':video.artifact_id,
+        def final_gate(reader):
+            if reader.prepare_render()[0]!=identity:raise ValueError('Director inputs changed before publication; previous output retained.')
+            return reader.approved_script()[1]['title']
+        title=await self.read_async(final_gate,canceled=canceled)
+        meta=self.records.save('metadata',{'title':title,'identity':identity,'output_checksum':video.checksum,'video_id':video.artifact_id,
             'duration':report['video_duration'],'resolution':[1080,1920],'video_codec':'h264','audio_codec':'aac','status':'READY; machine checks passed, editorial approval remains human'})
         self.records.save('selection',{'video_id':video.artifact_id,'metadata_id':meta.artifact_id,'srt_id':srt.artifact_id,'fingerprint':fingerprint})
+        progress('Ready')
         return video
-    async def preview_scene(self,scene_id,*,canceled=lambda:False):
-        m,b=self.storyboard();scene=next(s for s in b['scenes'] if s['id']==scene_id)
-        image,raw,provenance=self.image(scene);segments,identity=self.captions()
+    async def preview_scene(self,scene_id,*,canceled=lambda:False,progress=lambda *_:None):
+        progress('Checking source')
+        def prepare(reader):
+            m,b=reader.storyboard();scene=next(s for s in b['scenes'] if s['id']==scene_id)
+            image,raw,provenance=reader.image(scene);segments,identity=reader.captions()
+            return m,b,scene,raw,segments,reader.narration(approved=True)[3].sample_rate,reader.finish()
+        m,b,scene,raw,segments,sample_rate,finish=await self.read_async(prepare,canceled=canceled)
         from app.domain.caption_track import validate_caption_segments
         from dataclasses import replace
         segment=next(s for s in segments if s.text==scene['text'])
-        duration_ms=round(Fraction(scene['end_sample']-scene['start_sample'],self.narration(approved=True)[3].sample_rate)*1000)
+        duration_ms=round(Fraction(scene['end_sample']-scene['start_sample'],sample_rate)*1000)
         shown=validate_caption_segments([{'start_ms':0,'end_ms':duration_ms,'text':segment.text}])
-        style=ShortStyle.from_payload(self.finish()['style']);style=replace(style,hook=style.hook if scene['start_frame']==0 else '')
+        style=ShortStyle.from_payload(finish['style']);style=replace(style,hook=style.hook if scene['start_frame']==0 else '')
         if self.renderer is None:raise ValueError('Configure trusted FFmpeg/FFprobe.')
         root=contained_path(self.scope.root,'work/preview/'+uuid4().hex);root.mkdir(parents=True)
-        with Image.open(BytesIO(raw)) as picture:picture.convert('RGB').save(root/'image-0.png')
+        progress('Preparing excerpt')
+        def stage(stop):
+            check_canceled(stop)
+            with Image.open(BytesIO(raw)) as picture:picture.convert('RGB').save(root/'image-0.png')
+        await media_worker(stage,canceled=canceled)
         local={'fps':b['fps'],'scenes':[{**scene,'start_frame':0,'end_frame':scene['end_frame']-scene['start_frame']}]}
+        progress('Generating vertical preview')
         raw=await self.renderer.preview(root,local,style,shown,canceled=canceled)
-        if self.storyboard()[0].artifact_id!=m.artifact_id:raise ValueError('Storyboard changed during preview.')
+        if (await self.read_async('storyboard',canceled=canceled))[0].artifact_id!=m.artifact_id:raise ValueError('Storyboard changed during preview.')
+        progress('Ready')
         return raw
     def current_output(self):
         _,fingerprint,_=self.prepare_render();m=self.records.cached(fingerprint)

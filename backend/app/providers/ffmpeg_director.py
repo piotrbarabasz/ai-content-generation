@@ -5,8 +5,8 @@ import re
 from app.domain.scene_motion import MotionConfig,resolve_scene_motion,ZOOM_STRENGTH
 from app.domain.shorts import ShortStyle,overlays,ratio
 from app.providers.ffmpeg_shorts import FFmpegShortsRenderer
-from app.providers.ffmpeg_render import checksum
 from app.runtime.media_process import RenderCanceled
+from app.runtime.media_worker import media_worker,file_checksum,check_canceled
 from app.tts.assembly import inspect_pcm_wav
 from PIL import Image
 
@@ -43,15 +43,18 @@ class FFmpegDirectorRenderer(FFmpegShortsRenderer):
         return ';'.join(filters),'['+current+']'
     async def render(self,root,b,audio,style,segments,*,logo=False,canceled,progress):
         root=Path(root);fps=Fraction(b['fps']);duration=Fraction(audio.frame_count,audio.sample_rate)
-        parameters,_=inspect_pcm_wav((root/'audio.wav').read_bytes())
-        if (parameters.frame_count,parameters.sample_rate,parameters.channels,parameters.sample_width)!=(audio.frame_count,audio.sample_rate,1,2) or checksum(root/'audio.wav')!=audio.checksum:
-            raise ValueError('Staged director narration differs from verified PCM.')
+        def prepare(stop):
+            check_canceled(stop)
+            parameters,_=inspect_pcm_wav((root/'audio.wav').read_bytes())
+            if (parameters.frame_count,parameters.sample_rate,parameters.channels,parameters.sample_width)!=(audio.frame_count,audio.sample_rate,1,2) or file_checksum(root/'audio.wav',stop)!=audio.checksum:
+                raise ValueError('Staged director narration differs from verified PCM.')
+            return self.graph(root,b,style,segments,logo)
+        graph,video=await media_worker(prepare,canceled=canceled)
         if not 30<=duration<=60:raise ValueError('Narration duration blocks rendering.')
         command=[self.ffmpeg,'-nostdin','-v','error','-xerror','-n']
         for i,s in enumerate(b['scenes']):command+=['-loop','1','-framerate',str(fps),'-i',f'image-{i}.png']
         command+=['-i','audio.wav']
         if logo:command+=['-loop','1','-framerate',str(fps),'-i','logo.png']
-        graph,video=self.graph(root,b,style,segments,logo)
         progress('Encoding directed Short',0,1)
         command+=['-filter_complex_threads','1','-filter_complex',graph,'-map',video,'-map',f"{len(b['scenes'])}:a:0",
             '-c:v','libx264','-preset','veryfast','-crf','20','-threads','2','-pix_fmt','yuv420p','-r',str(fps),
@@ -61,6 +64,7 @@ class FFmpegDirectorRenderer(FFmpegShortsRenderer):
             on_line=lambda line:progress('Encoding directed Short',int(line[6:]),b['scenes'][-1]['end_frame']) if line.startswith('frame=') and line[6:].isdigit() else None)
         progress('Probing and fully decoding directed Short',0,1)
         output=await self.probe(root,'director.mp4',canceled)
+        self.validate_portrait(output)
         expected=b['scenes'][-1]['end_frame']/fps
         if ((output['width'],output['height'],output['sample_rate'],output['channels'],output['fps'])!=(1080,1920,48000,1,fps)
             or output['frame_count']!=b['scenes'][-1]['end_frame'] or abs(output['video_duration']-expected)>Fraction(2,1000000)
@@ -72,13 +76,26 @@ class FFmpegDirectorRenderer(FFmpegShortsRenderer):
             '-map','0:v:0','-map','0:a:0','-f','null','-'],cwd=root,canceled=canceled)
         if canceled():raise RenderCanceled('Director render canceled after decode.')
         path=root/'director.mp4'
-        report={**output,'checksum':checksum(path),'size_bytes':path.stat().st_size,'fully_decoded':True,
+        measured=await media_worker(lambda stop:file_checksum(path,stop),canceled=canceled)
+        report={**output,'checksum':measured,'size_bytes':path.stat().st_size,'fully_decoded':True,
             'video_codec':'h264','audio_codec':'aac','packet_timestamps_verified':True,'status':'READY','fps':str(fps)}
         for k in ('video_duration','audio_duration'):report[k]=ratio(output[k])
         return report
 
     async def preview(self,root,b,style,segments,*,canceled):
-        root=Path(root);graph,video=self.graph(root,b,style,segments,False)
+        message='Director preview requires exactly one scene rebased to frame 0 with a positive frame span and FPS; use the selected-scene preview. Full boards are supported by render().'
+        if not isinstance(b,dict) or not isinstance(b.get('scenes'),list) or len(b['scenes'])!=1:
+            raise ValueError(message)
+        scene=b['scenes'][0]
+        try:
+            fps=Fraction(b['fps'])
+            valid=(isinstance(scene,dict) and {'id','mode','focal','zoom','pan','start_frame','end_frame'}<=scene.keys()
+                and type(scene['start_frame']) is int and scene['start_frame']==0
+                and type(scene['end_frame']) is int and scene['end_frame']>0 and fps>0)
+        except (KeyError,ValueError,TypeError,ZeroDivisionError):valid=False
+        if not valid:raise ValueError(message)
+        root=Path(root)
+        graph,video=await media_worker(lambda stop:self.graph(root,b,style,segments,False),canceled=canceled)
         await self.process.run([self.ffmpeg,'-nostdin','-v','error','-n','-loop','1','-framerate',b['fps'],'-i','image-0.png',
-            '-filter_complex_threads','1','-filter_complex',graph,'-map',video,'-ss','0.5','-frames:v','1','-threads','1','preview.png'],cwd=root,canceled=canceled)
+            '-filter_complex_threads','1','-filter_complex',graph,'-map',video,'-ss',str(float(min(Fraction(1,2),Fraction(scene['end_frame']-1)/fps))),'-frames:v','1','-threads','1','preview.png'],cwd=root,canceled=canceled)
         return (root/'preview.png').read_bytes()

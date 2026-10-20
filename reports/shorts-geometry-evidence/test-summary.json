@@ -1,0 +1,42 @@
+{
+  "geometry": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "24",
+    "time": "22.166"
+  },
+  "media_regressions": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "121",
+    "time": "252.142"
+  },
+  "ui_and_native": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "55",
+    "time": "100.017"
+  },
+  "guard_and_excerpt": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "48",
+    "time": "91.393"
+  },
+  "full_backend": {
+    "errors": "0",
+    "failures": "1",
+    "skipped": "12",
+    "tests": "2687",
+    "time": "1674.893",
+    "shorts_director_cases": 184,
+    "shorts_director_failures": [],
+    "failed_tests": [
+      "backend.tests.integration.test_duration_repair::test_d078_cloud_measurements_drive_duration_repair_without_images"
+    ]
+  }
+}
