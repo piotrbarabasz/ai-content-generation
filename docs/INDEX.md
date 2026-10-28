@@ -15,6 +15,8 @@
 
 ## Architecture decisions
 
+- [Cloud/hybrid migration audit and proposed plan — PROPOSED](cloud-migration/README.md)
+
 - [Desktop-first architecture — Accepted](decisions/0003-desktop-first-architecture.md)
 - [Modular workflow engine](decisions/0001-modular-workflow-engine.md)
 - [English-first localization boundary](decisions/0002-english-first-localization-boundary.md)
