@@ -11,22 +11,38 @@ flowchart LR
  C --> D[CORE-002A: real proxy MP4]
  D --> E[STORAGE-001A: package contract]
  E --> F[CORE-002B: complete local package]
- F --> G[STORAGE-001B: GCS/Firestore checkpoint]
- G --> H[API-001A: durable API]
- H --> I[DEPLOY-001A: Docker/IAM/Terraform]
+ F --> G[STORAGE-001B: basic GCS persistence]
+ G --> R[STORAGE-001C: persistent metadata]
+ R --> H[API-001A: durable API]
+ H --> S[API-001B: dispatch and reconciliation]
+ F --> I[DEPLOY-001A: Docker/IAM/Terraform]
+ S --> J
  I --> J[DEPLOY-001B: cloud vertical slice]
- J --> K[UI-001: web control center]
- K --> L[CLOUD-PAID-001: paid proof]
+ J --> K[UI-001: web control center - independent]
+ J --> L[CLOUD-PAID-001: approved CLI/API smoke]
+ R --> T[STORAGE-001D: lease/checkpoint/recovery hardening]
+ S --> T
+ T --> M
+ L --> V[Full ~10-minute acceptance - separate opt-in run]
+ V --> M
  L --> M[CLOUD-001: weekly scheduler later]
- J --> N[LOCAL-001: final GPU later]
- N --> O[SHORTS-001: 3 vertical Shorts]
+ J --> N[LOCAL-001A: verify package]
+ N --> U[LOCAL-001B: final GPU later]
+ U --> W[SHORTS-001A: source mapping]
+ W --> O[SHORTS-001B: 3 vertical Shorts]
  O --> P[PUBLISH-001]
  P --> Q[CLEANUP-001]
 ```
 
-**First working vertical slice (offline, bez chmury):** `CORE-001B → CORE-002A → STORAGE-001A → CORE-002B`: headless mock od planu/skryptu do obrazu/narracji/timeline, prawdziwy 640×360 MP4, checksums, portable package i test odtworzenia. Zostaje tylko jeden proces i temp workspace. **First working cloud vertical slice:** `STORAGE-001B + API-001A + DEPLOY-001B`: `POST production` → persistent status → Cloud Run Job → GCS package/MP4 → authenticated GET/preview, bez TTS Images paid i bez panelu UI. `CLOUD-PAID-001` dopiero odblokowuje faktyczne OpenAI requesty w środowisku cloud.
+**First working vertical slice (offline, bez chmury):** `CORE-001B → CORE-002A → STORAGE-001A → CORE-002B`: headless mock od planu/skryptu do obrazu/narracji/timeline, prawdziwy 640×360 MP4, checksums, portable package i test odtworzenia. Zostaje tylko jeden proces i temp workspace. **First working cloud vertical slice:** `STORAGE-001B/001C + API-001A/001B + DEPLOY-001B`: `POST production` → persistent status → Cloud Run Job → GCS package/MP4 → authenticated GET/preview, bez TTS Images paid i bez panelu UI. `CLOUD-PAID-001` dopiero odblokowuje faktyczne OpenAI requesty w środowisku cloud.
 
 Uwaga o kolejności: `CORE-002A` produkuje testowe źródła/MP4; `CORE-002B` gwarantuje **pełny pakiet**, dlatego sama flaga `CORE-002` bez obu części **nie oznacza akceptacji**. `API-001A` może być budowany lokalnie przed deployem, ale po uzgodnieniu schematu Firestore.
+
+### Implementation sequence — PROPOSED
+
+Local headless production → complete offline package and real proxy → single-environment GCP infrastructure and persistent job execution → manually approved, budget-limited real OpenAI smoke through CLI/API. `UI-001` can follow independently after the cloud mock slice; it is not a dependency of `CLOUD-PAID-001`. Real OpenAI calls remain disabled throughout ARCH-001.
+
+Storage is incremental: portable manifest (`STORAGE-001A`) → basic GCS (`STORAGE-001B`) → persistent metadata (`STORAGE-001C`) → full lease/checkpoint/recovery hardening (`STORAGE-001D`). Controlled runs stop for manual reconciliation after interruption or ambiguous paid outcomes. Full safe recovery is mandatory before unattended `CLOUD-001`; no distributed transaction framework is required upfront.
 
 ## 2. Zadania — granice, testy i kryteria
 
@@ -40,20 +56,22 @@ Uwaga o kolejności: `CORE-002A` produkuje testowe źródła/MP4; `CORE-002B` gw
 | `CORE-001B` — Injectable headless runner | **In:** `HeadlessPipelineDriver`/composition, fake LLM/Images/TTS, jeden temp workspace, deterministic Plan → Script → Narration → Scenes → Timeline. **Out:** GCP, real API calls, MP4 | `application/automatic_workflow.py`, `desktop/pipeline_driver.py` (tylko refactor bez zmian GUI), `application/*`, `storage/*`; CORE-001A | CLI/service test, fake provider fixtures, resume/cancel/stale/owner-thread tests. Acceptance: `import app.cloud` bez Qt (lub headless module), żadna metoda widgetu nieobowiązkowa, istniejący desktop nadal działa | H / L |
 | `CORE-002A` — Real proxy render | **In:** istniejący `FFmpegRenderer(proxy=True)` Linux-compatible composition, 640×360 25fps MP4 dla landscape. **Out:** final HD, cloud | `application/preview.py`, `providers/ffmpeg_render.py`, `storage/video_render.py`, `runtime/media_process.py`; CORE-001B | Real offline `ffprobe` H.264/AAC/25FPS, audio mapping/frames, cancellation, caching, asset bytes unchanged; acceptance: playable MP4 bez GUI i bez PySide6 | H / M |
 | `STORAGE-001A` — Portable manifest contract | **In:** schemat `production-package/v1`, SHA256, relative paths, lineage, sample/frame timing, source identity. **Out:** cloud storage/network | `storage/{manifest,local_store}.py`, `domain/*`, new portable package module; CORE-002A | JSON Schema/model, reference fixture + local verifier. Tests: ZIP traversal, missing/corrupt file, immutable provenance, canonical ordering, Windows↔POSIX path mapping. Acceptance: manifest jest wystarczający do przyszłego final render, bez absolutnych ścieżek | H / M |
-| `CORE-002B` — Complete offline draft package | **In:** end-to-end headless mock, prawdziwe proxy + frozen script/narration/images/timeline i export package. **Out:** GCP deploy, paid calls, Shorts | `application/*`, `storage/*`, `providers/mock_*`, packaging; CORE-002A, STORAGE-001A | Fixtures 10-min synthetic/deterministic, restart/resume, checksums, pack/unpack/read-only verification, no paid API. Acceptance: pierwsza pełna lokalna paczka `COMPLETE_DRAFT` i powtarzalny `proxy.mp4` | H / L |
+| `CORE-002B` — Complete offline draft package | **In:** end-to-end headless mock, prawdziwe proxy + frozen script/narration/images/timeline i export package. **Out:** GCP deploy, paid calls, Shorts | `application/*`, `storage/*`, `providers/mock_*`, packaging; CORE-002A, STORAGE-001A | Short synthetic production smoke: 30–90 s materiału, deterministic providers, restart/resume, checksums, pack/unpack/read-only verification, no paid API. Acceptance: pierwsza pełna lokalna paczka `COMPLETE_DRAFT` i powtarzalny `proxy.mp4` | H / L |
 
 ### Cloud persistence, API i wdrożenie
 
 | ID / tytuł | Cel i zakres (**in/out**) | Dotknięte moduły; zależności | Deliverables + obowiązkowe testy i acceptance | Risk / complexity |
 | --- | --- | --- | --- | --- |
-| `STORAGE-001B` — Cloud durable checkpoint | **In:** GCS artifact adapter, Firestore production/state/lease port, checkpoint SQLite spójny atomowo, recovery. **Out:** live provider, public UI | `storage/*`, `jobs/*` ports, `cloud/{storage,metadata}.py`; CORE-002B, DEC-05/06 | Emulator/fakes + failure injection: GCS upload fails, Firestore CAS conflict, process restart, duplicate claim, stale pointer. Acceptance: completed stage materialized exactly once in metadata, no half-published head, recovered original bytes | H / XL |
-| `API-001A` — Persistent production API | **In:** create/get/list/status/artifacts + idempotency + approval/retry restrictions; **out:** long work inside request | `api/main.py`, new `api/routes/productions.py`, Pydantic DTO, metadata port; STORAGE-001B | API tests for durable restart, 2 creates same key, authn/authz, 409 stale/unknown_paid, no direct runner invocation. Acceptance: API schema corresponds to real persisted production | H / L |
-| `API-001B` — Run dispatch & reconciliation | **In:** enqueue execution, delayed dispatch reconciliation, status of Cloud Run Job, retries only when safe. **Out:** weekly schedule | `cloud/job_dispatch.py`, `api/*`; API-001A | Fake Jobs API + network timeout, duplicate requests, orchestration ownership; acceptance: every persistent queued production has exactly one active *lease* or safe recoverable state, not a false „running” | H / M |
+| `STORAGE-001B` — Basic GCS persistence | **In:** immutable package/source upload/download, SHA256, object generation preconditions. **Out:** metadata DB, leases, automatic recovery | `storage/*`, `cloud/storage.py`; CORE-002B, DEC-06/07 | Fakes: upload failure, corrupt/missing object, duplicate upload. Acceptance: verified package restored from GCS; partial upload never COMPLETE; manual operator only | M / M |
+| `STORAGE-001C` — Persistent production metadata | **In:** Firestore production/status/attempts/approvals, idempotency, verified manifest pointer, single-run ownership. **Out:** full stage recovery, unattended runs | `jobs/*` ports, `cloud/metadata.py`; STORAGE-001B, DEC-05/06 | Fakes/emulator: API restart, CAS conflict, duplicate claim, stale pointer. Acceptance: status/approval history survives restart; no half-published head; interrupted or ambiguous run BLOCKED for operator reconciliation, no automatic replay | H / L |
+| `STORAGE-001D` — Recovery hardening | **In:** expiring/fenced leases, consistent SQLite stage checkpoints, reconciliation, restart/resume. **Out:** distributed transaction framework | `storage/*`, `jobs/*`, `cloud/*`; STORAGE-001C, API-001B | Failure injection: crash before/after upload and metadata commit, lease expiry, stale worker, unknown paid outcome. Acceptance: recovered original bytes, fenced publication, no duplicate paid retry; safe recovery mandatory before unattended CLOUD-001 | H / L |
+| `API-001A` — Persistent production API | **In:** create/get/list/status/artifacts + idempotency + approval/retry restrictions; **out:** long work inside request | `api/main.py`, new `api/routes/productions.py`, Pydantic DTO, metadata port; STORAGE-001C | API tests for durable restart, 2 creates same key, authn/authz, 409 stale/unknown_paid, no direct runner invocation. Acceptance: API schema corresponds to real persisted production | H / L |
+| `API-001B` — Run dispatch & reconciliation | **In:** enqueue execution, delayed dispatch reconciliation, status of Cloud Run Job, retries only when safe. **Out:** weekly schedule | `cloud/job_dispatch.py`, `api/*`; API-001A | Fake Jobs API + network timeout, duplicate requests, orchestration ownership; acceptance: every persistent queued production has one active owner or explicit BLOCKED state requiring operator reconciliation, not a false „running” | H / M |
 | `DEPLOY-001A` — Single-env GCP foundation | **In:** minimal Dockerfile (Python+FFmpeg no Qt/CUDA), Artifact Registry, IAM/WIF, Secret Manager, GCS/Firestore, infra plan and CI. **Out:** terraform apply without approval, extra dev/prod | `infra/gcp/*`, `Dockerfile`, `.github/workflows/*`, `scripts/*`, `pyproject.toml` optional cloud extras; CORE-002B, ADR-001 | `terraform fmt/validate/plan` offline where possible, image import/no Qt/CUDA, container FFmpeg smoke, CI PR/no credentials, digest tagging, policy test. Acceptance: reviewed plan with zero unapproved IAM changes | H / L |
-| `DEPLOY-001B` — Cloud MVP vertical slice | **In:** operator-approved apply, deploy Service+Job, mock headless execution and package to GCS, smoke & rollback. **Out:** paid OpenAI run, schedule, local finisher | `cloud/runner`, `infra/gcp/*`, CI; DEPLOY-001A, API-001B | Real private authenticated smoke, job trace→Firestore→GCS, checksum verification, stage resume simulation, rollback; acceptance: po deploy `POST` prowadzi do playable proxy i paczki, history survives restart | H / XL |
+| `DEPLOY-001B` — Cloud MVP vertical slice | **In:** operator-approved apply, deploy Service+Job, mock headless execution and package to GCS, smoke & rollback. **Out:** paid OpenAI run, schedule, local finisher | `cloud/runner`, `infra/gcp/*`, CI; DEPLOY-001A, API-001B | Real private authenticated smoke, job trace→Firestore→GCS, checksum verification, interrupted-run blocking/manual reconciliation, rollback; acceptance: po deploy `POST` prowadzi do playable proxy i paczki, history survives restart | H / XL |
 | `UI-001` — Lightweight Web Control Center | **In:** React+TS/Vite, channels, create production, polling progress, artifact preview/approve. **Out:** timeline editor, intricate audio/branding settings | `frontend/*`, `api/*`, Cloud Run static hosting; API-001A, DEPLOY-001B | Component tests/e2e viewport/invalid state, 401/403 handling, no API key leak, visual smoke; acceptance: pojedynczy operator może utworzyć i ocenić mock production bez CLI | M / M |
-| `CLOUD-PAID-001` — Controlled OpenAI production | **In:** real structured LLM, Speech, Images z limitami i archiwizacją raw responses; pricing refresh, quota. **Out:** scheduler, public API, Shorts | `providers/*`, `storage/narration.py`, `cloud/*`; CORE-002B, DEPLOY-001B, UI-001, DEC-15 | Transport fakes i fault injection: ambiguous paid outcome, budget exhausted, partial Speech, invalid Image, stale source; manual live acceptance po osobnej zgodzie. Acceptance: brak nieograniczonych retry i kompletne źródła | H / XL |
-| `CLOUD-001` — Weekly scheduling | **In:** Cloud Scheduler once/week, 1 long/3 Shorts target metadata; budgeting/notify. **Out:** auto-publish | `cloud/*`, `infra/gcp/*`; CLOUD-PAID-001 | Dry-run schedule, dedup week key, no job at insufficient budget, alarms, missed run replay; acceptance: unattended weekly run, fail closed on cost | M / M |
+| `CLOUD-PAID-001` — Controlled OpenAI production | **In:** real structured LLM, Speech, Images z limitami i archiwizacją raw responses; pricing refresh, quota. **Out:** scheduler, public API, Shorts | `providers/*`, `storage/narration.py`, `cloud/*`; CORE-002B, DEPLOY-001B, DEC-15 | Transport fakes i fault injection: ambiguous paid outcome, budget exhausted, partial Speech, invalid Image, stale source; manual live 30–90 s production smoke through authenticated CLI/API (no React/UI dependency), explicit per-run budget approval; full ~10-min acceptance separately funded and opt-in; manual live acceptance po osobnej zgodzie. Acceptance: brak nieograniczonych retry i kompletne źródła | H / XL |
+| `CLOUD-001` — Weekly scheduling | **In:** Cloud Scheduler once/week, 1 long/3 Shorts target metadata; budgeting/notify. **Out:** auto-publish | `cloud/*`, `infra/gcp/*`; CLOUD-PAID-001, STORAGE-001D, full ~10-min acceptance | Dry-run schedule, dedup week key, no job at insufficient budget, alarms, missed run replay; acceptance: unattended weekly run, fail closed on cost | M / M |
 
 ### Local finishing, Shorts, publishing, cleanup
 
@@ -76,13 +94,18 @@ Uwaga o kolejności: `CORE-002A` produkuje testowe źródła/MP4; `CORE-002B` gw
 
 **Gate G2 — offline package:** real ffprobe verified MP4, original PNG/JPEG and audio unchanged, manifest complete SHA256, ZIP unpack valid; corrupt/partial input rejected.
 
-**Gate G3 — cloud mock:** private API and durable state, reconcile orphan queue/job, Firestore/GCS consistency under failure, CI+WIF+rollback.
+**Gate G3 — cloud mock:** private API and durable state (STORAGE-001B/001C), reconcile orphan queue/job or BLOCK for operator, no half-published package, CI+WIF+rollback. Full automatic stage resume belongs to STORAGE-001D, mandatory before unattended scheduling.
 
-**Gate G4 — paid:** operator reviews cap/prompt/estimated spend; per-chunk attempts bounded, unknown paid operation pauses, no new paid calls from a viewing action.
+**Gate G4 — paid:** controlled 30–90 s CLI/API smoke without UI dependency; operator explicitly approves cap/prompt/estimated spend; per-chunk attempts bounded, unknown paid operation pauses, no new paid calls from a viewing action.
 
 **Gate G5 — final local:** GPU source upscale, final H.264/AAC QA and source mapping, optional subtitles, upload verification.
 
 **Gate G6 — Shorts/Publish:** three vertical Shorts with exact lineage and separate editorial approvals, YouTube only on explicit confirmation.
+
+### Two production acceptance levels — PROPOSED
+
+- **Short synthetic production smoke:** approximately 30–90 seconds of media, deterministic sources/providers, real FFmpeg proxy, manifest/checksums and pack/unpack. This is the offline regular CI path; duration means media length, not test runtime. Cloud mock reuses the short input. The real-provider variant is manual `CLOUD-PAID-001`, through CLI/API with explicit budget approval, never regular CI.
+- **Full production acceptance:** approximately 10 minutes of media, continuity/duration/source completeness and QA. Separate, more expensive, manual/opt-in validation with a separate approved budget for live providers; not required in every regular CI run. Mandatory together with `STORAGE-001D` before unattended `CLOUD-001`.
 
 ## 4. Wymagane komendy/walidacje przy implementacji
 
@@ -103,4 +126,4 @@ Dodać **nowe dedykowane testy** `test_headless_*`, `test_portable_package_*`, `
 
 ## 5. Definition of done dla pierwszego sprintu
 
-Po `CORE-001B` aplikacja headless bez Qt przechodzi ten sam plan skróconej offline produkcji, który działa w desktop: skrypt, WAV, scena, obraz, timing, frozen timeline. Test potwierdza resume i brak zduplikowanych zapisów. Dopiero wtedy `CORE-002A` wytwarza MP4 proxy i `STORAGE-001A/B` spina archiwum. Nie zaczynać nowego frontend design system ani infrastruktury przed potwierdzonym rzeczywistym end-to-end, bo maskuje to najdroższą niepewność — czy da się uruchomić produkcyjny pipeline bez GUI.
+Po `CORE-001B` aplikacja headless bez Qt przechodzi ten sam plan skróconej offline produkcji, który działa w desktop: skrypt, WAV, scena, obraz, timing, frozen timeline. Test potwierdza resume i brak zduplikowanych zapisów. Dopiero wtedy `CORE-002A` wytwarza MP4 proxy i `STORAGE-001A` + `CORE-002B` spina archiwum. Nie zaczynać nowego frontend design system ani infrastruktury przed potwierdzonym rzeczywistym end-to-end, bo maskuje to najdroższą niepewność — czy da się uruchomić produkcyjny pipeline bez GUI.

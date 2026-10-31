@@ -1,84 +1,142 @@
-# Audyt stanu obecnego
+# ARCH-001 — CURRENT_STATE_AUDIT
 
-Data: 2026-10-28. **Zweryfikowane** = odczyt implementacji/testów; nie oznacza akceptacji produkcyjnej. **Częściowe** = istnieją elementy bez kompletnego przepływu. **Proponowane** = przyszła praca. **Niezweryfikowane** = realne konta, GCP, GPU, instalator i płatni dostawcy.
+**Status:** dokumentacja analityczna; stan źródłowy `master`, odczyt 2026-10-31; pierwotny audyt zdalny, teraz zintegrowany w lokalnym checkout na bazie `d745817`.
 
-## Zakres i punkt odniesienia
+**Status dowodów:** `CONFIRMED` = fakt wskazany w kodzie; `PROPOSED` = klasyfikacja/target migracyjny; `VERIFY` = brak potwierdzenia. Integracja ponownie sprawdziła główne granice workflow/driver, API, SQLite i proxy; pełny import graph i gotowość headless/cloud pozostają VERIFY.
 
-Studio: lokalny working tree `D:/Projects/ai-content-generation`, HEAD `1166dcdfe83ade9c897bc6570293b63704f43545`, origin `https://github.com/piotrbarabasz/ai-content-generation.git`. Tripse: `D:/Projects/tripse-ai-demo`, HEAD `033e63914a3fec8e62daf4af33164d34fb02b29c`, origin `https://github.com/piotrbarabasz/tripse-ai-demo.git`. Oba drzewa na początku czyste. Nie weryfikowano zgodności z najnowszym remote ani stanu wdrożeń Tripse. Pod koniec audytu w Tripse pojawiły się równoległe zmiany working tree w document_studio/frontend/API i testach. Nie pochodzą z tej sesji, nie były edytowane ani cofane; referencyjne ustalenia dotyczą odczytanych wcześniej plików cloud/deployment, nie tych nowych zmian.
+**Skala dowodów:** `C` — sprawdzony plik kodu; `D` — deklaracja w dokumentacji repo (wskazać test/code verification); `V` — wymaga potwierdzenia. Klasyfikacja jest **propozycją migracyjną**, nie dowodem gotowości cloud.
 
-Źródła: AGENTS, pyproject, docs/architecture (overview, domain-model, provider-contracts, module-contracts, workflow-engine, api-and-storage), desktop implementation plan, ADR-0003 i wymieniony kod. D### opisuje intencję; zachowanie weryfikuje kod. Desktop-first nadal obowiązuje. Prośba upoważnia do planowania, nie implementacji.
+## 1. Aktualna architektura — kod i ścieżki
 
-## Zweryfikowane blokady i wejścia produkcyjne
+```mermaid
+flowchart TD
+  Desktop[PySide6 ProjectEditor + panels] --> Driver[DesktopPipelineDriver]
+  Desktop --> Composition[desktop/*_composition]
+  Driver --> Auto[application/AutomaticWorkflow]
+  Auto --> Driver
+  Driver --> Services[application services + scene/audio/timeline services]
+  Composition --> Services
+  Services --> Domain[domain revisions, timings, dependencies]
+  Services --> LocalJobs[jobs/JobRepository + Coordinator]
+  Services --> ProjectDB[(project.sqlite EXCLUSIVE)]
+  Services --> LocalFiles[(LocalArtifactStore + manifests)]
+  Services --> Providers[provider contracts + OpenAI/mocks]
+  Services --> FFmpeg[FFmpegRenderer / Process]
+  Api[FastAPI routes] --> Memory[(module-level dicts)]
+  Api -.-> CoreWorkflow[workflow/CoreWorkflowEngine]
+  Desktop --> Preview[PreviewService: proxy MP4]
+  Preview --> FFmpeg
+```
 
-- `backend/app/api/routes/projects.py` utrzymuje PROJECTS, WORKFLOW_CONFIGS, WORKFLOW_RUNS, ARTIFACTS_BY_RUN i EXPORT_BUNDLES w pamięci. `workflow_runs.create_workflow_run` ustawia running/started, a resume zmienia status po kontroli approvals. Nie wywołują silnika. `_ensure_export_bundle` tworzy metadane/referencję manifestu, nie pakiet plików. `api/dependencies.py:ApiDependencies` wstrzykuje głównie TTS preview, nie production dispatcher. Restart i kilka instancji gubią/rozdzielają stan.
-- `application/automatic_workflow.py:AutomaticWorkflow.run` nie importuje Qt. Obsługuje plan/script, narration i bounded duration repair, sceny/timing, prompty, obrazy/motion masters i timeline. Kończy na AutomaticWorkflowResult, nie na MP4/Shorts/QA/upload. Duck-typed `desktop/pipeline_driver.py:DesktopPipelineDriver` korzysta z editor.session, paneli audio/video_plan/visuals/timeline, refresh i _bind_regeneration. Brak importu Qt w driverze nie czyni go niezależnym od GUI.
-- `desktop/product_composition.py:compose_installed_audio` tworzy `desktop/cloud_audio.py:CloudAudioServices`, importujący desktop.audio_services i desktop.narration_recovery. Otwiera JobRepository(session.repository), ResultArtifactIndex i LocalArtifactStore. „Cloud” oznacza dostawcę Speech, nie Cloud Run. Wybrane klasy bez Qt nadal zależą od lokalnej sesji i desktopowej kompozycji.
-- `workflow/engine.py:CoreWorkflowEngine` wykonuje moduły/registry, retries i previous results/checkpoints w procesie; nie jest durable scheduler. `workflow/usage.py` ma domyślny NoopCostTracker. `workflow/presets.py:short_video` pomija wymagane przez sceny scriptGeneration. Nie wybierać go jako gotowego przepływu 1+3. Zachować istniejące silniki; runner cloud ma zapisywać/claimować, a nie tworzyć trzeci silnik.
-- `storage/project_repository.py:_connect` wymusza SQLite EXCLUSIVE/DELETE/FULL. ProjectSession ma port/expected revision, ale dalsze usługi czytają session.repository.workspace i konkretne repozytoria. `jobs/repository.py` wiąże jobs.sqlite z sesją, używa BEGIN IMMEDIATE, claim tokenów i attempt numbers. Nowa sesja odzyskuje running jako interrupted. To nie rozproszona lease. `storage/result_publication.py` wraz z jobs używa attached SQLite transaction; tej atomowości nie przenosi podmiana store na GCS.
-- `storage/local_store.py` daje immutable publikację, staging/recovery i streaming z SQLite index lub sidecarami; `storage/artifact_store.py` ma ArtifactStore/StreamingArtifactStore. Paths, rename/link/fsync i snapshoty wymagają osobnego protokołu cloud. GCS nie jest filesystemem ani wspólnym SQLite.
-- `application/video_render.py:VideoRenderService` przyjmuje renderer, ale publication/coordinator/artifacts prowadzą do local jobs/staging. `providers/ffmpeg_render.py:FFmpegRenderer` bierze trusted executable paths i sprawdza encode/probe/decode. `runtime/media_process.py` ma asyncio subprocess i odnogę Windows. Linux wymaga testu kontenera.
+`AutomaticWorkflow` (313 linii) steruje etapami i błędami/skipami, używając metody `driver`. `DesktopPipelineDriver` (422 linie) implementuje rzeczywiste operacje przez `self.editor`, np. `editor.video_plan.script_service`, `editor.audio.services`, `editor.visuals.services` i `editor.timeline.services`. W `ensure_plan_script` wywołuje `panel._render()`, `panel._script_progress()` i `editor._refresh()`, a przy timeline `editor.timeline.refresh()`, `editor._bind_regeneration()`. To **konkretna granica do wydzielenia**. [Kod workflow](../../backend/app/application/automatic_workflow.py), [driver](../../backend/app/desktop/pipeline_driver.py).
 
-## Macierz ponownego użycia
+Uwaga: istnieje też osobny `CoreWorkflowEngine` w `workflow/engine.py` (planowanie modułów, walidacja zależności, retry i approval). Nie deklarować go nowym silnikiem dla desktopowego procesu, póki spike nie porówna semantyki obu ścieżek. Jest realnie używany w [offline long-form integration](../../backend/tests/integration/test_long_form_workflow.py), ale API nie wykonuje tego workflow. [API workflow_runs](../../backend/app/api/routes/workflow_runs.py).
 
-Ścieżki względem backend/app. Klasyfikacja dotyczy wskazanego zastosowania, nie pełnej akceptacji podsystemu.
+## 2. Szczegółowy inwentarz i decyzja o warstwach
 
-| Komponent i dowód | Stan / klasyfikacja | Konieczna praca |
+W kolumnie „Zależności” wymieniono istotne zaobserwowane importy lub zależności logiczne, nie pełne drzewo transytywne. Trudność: S/M/L/XL. Ryzyko: niskie/średnie/wysokie. Przykłady testów potwierdzono w kodzie lub podlinkowanych dokumentach; brak testu oznacza **niezweryfikowane**, nie „brak w repo”.
+
+| Plik / subsystem | Rola + zależności | Klasa | Działanie / argument | Trudność; ryzyko; dowody/testy; konsumenci |
+| --- | --- | --- | --- | --- |
+| `domain/*` | Rewizje, plany, dependency/fingerprint, timing; standardowa biblioteka, modele | **SHARED_CORE** | Zachować tożsamość oraz rozdział `NarrativeSegment`/`RenderScene`/TTS chunks | M; wysokie przy zmianie kontraktów; `unit/test_editorial_revisions.py`, `unit/test_timeline_editing.py`; application/storage |
+| `application/automatic_workflow.py` | Etapy, resume, blocked/cancel; `driver`, `VideoFormat`, `MotionConfig` | **SHARED_CORE** | Podmienić desktop driver na headless przez port; nie przepisywać algorytmu | M; średnie; `AutomaticWorkflow` — nowe testy kontraktu; desktop driver |
+| `desktop/pipeline_driver.py` | Adapter orkiestracji do paneli, usług i repozytoriów; `self.editor`, `asyncio` | **SIMPLIFY / UI_REPLACE** | Rozdzielić wywołania usług od metod Qt i refresh; pozostawić stary adapter do czasu parytetu | L; wysokie; brak potwierdzonego dedykowanego testu; `desktop/editor.py` |
+| `desktop/editor.py` | `QMainWindow`, stan sesji, `GenerationThread`, `RenderCheckThread`, kompozycja paneli | **UI_REPLACE** | Wyodrębnić inicjalizację usług; niewidoczny w MVP; nie usuwać od razu | L; wysokie; `integration/test_project_editor.py`; desktop runtime |
+| `desktop/video_plan_panel.py` | Planowanie + wiązanie `PlanScriptGenerationService`, continuity, duration repair; QThread | **SIMPLIFY** | Zachować usługę planowania, przenieść composition do niezależnego factory | L; wysokie; testy planu i repair do wylistowania; driver/editor |
+| `desktop/audio_panel.py`, `narration_panel.py` | UI, wybór/odsłuch/generacja, approval, tryby | **UI_REPLACE / SIMPLIFY** | Zastąpić presetem głosu i zasadami limitów; zachować regenerację i proof audio | M; wysokie dla kosztów; `D078`, `D079`; driver/editor |
+| `desktop/cloud_audio.py` | `CloudAudioServices` — **nazwa myląca:** lokalny owner-thread adapter OpenAI Speech + SQLite + pliki | **SIMPLIFY** | Rozbić realne usługi na headless audio runner bez owner-thread Qt; zachować preflight i raw-response recovery | L; wysokie; `D078`, `D079`, `test_duration_repair.py`; desktop product composition |
+| `desktop/scene_panel.py`, `scene_planning_panel.py`, `storyboard_panel.py`, `scene_services.py` | Plan scen, kontekst, obrazy, wybór, prompt; Qt + service/repository | **UI_REPLACE / SHARED_CORE** | UI zastąpić podglądem, sceny i ich publikację zachować w services | L; wysokie; coverage to confirm; driver/editor |
+| `desktop/scene_composition.py` | Składanie `ImageGenerationService`, `VisualPromptService`, `JobCoordinator`, storage | **SIMPLIFY** | Przenieść fabrykę usług do warstwy niewymagającej Qt/Windows | M; średnie; testy integracji scen do weryfikacji; desktop/main |
+| `desktop/timeline_panel.py`, `timeline_composition.py` | Edytor + `TimelineEditingService`/`TimelineCompiler`/ProjectTimelineMedia | **UI_REPLACE / SHARED_CORE** | Zastąpić edytor automatycznym timeline i read-only podglądem; zachować compiler/diagnostics | M; wysokie; `unit/test_timeline_editing.py`, `integration/test_timeline_editing.py`; driver/preview |
+| `application/preview.py`, `desktop/preview_composition.py` | Cache proxy i prawdziwe MP4 przez FFmpeg; opcjonalne ffmpeg/ffprobe | **SHARED_CORE** | Użyć w CLOUD-BASED preview po usunięciu desktopowego composition | M; średnie; testy preview/FFmpeg do pełnej inwentaryzacji; panel i render |
+| `providers/ffmpeg_render.py`, `runtime/media_process.py` | Koder MP4, filtr video+audio, sprawdzanie wyniku, proces | **SHARED_CORE** | CPU render 640×360/25 FPS w Linux image; sprawdzić zależności filtrów/środowiska | M; wysokie; `integration/test_video_render.py`; preview, final render |
+| `application/video_render.py`, `storage/video_render.py` | Frozen render, weryfikacja source, result index | **SHARED_CORE / LOCAL_ONLY final** | Zachować kontrakty i rozdzielić preview vs final; w GCP nie wymuszać motion master | L; wysokie; `integration/test_video_render.py`, D080; regeneration/export |
+| `application/image_presets.py` | Orientacja/rozdzielczości `draft`, `fhd`, `qhd`, `uhd4k`; brak SDK | **SHARED_CORE** | Preset cloud tylko target encoding, nie natywny size API | S; średnie; testy image presets do weryfikacji; scene/driver |
+| `providers/openai_image.py` + factory | SDK Images, rozmiary/format/transport/throttling | **SHARED_CORE** | W kontenerze bez GPU; walidować rozmiary API; presety przez provider contracts | M; średnie/koszt; kod `validate_gpt_image_2_dimensions`; scene composer |
+| `providers/openai_tts.py`, `storage/narration.py`, `runtime/section_synthesis.py` | Synteza WAV, ceny/rezerwacje, cache/chunki i walidacja | **SHARED_CORE** | Zachować retry-limit i zapis raw bytes; poprawić headless composition | L; wysokie; D078/D079; audio services |
+| `application/planned_script_generation.py`, `video_planning.py`, `narrative_continuity.py` | Plan/skrypt grupowy, ciągłość, selektywna naprawa | **SHARED_CORE** | Wykorzystać w plan-driven headless flow; bez panelu | L; średnie; D075; video plan |
+| `application/shorts.py`, `storage/shorts.py`, `domain/shorts.py` | Analiza/wybór klipów na zweryfikowanym finalnym źródle, lineage i approval | **SIMPLIFY (later)** | Zachować metadane/wybór, wydzielić „selection-only” od final media; nie zmieniać w MVP | L; wysokie; `unit/test_shorts.py`, `integration/test_shorts_media.py`; panel/director |
+| `desktop/shorts_panel.py`, `director_panel.py` | UI Shorts i opcjonalny Director | **UI_REPLACE / DEPRECATE_CANDIDATE (UI)** | W MVP prosty status 3 Shorts, approve i pobranie; Director poza MVP | M; średnie; `integration/test_shorts_panel.py`; editor |
+| `application/production_quality.py`, `quality_validators.py`, `storage/production_quality.py` | QA media i metadanych, zapisywanie raportów | **SHARED_CORE / SIMPLIFY UI** | Sprawdzać osobne reguły proxy vs final; niczego nie deklarować approved automatycznie | M; średnie; `unit/test_production_quality.py`; Quality panel/publish |
+| `desktop/quality_panel.py` | Skan Quick/Deep, decyzja i historia | **UI_REPLACE** | Karta QA/status + celowana akcja review | S; średnie; `D073_PRODUCTION_QA.md`; editor |
+| `desktop/export_panel.py`, `branding_panel.py`, `delivery_panel.py` | UI + dostęp do finishing i channel library + eksport | **SIMPLIFY / UI_REPLACE** | Dwa presety: channel, export; cała złożona edycja poza MVP | M; średnie; D076; editor |
+| `storage/channel_library.py`, `storage/branding.py`, `application/video_finishing.py` | Wersjonowane profile i assety kanałów, finishing, weryfikacja | **SHARED_CORE / LOCAL_ONLY finishing** | Wydzielić serializowalne channel revision snapshot; dla cloud package zachować referencje/bytes | L; wysokie; D076; Export + final worker |
+| `storage/project_repository.py`, `application/projects.py` | Jedna sesja SQLite EXCLUSIVE; immutable revision selection | **LEGACY_KEEP / SHARED_CORE (ports)** | Nie montować współdzielonego SQLite w wielu Cloud Run; udokumentować format migracji/checkpoint | L; bardzo wysokie; `unit/test_project_repository.py`; większość desktop services |
+| `jobs/repository.py`, `jobs/coordinator.py`, `storage/result_publication.py` | Lokalny job claim/attempts i atomic publication | **SHARED_CORE contracts / LEGACY_KEEP implementation** | W chmurze Firestore state machine i izolowany runner; nie skopiować koordynatora 1:1 do multi-instance | L; bardzo wysokie; `integration/test_regeneration.py`; audio/render/scene |
+| `storage/local_store.py`, `storage/manifest.py`, `storage/paths.py` | Pliki, immutable sidecar, checksums, containment i crash recovery | **SHARED_CORE contracts / CLOUD adapter** | Zachować manifest semantyczny; `GCSArtifactStore` i portable package; brak absolutnych ścieżek | L; wysokie; testy storage to enumerate; wszystkie publikatory |
+| `api/main.py`, `api/routes/{projects,workflow_runs,artifacts,approvals}.py` | FastAPI + pamięciowe dicts i statusy; brak execution | **SIMPLIFY / CLOUD_ONLY adapter** | Nowe wersjonowane endpoints na trwałych jobach, nie uznawać starych route za gotowe | M; wysokie; testy API do enumerate; przyszły frontend |
+| `workflow/*`, `modules/*`, `providers/registry.py` | Poprzednia modułowa ścieżka: presets, registry, mocks, approvals | **LEGACY_KEEP / INVESTIGATE** | Nie duplikować silnika; zdecydować na spike'ie, jakie moduły współdzielić | L; średnie; `integration/test_long_form_workflow.py`; API/mock |
+| `runtime/upscale_runtime.py`, `providers/local_upscale.py` | Opcjonalny Real-ESRGAN CUDA, WindowsJob i resource ownership | **LOCAL_ONLY** | Przenieść do późniejszego workera; nie instalować w cloud image | M; wysokie sprzętowo; D028 testy to enumerate; desktop visuals |
+| `runtime/{native_piper,chatterbox_*,profiles,provisioning}.py` i extras pip | Modele TTS, dystrybucja runtime Windows/GPU | **DEPRECATE_CANDIDATE / LEGACY_KEEP** | Tylko po audycie wszystkich lokalnych/retained projektów i sprawdzeniu legalności modeli | M; średnie; D008/D029; audio composition |
+| `desktop/__main__.py`, `desktop/deployment.py`, `pyproject.toml` desktop extras | GUI entrypoint, Qt/installer i lokalne aplikacyjne ścieżki | **LEGACY_KEEP / UI_REPLACE** | Zachować aż do akceptacji nowego workflow i archiwum projektów; cloud extras osobno | M; średnie; D041; Windows installer |
+| `tooling/*`, `experiments/tts_local/*` | Ręczne/eksperymentalne walidacje | **INVESTIGATE / DEPRECATE_CANDIDATE** | Sprawdzić importy, CI, dokumentację, użycie przed usunięciem | S; niskie; brak pełnego inwentarza |
+
+## 3. Krytyczne ścieżki i konkretne blokery
+
+### 3.1 Headless vs Qt
+
+- `AutomaticWorkflow.run` sprawdza niezapisane drafty, obecność video plan, walidację narracji, wykonuje grupowy skrypt, preflight/budżet, naprawę długości, sceny, obrazy i timeline. Wykonuje **callbacki drivera**, więc mechaniczny refactor nie jest konieczny. `DriverProtocol` może określić wymagane metody i opcjonalne hooki. [Źródło](../../backend/app/application/automatic_workflow.py).
+- `DesktopPipelineDriver` używa panelowych pól jako locatorów usług; miesza `await asyncio.to_thread(provider...)` z modyfikacjami lokalnych repozytoriów na owner thread. Oddzielenie od Qt wymaga **kompozycji usług i jawnego ownera sesji**, a nie jedynie mockowania widgetów. [Źródło](../../backend/app/desktop/pipeline_driver.py).
+- `video_plan_panel.py` i `cloud_audio.py` także składają logikę w GUI (`PlanScriptGenerationService`, `CloudAudioServices`); trzeba przenieść miejsce inicjalizacji, nie przenieść klas Qt do backendu. Headless runner jest możliwy, lecz **jeszcze nie istnieje**.
+
+### 3.2 API nie uruchamia produkcji
+
+`api/routes/projects.py` deklaruje `PROJECTS`, `WORKFLOW_CONFIGS`, `WORKFLOW_RUNS`, `ARTIFACTS_BY_RUN`; `/workflow-runs` tylko ustawia `status="running"`, `/resume` ponownie ustawia stan, a `/export-bundle` tworzy jedynie opis `manifest.json`, bez zapisania pakietu. `/artifacts` listuje metadane i nie udostępnia ogólnego byte-download. Przeniesienie wprost do Cloud Run spowodowałoby „fałszywie działające” joby. [Kod](../../backend/app/api/routes/workflow_runs.py).
+
+### 3.3 Projekt, lock i zachowanie historii
+
+`storage/project_repository.py` tworzy `project.sqlite` format v2 i używa `PRAGMA locking_mode = EXCLUSIVE`, `BEGIN EXCLUSIVE`, lokalnego workspace. `jobs/repository.py` ma oddzielną logikę attempts/claim, ale też jest project-session-owned SQLite. `storage/result_publication.py` wiąże publikację z expected input fingerprint i stanem sesji. W chmurze przeniesienie pliku na GCS **nie zamienia go w bazę transakcyjną**. Możliwy adapter przejściowy: per-job isolated workspace + spójny backup/checkpoint na GCS na barierach etapów; główne metadane/leases osobno w Firestore. Backup musi powstać ze spójnego snapshotu (SQLite backup API lub zamkniętej sesji), nie z kopii aktywnego pliku.
+
+### 3.4 Podgląd a obraz API
+
+`providers/ffmpeg_render.py` w trybie `proxy=True` wymusza `TimelineRevision`, timebase `(1,25)`, rozdzielczość wyjścia 640×360 / 360×640, `libx264 -preset ultrafast -crf 28 -r 25`, AAC 48 kHz, ffprobe/validację. [Renderer](../../backend/app/providers/ffmpeg_render.py). `desktop/preview_composition.py` już składa `PreviewService` i FFmpeg z flagą proxy. To jest **istniejące wsparcie low-res MP4**, nie dowód działania w Linux Cloud Run. `providers/openai_image.py` waliduje rozmiary generowanego obrazu m.in. minimalną liczbą pikseli dla GPT Image 2; nie używać kodowania MP4 jako size requestu Images. W pakiecie zostają oryginalne PNG/JPEG, proxy to pochodna.
+
+### 3.5 Shorts i final media
+
+`application/shorts.py::source()` wymaga completed Standard, źródła przez publishing, mapowania i zweryfikowanej tożsamości. `analyze()` zapisuje candidates z identyfikatorami source, checksums, timeline, zweryfikowanymi granicami. `D071_SHORTS.md` wprost dokumentuje powiązanie z wersjonowanym finalnym materiałem oraz timestampami. **Pierwsza wersja chmury nie powinna renderować Shorts przez istniejący kod na proxy.** Etap późniejszy: wybór wycinków na timingach source, przetwarzanie mediów po finalizacji GPU, odrębne `source_kind=proxy|final` i jasna ponowna walidacja.
+
+### 3.6 Narracja, koszt i ponowna próba
+
+`desktop/cloud_audio.py` to adapter OpenAI Speech utrzymujący dane i działanie na owner thread, nie adapter GCP. `D078_OPENAI_NARRATION.md` pokazuje wersjonowane ustawienia, agregowane akceptacje wydatków, rezerwacje, odzyskiwanie raw response/chunków oraz wyłączony SDK retry. `D079` dodaje skan odzyskiwania. Dla unattended cloud potrzebne **preapproved max spend / run**, max retries per immutable input, blokowanie niepewnego stanu płatnej operacji, zachowanie historycznych prób i aktualizacja cennika. Bez tego nie uruchamiać płatnej produkcji.
+
+### 3.7 Motion masters / final export / QA
+
+`providers/local_upscale.py` korzysta z `runtime/upscale_runtime`, GPU resources i WindowsJob. To warstwa `LOCAL_ONLY`. `application/image_presets.py` rozróżnia `generation_dimensions`, `final_dimensions` i `motion_master_dimensions`; nie wolno zastąpić oryginałów samym małym MP4. `D080_FINAL_RENDER_READINESS.md` opisuje naprawiony niezależny final-render-only path oraz odkryty wcześniej problem z `CloudAudioServices` — zachować testy. `D073_PRODUCTION_QA.md` odróżnia szybki skan od deep QA i nie zastępuje zatwierdzenia redakcyjnego.
+
+## 4. Test coverage — dowody pierwotnego audytu
+
+| Test / dokument | Co weryfikuje | Status audytu |
 | --- | --- | --- |
-| domain/narrative_segment.py, render_scene.py, script.py, dependencies.py, timeline.py | Zweryfikowane / Reuse unchanged | Zachować IDs, lineage, rational timing i rozdzielenie NarrativeSegment/RenderScene/TTS chunks |
-| domain/production_quality.py zawiera też local Path context | Częściowo przenośne / Reuse with refactoring | Oddzielić wire/media context, nie uznawać całego domain za cloud DTO |
-| application/projects.py, section_editing.py, section_ordering.py | Zweryfikowane porty / Reuse unchanged w prywatnym workspace | Adapter snapshot/import, bez masowego rewrite modeli |
-| application/automatic_workflow.py i desktop/pipeline_driver.py | Częściowe headless / Reuse with refactoring | Typed driver, observer/policy; zachować desktop adapter |
-| desktop/cloud_audio.py, audio_services.py, narration_recovery.py | Trwałe local audio / Reuse with refactoring | Selective extraction do application i compatibility facades |
-| desktop/scene_services.py, scene_composition.py, timeline_composition.py | Fasady i local repos / Reuse with refactoring | Oddzielić refresh i UserDataPaths od bezwidgetowej logiki |
-| application/planned_script_generation.py, video_planning.py, narrative_continuity.py, duration_repair.py | Plan/revisions/reviews/repair / Reuse with refactoring | Composition/policy i nowy topic source dla unattended |
-| workflow/* i modules/* | Moduły/mock workflows / Reuse unchanged kontraktów; Deprecate later stare presety | Nie przepisywać obecnych klientów w migracji |
-| providers/interfaces.py, registry.py, llm_factory.py, image_factory.py, tts_factory.py | Protocols/lazy factories / Reuse unchanged | Cloud/local factories, disabled GPU bez importu modeli |
-| providers/openai_llm.py, llm_settings.py | Responses/structured output / Reuse with refactoring | Budget/rate/receipts injection; jawny model, bez fallback |
-| providers/openai_image.py | Dokładnie gpt-image-2, quality i usage / Reuse with refactoring | Ledger/checkpoint; nie używać cen GPT Image 1 |
-| providers/openai_tts.py, tts/chunk_synthesis.py, assembly.py, storage/narration.py | Speech/cache/PCM/recovery / Reuse with refactoring | Global ledger, composition i osobna ocena lifecycle modelu |
-| application/speech_alignment.py, captions.py, providers/whisperx_alignment.py | Alignment i SRT / Reuse with refactoring | Local readers/runtime; Speech nie gwarantuje word timestamps |
-| application/video_render.py, video_finishing.py, delivery_export.py, providers/ffmpeg_* | Render/motion/branding / Reuse with refactoring | Snapshot/materialization i testy Linux/fonts/timeouts |
-| application/shorts.py, shorts_director.py, providers/ffmpeg_shorts.py, ffmpeg_director.py | Repurpose/portrait / Reuse with refactoring | ShortsService tworzy ProjectShorts i media snapshots; checkpoint per Short |
-| application/production_quality.py, quality_validators.py, quality_sources.py, providers/ffmpeg_quality.py | Quick/Deep i separate review / Reuse with refactoring | Materializacja; QA nie potwierdza jakości editorial ani monetyzacji |
-| application/publishing_package.py, storage/publishing_package.py, providers/local_thumbnail.py | Metadata/SRT/thumbnail/ZIP / Reuse with refactoring | Local source selection/timing; package to nie upload |
-| providers/youtube_publishing.py, publishing_factory.py, modules/publishing.py | Approval gate i transport / Reuse with refactoring | Streaming/OAuth/session persistence/thumbnail/schedule |
-| storage/channel_library.py, application/channel_library.py, domain/channel_library.py | Branding poza workspace / Requires new adapter cloud | Biblioteka branding to nie pełny kanał/schedule |
-| storage/project_repository.py, jobs/repository.py, result_publication.py | Durable single-owner / Reuse unchanged prywatnie | Requires new adapter cloud control/snapshot; shared SQLite wykluczone |
-| storage/local_store.py, artifact_index.py, manifest.py, paths.py | Integrity/recovery/containment / Reuse unchanged local | Requires new adapter GCS streaming/CAS/commit |
-| api/routes/* global dictionaries/status-only writes | Częściowe / Replace cloud write path | Nowy v2; zachować v1 lokalnie do jawnej deprecjacji |
-| runtime/upscale_worker.py, providers/local_upscale.py, application/image_upscale.py | CUDA Real-ESRGAN SRVGG x4 images; CPU fallback disabled / Keep desktop-only GPU | Worker composition; brak neural video SR |
-| runtime/windows_job.py, provisioning, *_windows_x64.json, desktop/deployment.py | Windows runtimes/installer / Keep desktop-only | Osobne Linux composition |
-| Widgety desktop/* | Qt editor/playback / Keep desktop-only | Web UI nowy, edytora nie usuwać |
-| Drive, worker auth, Firestore/GCS orchestration, GCP CI | Brak kompletnej implementacji / Requires new adapter | Real cloud acceptance Undetermined; Drive DEFERRED |
+| `backend/tests/unit/test_project_repository.py` | Łączenie i rollback SQLite, revision ownership | plik odczytany; **nie uruchomiono** |
+| `backend/tests/unit/test_timeline_editing.py` | Update z optimistic concurrency / pinned sources | plik odczytany; **nie uruchomiono** |
+| `backend/tests/integration/test_long_form_workflow.py` | Deterministic `CoreWorkflowEngine` i pliki workflow | plik odczytany; **nie uruchomiono** |
+| `backend/tests/integration/test_regeneration.py` | Job Coordinator / publication / immutable | plik odczytany; **nie uruchomiono** |
+| `backend/tests/unit/test_production_quality.py` | QA contracts i klasyfikacje | plik odczytany; **nie uruchomiono** |
+| `backend/tests/unit/test_shorts.py`, `backend/tests/integration/test_shorts_media.py`, `test_shorts_panel.py` | Shorts logic/media/UI | ścieżki z `D071_SHORTS.md`; **nie uruchomiono** |
+| `backend/tests/integration/test_video_render.py` | Właściwy FFmpeg media path | pośrednie importy w `test_regeneration.py`; **nie uruchomiono** |
+| `docs/desktop/D080_FINAL_RENDER_READINESS.md` | D080 wskazuje lokalne regresje i FFmpeg smoke | dokument odczytany; historyczny wynik **nie jest wynikiem ARCH-001** |
 
-## Publishing i spending — ograniczenia
+Nie da się odpowiedzialnie zadeklarować procentowego coverage lub wszystkich istniejących testów bez inwentaryzacji całego drzewa. `CORE-001A` ma dołożyć jawny audit import graph i `pytest --collect-only`.
 
-GoogleYouTubeTransport._get_service czyta authorized-user OAuth z YOUTUBE_CREDENTIALS_FILE, lazy importuje Google SDK i żąda youtube.force-ssl także dla captions. SA GCP nie daje osobistego kanału. MediaIoBaseUpload używa BytesIO/resumable=True, ale execute nie zapisuje trwałej sesji/offsetu. Provider czyta całe video, więc RAM i ambiguous success są ryzykiem. Domyślne privacy metadata to unlisted; cloud musi jawnie wymusić private. Jest containsSyntheticMedia, brak kompletnego thumbnail/schedule/token-store flow. HTTP publishing to handoff.
+## 5. Referencja: Tripse — kopiować wzorzec, nie topologię
 
-storage/narration.py zachowuje append-only settings/estimates/approvals/reservations i exceptional retry. Pricing ma as_of 2026-10-16 i expiry 2026-11-16. Driver pyta panel authorize_narration; automatic może sam akceptować sceny. Scheduled potrzebuje uprzednio zatwierdzonej ograniczonej polityki i jawnego zakresu autoaccept. Brak operatora nie oznacza blanket approve. Primary model gpt-4o-mini-tts ma ogłoszony shutdown; providers/openai_tts.py już zawiera SHUTDOWN=2027-01-06 i check_configuration odmawia po tej dacie. CLOUD-031A to migracja istniejącego jawnego ograniczenia, bez zmiany defaults w audycie; źródła w decyzjach i kosztach.
+Pierwotny dostarczony audyt raportował weryfikację `.github/workflows/ci.yml`, `delivery.yml`, `Dockerfile`, `scripts/gcp/deployment.py`, `docs/GITHUB_CICD.md`, `docs/DEPLOY_GCP.md` w [Tripse](https://github.com/piotrbarabasz/tripse-ai-demo). Przenaszalne: **WIF bez JSON keys**, minimalne permissions, pinowanie obrazu/digestu, oddzielny test offline, immutable deployment proof, smoke i rollback, audyt IAM bez przypadkowych zapisów. Nie przenosić bez potrzeby: DEV/PROD promotion, dwóch projektów/środowisk, rozbudowanego IAP i Cloud Tasks routing, obszernych procedur bootstrapu. AI Content Studio na start: jedno środowisko i bardziej kompaktowy workflow. Nie przeglądano ponownie repozytorium Tripse podczas lokalnej integracji; te ustalenia pozostają VERIFY dla wdrożenia. Konfigurację Terraform z Tripse potraktować jako referencję do odrębnej weryfikacji ścieżek — nie zweryfikowano pełnego modułu Terraform.
 
-## Tripse — konkretna mapa referencyjna
+## 6. Najważniejsze ryzyka i otwarte dowody
 
-| Odczytane źródło Tripse | Adaptować | Nie przenosić |
-| --- | --- | --- |
-| app/main.py:create_app, app/cloud_runtime.py:build_components | Opt-in/lazy composition, FastAPI/static mount, injection | Travel domain, hardcoded resource regex/names, readonly demo |
-| app/cloud_jobs.py:FirestoreJobStore/CloudJobs | Transactions/claim/lease, bounded attempts/recovery | Krótkiej lease demo jako timeout renderu, Tasks bez potrzeby |
-| app/document_studio/cloud_storage.py | if_generation_match, immutable bytes/CAS | JSON overlay jako pełne project repo, filesystem emulation |
-| Dockerfile | Slim Python, mały context, jawny entrypoint | DATABASE_PATH=/data/tripse.sqlite3, stałego portu bez konfiguracji, braku FFmpeg |
-| infra/gcp/cloud-demo/main.tf | Private bucket, prevent_destroy, Firestore, ograniczone IAM/IAP | State/resource IDs/bindings, drugiego DEV/PROD deployment |
-| infra/gcp/github-actions/main.tf, builder-isolation.tf | Osobne builder/deployer/WIF trust | Tripse claims i kont |
-| .github/workflows/ci.yml, delivery.yml | PR bez credentials, pinned Actions, protected environment, concurrency | DEV→PROD promotion |
-| scripts/gcp/deployment_contract.py, deployment.py, ci_config.py, smoke_auth.py, rollback.ps1 | Fail-closed config, exact SHA/digest, evidence/auth smoke/rollback | Naming i gotowych mutation commands |
-| docs/DEPLOY_GCP.md, docs/GITHUB_CICD.md | Bootstrap operatora, provision osobno od deploy | Historycznych rollout jako dowodu dla Studio |
+1. **Krytyczne:** niedokończone rozdzielenie Qt od headless; `CloudAudioServices` i `VideoPlanPanel` zawierają konstrukcję realnych usług. Potrzebny kontrakt/port.
+2. **Krytyczne:** spójność SQLite / pliki / Firestore / GCS i odzyskanie po przerwanym płatnym żądaniu; nie deklarować exactly-once płatnych operacji.
+3. **Wysokie:** kolejność i własność final/proxy/Shorts, 25fps timebase, naprawa długości narracji.
+4. **Wysokie:** format pakietu lokalnego workera i ścisłe powiązanie snapshotów audio/obraz/timeline.
+5. **Średnie:** zależności ffmpeg/fonty/ass na Cloud Run Linux; koszt CPU i storage.
+6. **Średnie:** brak publicznej autoryzacji dla panelu; IAP/Cloud Run IAM dostosować do pojedynczego użytkownika, a nie bezmyślnie kopiować Tripse.
+7. **Niezweryfikowane:** wszystkie panele i pliki `modules/*`, rzeczywiste zależności z `backend/tests/`, szczegółowa topologia infra Tripse. Uzupełnić w `CORE-001A` przed wygaszaniem plików.
 
-Tripse opisuje dowody wdrożeń, ale nie sprawdzano ich w GCP. Nie uruchamiano jego skryptów ani testów i nie zmieniano repo.
+## 7. Dowody źródłowe — skróty
 
-## Testy, luki i zachowanie historii
-
-253 pliki pod backend/tests obejmują fixtures/helpers, nie są liczbą testów. Istotne dowody: unit/test_automatic_workflow.py, test_openai_image.py, test_openai_llm.py; integration/test_durable_jobs.py, test_openai_narration.py, test_video_render.py, test_shorts_geometry.py, test_shorts_media.py, test_shorts_director.py, test_production_quality.py, test_publishing_package.py, test_publishing_handoff.py. Geometria ma real FFmpeg/SAR/rotation/decode; QA pełny CPU decode, bounded evidence i odmowę fałszywej approval. Mocks tego nie zastępują.
-
-ShortsDirectorService (application/shorts_director.py) ma child SQLite scope i opcjonalnych dostawców nowej narracji/obrazów. Nie należy utożsamiać jego pełnego trybu reżyserii z bezkosztowym wycięciem z long. MVP korzysta z repurpose w ShortsService, a paid director rewrites pozostają jawnie wyłączone.
-
-Nowe luki: import bez Qt/GPU, headless 1+3, Firestore concurrency/fencing, GCS commit recovery, budget races, restart kontenera i Windows podczas transferu, IAP owner/unattended worker, OAuth expiry/revoke, ambiguous upload. W application/jobs/runtime nie znaleziono bezpośrednich importów PySide/app.desktop; pośrednia kompozycja nadal ma opisane zależności. Wynik lokalnego uruchomienia testów: sekcja weryfikacji README.
-
-Stare projekty pozostają bez zmian. Eksport po zamknięciu edytora albo spójny backup przez storage/project_migration.py i project_storage.py. Nie kopiować żywego SQLite. Import do nowego folderu/cloud project z legacy_project_id, oryginalnymi revision/artifact IDs, checksumami, rejected/approval history i source provenance. Bez dwóch aktywnych writerów: desktop edytuje odłączoną kopię, cloud commands tworzą rewizje. Powrót przez oryginał/zweryfikowany eksport, bez nadpisującego downgrade.
+- [AGENTS.md](../../AGENTS.md) — dotychczasowa polityka zachowania kontraktów.
+- [Overview](../../docs/architecture/overview.md), [API and storage](../../docs/architecture/api-and-storage.md).
+- [Automatic workflow](../../backend/app/application/automatic_workflow.py), [desktop driver](../../backend/app/desktop/pipeline_driver.py), [editor](../../backend/app/desktop/editor.py).
+- [Project repository](../../backend/app/storage/project_repository.py), [jobs repository](../../backend/app/jobs/repository.py), [publication](../../backend/app/storage/result_publication.py).
+- [Preview](../../backend/app/application/preview.py), [renderer](../../backend/app/providers/ffmpeg_render.py), [Shorts](../../backend/app/application/shorts.py), [upscale](../../backend/app/providers/local_upscale.py).
+- [D071 Shorts](../../docs/desktop/D071_SHORTS.md), [D078 OpenAI](../../docs/desktop/D078_OPENAI_NARRATION.md), [D080 Final Render](../../docs/desktop/D080_FINAL_RENDER_READINESS.md).
