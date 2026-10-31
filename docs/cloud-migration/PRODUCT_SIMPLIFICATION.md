@@ -2,6 +2,8 @@
 
 **Status:** `PROPOSED`; nie usuwać kodu. Cel: platforma produkcji, nie edytor. Wiersze oznaczają **przyszłą prezentację funkcji**, nie rezygnację z integralności. Podstawa: `desktop/editor.py`, `desktop/*_panel.py`, `desktop/pipeline_driver.py`, `application/*`, dokumenty D071/D073/D075/D076/D078/D079.
 
+Najpierw powstaje headless production i offline package/proxy, potem persistent GCP job i ręcznie zatwierdzony OpenAI smoke CLI/API. Poniższa nawigacja dotyczy późniejszego `UI-001`; nie jest zależnością tego smoke. Krótki smoke 30–90 s i pełny ~10-min production acceptance są osobnymi poziomami walidacji.
+
 ## 1. Minimalna nawigacja web MVP
 
 1. **Dashboard:** ostatnie produkcje, statusy, błędy i budżety.
@@ -81,4 +83,4 @@ Minimalny frontend może schować te rekordy w zakładce `Advanced / Evidence`. 
 
 ## 6. Do weryfikacji przed decyzją o martwym kodzie
 
-Bez dostępu do pełnego drzewa nie zweryfikowano wszystkich provider compositions, wszystkich PySide6 paneli i wszystkich referencji w testach. `CORE-001A` wymaga: `rg` importów, `python -m pytest --collect-only`, analiza `pyproject.toml` extras, `git grep` odwołań do runtime i package entrypoints; rozróżnić kod runtime, test-only, docs-only, historycznie używane workspace. Raport usuwania musi wskazywać **dokładne ścieżki i konsumentów**, nie tylko nazwę providera.
+Pierwotny audyt bez pełnego checkoutu nie zweryfikował wszystkich provider compositions, wszystkich PySide6 paneli i wszystkich referencji w testach. `CORE-001A` wymaga: `rg` importów, `python -m pytest --collect-only`, analiza `pyproject.toml` extras, `git grep` odwołań do runtime i package entrypoints; rozróżnić kod runtime, test-only, docs-only, historycznie używane workspace. Raport usuwania musi wskazywać **dokładne ścieżki i konsumentów**, nie tylko nazwę providera.

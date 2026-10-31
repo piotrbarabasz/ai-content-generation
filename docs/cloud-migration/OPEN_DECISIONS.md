@@ -23,6 +23,12 @@
 | DEC-17 | Plan legacy i nowy ADR | Stworzyć **nowy ADR 0004 cloud/hybrid** (numer po sprawdzeniu kolizji) o statusie Proposed → Accepted dopiero na decyzję | Edycja/dziedziczne nadpisanie `ADR 0003`: utrata historii | Pierwszy governance gate |
 | DEC-18 | Pierwsza paczka Shorts | Start production: 1 long form, 0 Shorts; metadata 3 Shorts później | Wymusić 3 Shorts już w pierwszym GCP job: blokada pionowego MVP | Przed CORE-002 |
 
+## Planning gates — all PROPOSED
+
+- **DEC-01 / DEC-15:** React/UI-001 is independent of the first controlled live OpenAI smoke. Local headless, real offline proxy/package and persistent GCP job execution precede manually approved, budget-limited CLI/API smoke. Real OpenAI calls remain disabled during ARCH-001.
+- **DEC-05 / DEC-06:** incremental storage: portable manifest → basic GCS → persistent production metadata → full leases/checkpoints/recovery. Earlier controlled runs block after interruption for manual reconciliation. Full safe recovery is required before unattended scheduling; avoid an upfront distributed transaction framework.
+- **Acceptance:** short synthetic 30–90 s production smoke for regular offline CI; full approximately 10-minute acceptance separately, more expensive and opt-in. Live providers always require separate budget approval. Full acceptance and recovery hardening precede unattended scheduling.
+
 ## Projekt ADR — do odrębnego PR po akceptacji
 
 **Title:** `ADR 0004 — Cloud-first AI Content Studio with local GPU finishing` (`0004` tylko pod warunkiem wolnego numeru).
@@ -35,7 +41,7 @@
 
 **Consequences:** płatne API i cloud recovery wymagają jawnych limitów, GCS snapshotów i dokładnej ewidencji; nowy UI nie daje pełnych możliwości edytorskich; infrastruktura jest prostsza niż komplet Tripse, ale dodaje bezpieczeństwo i logowanie.
 
-**Supersession:** ADR 0003 pozostaje akceptowaną historyczną decyzją desktopową. Nowy ADR **supersedes product orientation for future cloud/hybrid migration only**, bez zmiany znaczenia starych D### i bez uznania code paths za ukończone. `docs/desktop/IMPLEMENTATION_PLAN.md` wciąż jest źródłem prawdy o desktop D###; `docs/cloud-migration/MIGRATION_BACKLOG.md` reguluje nowe zadania dopiero po akceptacji ADR.
+**Proposed supersession only (no approval in ARCH-001):** ADR 0003 pozostaje obowiązującą zaakceptowaną decyzją desktopową. Nowy ADR, wyłącznie jeśli zostanie odrębnie zaakceptowany, **would supersede product orientation for future cloud/hybrid migration only**, bez zmiany znaczenia starych D### i bez uznania code paths za ukończone. `docs/desktop/IMPLEMENTATION_PLAN.md` wciąż jest źródłem prawdy o desktop D###; `docs/cloud-migration/MIGRATION_BACKLOG.md` reguluje nowe zadania dopiero po akceptacji ADR.
 
 ## Pytania właścicielskie (przed pierwszym płatnym GCP run)
 
