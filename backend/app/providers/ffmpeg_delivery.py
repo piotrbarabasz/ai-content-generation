@@ -43,6 +43,10 @@ class FFmpegDeliveryExporter:
                 "ffprobe_sha256": checksum(self.ffprobe), "quiet_floor_lufs": -40, "max_final_peak_dbtp": -1,
                 "loudness_tolerance_lu": 1, "max_normalization_gain_db": 24}
 
+    def stream_geometry(self, video):
+        """Adapter-specific display validation using the original probe evidence."""
+        return {}
+
     async def probe(self, root, name, canceled):
         try:
             raw = await self.process.run([self.ffprobe, "-v", "error", "-count_frames", "-show_streams", "-show_format",
@@ -68,6 +72,7 @@ class FFmpegDeliveryExporter:
                       "audio_bitrate": int(audio["bit_rate"]) if str(audio.get("bit_rate", "N/A")).isdigit() else None,
                       "color": {key: video[key] for key in ("color_range", "color_space", "color_transfer", "color_primaries")
                                 if video.get(key) not in (None, "unknown", "unspecified")}}
+            result.update(self.stream_geometry(video))
             if (min(result[k] for k in ("width", "height", "fps", "frame_count", "video_duration", "audio_duration", "sample_rate", "audio_frames")) <= 0
                     or result["width"] % 2 or result["height"] % 2 or result["sar"] in {"0:1", "N/A"}):
                 raise ValueError("Invalid delivery source stream measurements.")

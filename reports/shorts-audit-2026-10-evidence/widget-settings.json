@@ -1,0 +1,16 @@
+{
+  "excerpt_aspect_ratio_mode": "AspectRatioMode.KeepAspectRatio",
+  "excerpt_min": [
+    140,
+    180
+  ],
+  "excerpt_max": [
+    200,
+    240
+  ],
+  "director_aspect_ratio_mode": "AspectRatioMode.KeepAspectRatio",
+  "director_min": [
+    240,
+    360
+  ]
+}

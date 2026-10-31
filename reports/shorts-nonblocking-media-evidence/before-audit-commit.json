@@ -1,0 +1,54 @@
+{
+  "payload_mib": 256,
+  "retained_outputs": 3,
+  "fixture": "disposable/offline; no providers",
+  "activate": {
+    "status_ms": 1.0393999982625246,
+    "seconds": 1.43460489998688,
+    "responsive_status_ms": 1434.60489998688,
+    "max_heartbeat_gap_ms": 1433.4512999921571
+  },
+  "switch_card": {
+    "status_ms": 0.1871999993454665,
+    "seconds": 0.32359380001435056,
+    "responsive_status_ms": 323.59380001435056,
+    "max_heartbeat_gap_ms": 322.10779999149963
+  },
+  "staging": {
+    "status_ms": 0.05870001041330397,
+    "seconds": 0.4015703000186477,
+    "responsive_status_ms": 401.5703000186477,
+    "max_heartbeat_gap_ms": 401.2314999999944,
+    "bytes_copied": 268435456
+  },
+  "cancellation": {
+    "status_ms": 0.019500002963468432,
+    "seconds": 0.4129786999837961,
+    "responsive_status_ms": 412.9786999837961,
+    "max_heartbeat_gap_ms": 412.8583999990951
+  },
+  "cancel_honored": false,
+  "history_lookup": {
+    "status_ms": 0.029999995604157448,
+    "seconds": 0.3585482999915257,
+    "responsive_status_ms": 358.5482999915257,
+    "max_heartbeat_gap_ms": 357.1788999834098,
+    "calls": {
+      "completed": 3,
+      "verify": 3,
+      "lookups": 3
+    }
+  },
+  "export": {
+    "status_ms": 0.02549999044276774,
+    "seconds": 0.5773312000092119,
+    "responsive_status_ms": 577.3312000092119,
+    "max_heartbeat_gap_ms": 576.0743000137154
+  },
+  "vertical_preview": {
+    "status_ms": 0.02649999805726111,
+    "responsive_status_ms": 28.490099997725338,
+    "seconds": 0.24100300000282004,
+    "max_heartbeat_gap_ms": 26.508200011448935
+  }
+}

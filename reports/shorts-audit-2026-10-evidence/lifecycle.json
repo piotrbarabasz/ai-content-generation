@@ -1,0 +1,65 @@
+{
+  "events": [
+    {
+      "step": "original",
+      "frame": [
+        1920,
+        1080
+      ],
+      "source": "C:/Users/user/AppData/Local/Temp/shorts-audit-2026-10-01z2d0jm/landscape/source.mp4"
+    },
+    {
+      "step": "original-stop-replay",
+      "frame": [
+        1920,
+        1080
+      ]
+    },
+    {
+      "step": "final",
+      "frame": [
+        1080,
+        1920
+      ],
+      "source": "C:/Users/user/AppData/Local/Temp/shorts-audit-2026-10-01z2d0jm/landscape-fill/short.mp4"
+    },
+    {
+      "step": "final-stop-replay",
+      "frame": [
+        1080,
+        1920
+      ]
+    },
+    {
+      "step": "switch-other-source",
+      "frame": [
+        1080,
+        1920
+      ],
+      "source": "C:/Users/user/AppData/Local/Temp/shorts-audit-2026-10-01z2d0jm/portrait/source.mp4"
+    },
+    {
+      "step": "switch-other-source-stop-replay",
+      "frame": [
+        1080,
+        1920
+      ]
+    },
+    {
+      "step": "reopened-export",
+      "frame": [
+        1080,
+        1920
+      ],
+      "source": "C:/Users/user/AppData/Local/Temp/shorts-audit-2026-10-01z2d0jm/reopened-export.mp4"
+    },
+    {
+      "step": "reopened-export-stop-replay",
+      "frame": [
+        1080,
+        1920
+      ]
+    }
+  ],
+  "errors": []
+}

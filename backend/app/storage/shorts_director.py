@@ -10,12 +10,16 @@ class ProjectShortsDirector:
         self.language=language
         self.records=ProjectBranding(store,project_id)
     def history(self,kind):
-        return [m for m in self.records.history('shorts_director_'+kind) if m.metadata.get('candidate_id')==self.candidate_id and m.metadata.get('director_language')==self.language]
+        return sorted(self.store.find_manifests('shorts_director_'+kind, metadata={
+            'project_id':self.project_id,'candidate_id':self.candidate_id,'director_language':self.language}),
+            key=lambda m:(m.created_at,m.artifact_id))
     def latest(self,kind):
         values=self.history(kind);return values[-1] if values else None
     def one(self,id,kind):
-        m=next((m for m in self.history(kind) if m.artifact_id==id),None)
-        if m is None:raise ValueError('Director dependency is missing or belongs to another Short.')
+        m=self.store.manifest_by_id(id)
+        if (m is None or m.artifact_type!='shorts_director_'+kind or m.metadata.get('project_id')!=self.project_id
+            or m.metadata.get('candidate_id')!=self.candidate_id or m.metadata.get('director_language')!=self.language):
+            raise ValueError('Director dependency is missing or belongs to another Short.')
         return m
     def read(self,m):return json.loads(self.records.verified_bytes(m))
     def metadata(self,kind,**extra):
@@ -38,7 +42,9 @@ class ProjectShortsDirector:
     def cached(self,fingerprint):
         for m in reversed(self.history('selection')):
             try:
-                selection=self.read(m);video=self.verify_video(self.one(selection['video_id'],'video'))
+                selection=self.read(m);video=self.one(selection['video_id'],'video')
+                if video.metadata.get('fingerprint')!=fingerprint:continue
+                video=self.verify_video(video)
                 meta=self.read(self.one(selection['metadata_id'],'metadata'))
                 srt=self.one(selection['srt_id'],'srt');self.bytes(srt)
                 if (meta['output_checksum']!=video.checksum or meta.get('video_id')!=video.artifact_id

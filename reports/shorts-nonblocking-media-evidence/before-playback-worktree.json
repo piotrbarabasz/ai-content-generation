@@ -1,0 +1,41 @@
+{
+  "payload_mib": 256,
+  "retained_outputs": 3,
+  "fixture": "disposable/offline; no providers",
+  "activate": {
+    "status_ms": 1.3641999976243824,
+    "seconds": 1.391786799998954,
+    "max_heartbeat_gap_ms": 1390.4311999795027
+  },
+  "switch_card": {
+    "status_ms": 0.5667000077664852,
+    "seconds": 0.319673399993917,
+    "max_heartbeat_gap_ms": 319.0795000118669
+  },
+  "staging": {
+    "status_ms": 0.043899985030293465,
+    "seconds": 0.429550399974687,
+    "max_heartbeat_gap_ms": 428.79490001359954,
+    "bytes_copied": 268435456
+  },
+  "history_lookup": {
+    "status_ms": 0.026599998818710446,
+    "seconds": 0.4107396999897901,
+    "max_heartbeat_gap_ms": 407.85210000467487,
+    "calls": {
+      "completed": 3,
+      "verify": 3,
+      "lookups": 3
+    }
+  },
+  "export": {
+    "status_ms": 0.036699988413602114,
+    "seconds": 0.9212081999867223,
+    "max_heartbeat_gap_ms": 919.1095999849495
+  },
+  "vertical_preview": {
+    "status_ms": 0.021599989850074053,
+    "seconds": 0.2292306000017561,
+    "max_heartbeat_gap_ms": 28.551700001116842
+  }
+}

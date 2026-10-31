@@ -1,8 +1,9 @@
 """Explicit Story > Voice > Visuals > Finish workflow inside the Shorts workspace."""
 import asyncio
+import inspect
 from copy import deepcopy
 from fractions import Fraction
-from PySide6.QtCore import QTimer,QUrl,Qt
+from PySide6.QtCore import QTimer,Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -10,14 +11,17 @@ from PySide6.QtWidgets import (QWidget,QVBoxLayout,QFormLayout,QScrollArea,QLayo
     QSpinBox,QDoubleSpinBox,QCheckBox,QPushButton,QTabWidget)
 from app.domain.shorts_director import PARTS,narration
 from app.domain.shorts import ShortStyle
-from app.desktop.artifact_export import copy_artifact
+from app.desktop.artifact_export import copy_artifact_async
+from app.desktop.shorts_playback import ShortsPlayback, DisplayedMedia, present_video
 from app.tts.chunking import sentence_chunks
+from app.runtime.media_process import RenderCanceled
+from app.runtime.media_worker import media_error_text
 
 class DirectorPanel(QWidget):
     def __init__(self,owner):
         super().__init__(owner);self.owner=owner;self.service=None;self.busy=self.canceled=self.dirty=self.loading=False
         self.loop=self.task=self.script_revision=self.proposal=self.board_revision=self.board=None
-        self.scene_dirty=False;self.loaded_scene=None
+        self.scene_dirty=self.finish_dirty=self.output_ready=False;self.loaded_scene=None
         layout=QVBoxLayout(self);self.status=QLabel('Explicitly create an AI-directed version of an accepted candidate.');self.status.setWordWrap(True);layout.addWidget(self.status)
         self.language=QLineEdit('en');layout.addWidget(QLabel('Directed Short language (set before creating)'));layout.addWidget(self.language)
         create=QPushButton('Create AI-directed version');create.clicked.connect(lambda:self.run(self.create));layout.addWidget(create)
@@ -71,14 +75,19 @@ class DirectorPanel(QWidget):
         self.hook_overlay=QLineEdit();self.hook_overlay.setMaxLength(100);finish.addRow('Optional 2-4 second headline',self.hook_overlay)
         self.hook_seconds=QSpinBox();self.hook_seconds.setRange(2,4);self.hook_seconds.setValue(2);finish.addRow('Headline seconds',self.hook_seconds)
         self.brand=QCheckBox('Use configured D068 logo (no intro/outro cards)');finish.addRow(self.brand)
+        self.finish_readiness=QLabel('Render the saved finishing settings to create a directed MP4.');self.finish_readiness.setWordWrap(True);finish.addRow(self.finish_readiness)
         self.caption_preview=QPlainTextEdit();self.caption_preview.setReadOnly(True);finish.addRow('Verified sentence captions (no invented word timings)',self.caption_preview)
         button('Save finishing settings / preview SRT',self.save_finish,finish)
         button('Render / preview current directed Short',lambda:self.start(self.render()),finish)
-        self.video=QVideoWidget();self.video.setMinimumSize(240,360);finish.addRow(self.video)
+        self.media_label=QLabel('No media loaded');self.media_label.setWordWrap(True);finish.addRow(self.media_label)
+        self.video=QVideoWidget();present_video(self.video,DisplayedMedia.NO_MEDIA,director=True);finish.addRow(self.video)
         self.audio_output=QAudioOutput(self);self.player=QMediaPlayer(self);self.player.setAudioOutput(self.audio_output);self.player.setVideoOutput(self.video)
-        self.end_position=None;self.player.positionChanged.connect(lambda position:self.player.pause() if self.end_position is not None and position>=self.end_position else None)
-        button('Play verified directed Short',self.play_output,finish);button('Stop playback',self.player.stop,finish)
-        for kind in ('video','srt','metadata'):button('Save '+kind+' copy...',lambda k=kind:self.copy(k),finish)
+        self.playback=ShortsPlayback(self.player,self.playback_context,self)
+        self.playback.changed.connect(self.media_changed);self.playback.failed.connect(self.playback_failed)
+        self.play_output_button=button('Play verified directed Short',self.play_output,finish);button('Stop playback',self.playback.stop,finish)
+        self.copy_buttons={kind:button('Save '+kind+' copy...',lambda k=kind:self.copy(k),finish) for kind in ('video','srt','metadata')}
+        self.media_error=QLabel();self.media_error.setWordWrap(True);layout.addWidget(self.media_error);self.media_error.hide()
+        self.dismiss_playback_error=QPushButton('Dismiss playback error');self.dismiss_playback_error.clicked.connect(self.dismiss_media_error);layout.addWidget(self.dismiss_playback_error);self.dismiss_playback_error.hide()
         self.cancel_button=QPushButton('Cancel current stage');self.cancel_button.clicked.connect(self.cancel);self.cancel_button.setEnabled(False);layout.addWidget(self.cancel_button)
         self.timer=QTimer(self);self.timer.setInterval(10);self.timer.timeout.connect(self.tick)
         self.scenes.currentIndexChanged.connect(lambda:self.run(self.load_scene))
@@ -86,23 +95,57 @@ class DirectorPanel(QWidget):
             getattr(field,signal).connect(self.scene_edited)
         self.voices.currentIndexChanged.connect(lambda:self.run(self.voice_changed))
         self.variant.currentIndexChanged.connect(lambda:self.run(self.voice_changed))
+        for field,signal in ((self.burn,'toggled'),(self.font,'valueChanged'),(self.hook_overlay,'textChanged'),(self.hook_seconds,'valueChanged'),(self.brand,'toggled')):
+            getattr(field,signal).connect(self.finish_edited)
     def run(self,callback):
         try:return callback()
-        except Exception as exc:self.status.setText(str(exc))
+        except Exception as exc:self.status.setText(('Canceled: ' if isinstance(exc,RenderCanceled) else 'Failed: ')+media_error_text(exc))
     @property
-    def unsaved(self):return self.dirty or self.scene_dirty
-    def require_saved(self):
-        if self.unsaved:raise ValueError('Save or explicitly discard director script/scene edits first.')
+    def unsaved(self):return self.dirty or self.scene_dirty or self.finish_dirty
+    def require_saved(self,*,allow_finish=False):
+        if self.dirty or self.scene_dirty or self.finish_dirty and not allow_finish:
+            raise ValueError('Save or explicitly discard director script/scene/finishing edits first.')
+    def playback_context(self):return id(self.service),self.service.candidate_id if self.service else None
+    @property
+    def end_position(self):return self.playback.request.end if self.playback.request else None
+    def media_changed(self):
+        self.media_label.setText(self.playback.label);self.media_label.setToolTip(self.player.source().toLocalFile())
+        present_video(self.video,self.playback.request.kind if self.playback.request else DisplayedMedia.NO_MEDIA,director=True)
+        self.video.setVisible(not self.playback.pending and self.playback.kind not in (DisplayedMedia.NO_MEDIA,DisplayedMedia.PLAYBACK_ERROR))
+        self.media_error.setText(self.playback.error_message);self.media_error.setVisible(bool(self.playback.error_message));self.dismiss_playback_error.setVisible(bool(self.playback.error_message))
+    def playback_failed(self,message):self.status.setText(message)
+    def dismiss_media_error(self):
+        self.playback.dismiss_error()
+        if self.service:self.refresh()
+    def finish_edited(self):
+        if self.service and not self.loading:
+            self.finish_dirty=True;self.playback.clear();self.refresh()
+    def restore_finish(self):
+        previous=self.loading;self.loading=True
+        try:
+            settings=self.service.finish();s=ShortStyle.from_payload(settings['style'])
+            self.burn.setChecked(s.burn);self.font.setValue(s.font_size);self.hook_overlay.setText(s.hook);self.hook_seconds.setValue(s.hook_seconds);self.brand.setChecked(settings['branding']);self.finish_dirty=False
+        finally:self.loading=previous
     def close_service(self):
-        self.require_saved();self.player.stop()
+        if self.busy:raise ValueError('Wait for current director cleanup before closing.')
+        self.require_saved();self.playback.clear();self.playback.dismiss_error()
         if self.service:self.service.close()
-        self.service=None;self.tabs.setEnabled(False);self.dirty=self.scene_dirty=False
+        self.service=None;self.tabs.setEnabled(False);self.dirty=self.scene_dirty=self.finish_dirty=False
+        self.output_ready=False;self.finish_readiness.setText('No directed Short loaded.')
+        self.play_output_button.setEnabled(False)
+        for control in self.copy_buttons.values():control.setEnabled(False)
+        self.status.setText('Explicitly create an AI-directed version of an accepted candidate.')
     def create(self):
         if self.busy:raise ValueError('Wait for current director cleanup.')
         if not getattr(self.owner,'director_factory',None):raise ValueError('Director composition is unavailable.')
         identity=self.owner.choices.currentData()
         if not identity:raise ValueError('Analyze and accept a source candidate first.')
-        self.close_service();self.service=self.owner.director_factory(self.owner.service,identity,self.language.text().strip())
+        self.close_service();self.start(self._create(identity))
+    async def _create(self,identity):
+        candidate=await self.owner.service.read_async('candidate',identity,canceled=lambda:self.canceled)
+        factory=self.owner.director_factory
+        kwargs={'_verified_candidate':candidate} if '_verified_candidate' in inspect.signature(factory).parameters else {}
+        self.service=factory(self.owner.service,identity,self.language.text().strip(),**kwargs)
         self.tabs.setEnabled(True);self.dirty=self.scene_dirty=False;self.board=self.board_revision=self.proposal=None;self.proposed.clear();self.scenes.clear();self.image.clear();self.caption_preview.clear();self.duration.clear();self.populate_script();self.voices.blockSignals(True);self.voices.clear()
         for choice in self.service.scope.choices():self.voices.addItem(choice.label,choice)
         saved=self.service.records.latest('voice_choice')
@@ -111,11 +154,16 @@ class DirectorPanel(QWidget):
             for i in range(self.voices.count()):
                 if self.service.scope.audio.selection(self.voices.itemData(i))==saved['selection']:self.voices.setCurrentIndex(i);self.variant.setCurrentText(saved['variant']);break
         self.voices.blockSignals(False)
-        self.source_text.setPlainText('\n\n'.join(r+'\n'+v['text'] for r,v in self.service.context()['source_passages'].items()))
-        try:self.board_revision,self.board=self.service.storyboard();self.populate_board()
-        except ValueError:pass
-        settings=self.service.finish();s=ShortStyle.from_payload(settings['style']);self.burn.setChecked(s.burn);self.font.setValue(s.font_size);self.hook_overlay.setText(s.hook);self.hook_seconds.setValue(s.hook_seconds);self.brand.setChecked(settings['branding'])
-        self.show_duration();self.refresh()
+        def view(reader):
+            try:board=reader.storyboard()
+            except ValueError:board=(None,None)
+            return reader.context(),board,reader.assets(),reader.status()
+        context,board,self.asset_values,state=await self.service.read_async(view,canceled=lambda:self.canceled)
+        self.source_text.setPlainText('\n\n'.join(r+'\n'+v['text'] for r,v in context['source_passages'].items()))
+        self.board_revision,self.board=board
+        if self.board:self.populate_board()
+        self.restore_finish()
+        self.show_duration();self._show_state(state)
     def show_duration(self):
         m=self.service.narration_record()
         if m:
@@ -132,6 +180,7 @@ class DirectorPanel(QWidget):
     def discard_drafts(self):
         self.dirty=self.scene_dirty=False;self.populate_script()
         if self.board:self.load_scene()
+        self.restore_finish()
         self.refresh()
     def edited(self):
         if not self.loading:self.dirty=True;self.fact_review.setChecked(False);self.status.setText('REVIEW REQUIRED: unsaved manual script edits.')
@@ -156,7 +205,10 @@ class DirectorPanel(QWidget):
         result['beats']=[{'text':result[p],'visual_concept':result[p],'source_refs':result['source_refs']} for p in PARTS if result[p]]
         result['claims_review']=['Manual text requires source fact review.'];return result
     def save_script(self):
-        self.service.edit_script(self.manual(),self.script_revision.artifact_id);self.populate_script();self.refresh()
+        self.start(self._save_script(self.manual(),self.script_revision.artifact_id))
+    async def _save_script(self,value,expected):
+        await self.service.read_async('edit_script',value,expected,canceled=lambda:self.canceled)
+        self.populate_script();await self._refresh()
     def split_full(self):
         text=self.full.toPlainText().strip();chunks=sentence_chunks(text,max_words=1000)
         if len(chunks)<3:raise ValueError('Provide at least three complete sentences for hook/development/payoff.')
@@ -169,32 +221,48 @@ class DirectorPanel(QWidget):
         self.proposal=await self.service.generate_script(self.target.value(),self.style.text(),cta=self.cta_enabled.isChecked(),canceled=lambda:self.canceled)
         self.proposed.setPlainText(self.service.records.read(self.proposal)['script']['narration'])
         if self.script_revision is None:self.populate_script()
-        self.refresh()
+        await self._refresh()
     def apply_proposal(self):
         if self.proposal is None:raise ValueError('Generate a proposal first.')
-        self.require_saved();self.service.apply_proposal(self.proposal.artifact_id,replace_current=True);self.populate_script();self.refresh()
+        self.require_saved();self.start(self._apply_proposal())
+    async def _apply_proposal(self):
+        await self.service.read_async('apply_proposal',self.proposal.artifact_id,replace_current=True,canceled=lambda:self.canceled);self.populate_script();await self._refresh()
     async def hook(self):
         if self.dirty:raise ValueError('Save manual edits before hook-only regeneration.')
-        await self.service.regenerate_hook(canceled=lambda:self.canceled);self.populate_script();self.refresh()
+        await self.service.regenerate_hook(canceled=lambda:self.canceled);self.populate_script();await self._refresh()
     def approve_script(self):
         if self.dirty or not self.fact_review.isChecked():raise ValueError('Save the script and explicitly review its source facts first.')
-        self.service.approve_script();self.refresh()
+        self.start(self._approve('approve_script'))
+    async def _approve(self,method):
+        await self.service.read_async(method,canceled=lambda:self.canceled);await self._refresh()
     async def narrate(self):
         if self.dirty:raise ValueError('Save and approve script edits before narration.')
         if self.voices.currentData() is None:raise ValueError('Choose an available installed voice.')
         self.require_saved();m=await self.service.generate_narration(self.voices.currentData(),variant=self.variant.currentText(),canceled=lambda:self.canceled,progress=self.progress)
-        n=self.service.records.read(m);self.duration.setText(f"Measured {float(Fraction(*n['duration'])):.3f}s; target {n['target']}s; deviation {n['deviation_seconds']:+.3f}s. {n['status']}");self.refresh()
-    def approve_audio(self):self.service.approve_narration();self.refresh()
-    def play_audio(self):
-        m=self.service.narration_record()
-        if m is None:raise ValueError('Generate narration first.')
-        n=self.service.records.read(m);_,_,manifest=self.service.audio_bytes(n)
-        self.end_position=None;self.player.setSource(QUrl.fromLocalFile(str(self.service.scope.store._artifact_path(manifest.storage_key))));self.player.play()
-    def play_source(self):
-        p=self.service.source();m,_,_=self.owner.service.source(p['source_kind'])
-        self.tabs.setCurrentIndex(3);self.end_position=int(Fraction(*p['end'])*1000);self.player.setSource(QUrl.fromLocalFile(str(self.owner.service.store._artifact_path(m.storage_key))));self.player.setPosition(int(Fraction(*p['start'])*1000));self.player.play()
+        n=self.service.records.read(m);self.duration.setText(f"Measured {float(Fraction(*n['duration'])):.3f}s; target {n['target']}s; deviation {n['deviation_seconds']:+.3f}s. {n['status']}");await self._refresh()
+    def approve_audio(self):self.start(self._approve('approve_narration'))
+    def play_audio(self):self.start(self._play_audio())
+    async def _play_audio(self):
+        def audio(reader):
+            m=reader.narration_record()
+            if m is None:raise ValueError('Generate narration first.')
+            n=reader.records.read(m)
+            return reader.audio_bytes(n)[2]
+        manifest=await self.service.read_async(audio,canceled=lambda:self.canceled)
+        self.status.setText('Director narration selected · audio playback.')
+        self.playback.load(self.service.scope.store._artifact_path(manifest.storage_key),DisplayedMedia.NARRATION,self.playback_context(),autoplay=True,retry=True)
+    def play_source(self):self.start(self._play_source())
+    async def _play_source(self):
+        def source(reader):
+            p=reader.source();return p,reader.shorts.source(p['source_kind'])[0]
+        p,m=await self.service.read_async(source,canceled=lambda:self.canceled)
+        self.tabs.setCurrentIndex(3);self.status.setText('Original excerpt selected · source framing.')
+        self.playback.load(self.owner.service.store._artifact_path(m.storage_key),DisplayedMedia.ORIGINAL_EXCERPT,self.playback_context(),
+            start=int(Fraction(*p['start'])*1000),end=int(Fraction(*p['end'])*1000),autoplay=True,retry=True)
     async def storyboard_generate(self):
-        self.require_saved();self.board_revision=await self.service.generate_storyboard(canceled=lambda:self.canceled);self.board=self.service.records.read(self.board_revision);self.populate_board();self.refresh()
+        self.require_saved();self.board_revision=await self.service.generate_storyboard(canceled=lambda:self.canceled);self.board=self.service.records.read(self.board_revision)
+        self.asset_values=await self.service.read_async('assets',canceled=lambda:self.canceled)
+        self.populate_board();await self._refresh()
     def populate_board(self):
         self.scene_dirty=False;self.scenes.blockSignals(True);self.scenes.clear()
         for s in self.board['scenes']:self.scenes.addItem(s['text'][:65],s['id'])
@@ -207,7 +275,7 @@ class DirectorPanel(QWidget):
         self.loading=True
         try:
             s=next(s for s in self.board['scenes'] if s['id']==self.scenes.currentData());self.assets.clear();self.assets.addItem('New image required (explicit approval)',None)
-            for id,a in self.service.assets().items():self.assets.addItem(a['description'][:90],id)
+            for id,a in (getattr(self,'asset_values',None) or self.service._assets or {}).items():self.assets.addItem(a['description'][:90],id)
             self.assets.setCurrentIndex(self.assets.findData(s['asset_ref']));self.prompt.setPlainText(s['prompt']);self.reason.setText(s['rationale']);self.hold.setText(s['hold_reason'])
             self.mode.setCurrentText(s['mode']);self.focal.setValue(s['focal']);self.zoom.setChecked(s['zoom']=='subtle');self.pan.setChecked(s['pan']=='subtle')
             self.spoken.setText(f"{s['start_frame']} to {s['end_frame']} frames; {s['text']}\n"+('Reused source image' if s['asset_ref'] else 'New image required'))
@@ -217,52 +285,109 @@ class DirectorPanel(QWidget):
         if not self.board:raise ValueError('Generate a storyboard first.')
         b=deepcopy(self.board);s=next(s for s in b['scenes'] if s['id']==self.scenes.currentData())
         s.update(asset_ref=self.assets.currentData(),prompt=self.prompt.toPlainText(),rationale=self.reason.text(),hold_reason=self.hold.text(),mode=self.mode.currentText(),focal=self.focal.value(),zoom='subtle' if self.zoom.isChecked() else 'off',pan='subtle' if self.pan.isChecked() else 'off')
-        self.board_revision=self.service.save_board(b,self.board_revision.artifact_id);self.board=b;self.scene_dirty=False;self.paid_approval.setChecked(False);self.refresh()
+        self.start(self._save_scene(b,self.board_revision.artifact_id))
+    async def _save_scene(self,b,expected):
+        self.board_revision=await self.service.read_async('save_board',b,expected,canceled=lambda:self.canceled)
+        self.board=b;self.scene_dirty=False;self.paid_approval.setChecked(False);await self._refresh()
     def image_preview(self):
         self.require_saved()
-        s=next(s for s in self.board['scenes'] if s['id']==self.scenes.currentData());_,raw,_=self.service.image(s)
+        self.start(self._image_preview())
+    async def _image_preview(self):
+        s=next(s for s in self.board['scenes'] if s['id']==self.scenes.currentData());_,raw,_=await self.service.read_async('image',s,canceled=lambda:self.canceled)
         pixmap=QPixmap();pixmap.loadFromData(raw);self.image.setPixmap(pixmap.scaled(270,360,Qt.KeepAspectRatio,Qt.SmoothTransformation));self.image.setMinimumHeight(360)
     async def vertical_preview(self):
-        self.require_saved();raw=await self.service.preview_scene(self.scenes.currentData(),canceled=lambda:self.canceled)
+        self.require_saved();raw=await self.service.preview_scene(self.scenes.currentData(),canceled=lambda:self.canceled,progress=self.progress)
         pixmap=QPixmap();pixmap.loadFromData(raw);self.image.setPixmap(pixmap.scaled(270,480,Qt.KeepAspectRatio,Qt.SmoothTransformation));self.image.setMinimumSize(270,480)
     def missing(self):
-        self.require_saved();pending,token=self.service.missing_images();providers={item['identity']['provider']['provider']+'/'+item['identity']['provider']['model'] for item in pending}
+        self.require_saved();self.start(self._missing())
+    async def _missing(self):
+        pending,token=await self.service.read_async('missing_images',canceled=lambda:self.canceled);providers={item['identity']['provider']['provider']+'/'+item['identity']['provider']['model'] for item in pending}
         self.image_summary.setText(f"{len(pending)} new image(s); provider/model: {', '.join(providers) or 'none; all reused/cached'}. Reliable cost estimate unavailable.")
         self.image_token=token;return token
     async def images_generate(self):
         self.require_saved()
         if not self.paid_approval.isChecked():raise ValueError('Review and approve the exact missing-image count/provider/model.')
-        self.service.approve_images(getattr(self,'image_token',None));await self.service.generate_missing_images(canceled=lambda:self.canceled,progress=self.progress);self.refresh()
+        await self.service.read_async('approve_images',getattr(self,'image_token',None),canceled=lambda:self.canceled);await self.service.generate_missing_images(canceled=lambda:self.canceled,progress=self.progress);await self._refresh()
     def save_finish(self):
+        self.start(self._save_finish())
+    async def _save_finish(self):
         value={'style':ShortStyle(captions=True,burn=self.burn.isChecked(),font_size=self.font.value(),hook=self.hook_overlay.text(),hook_seconds=self.hook_seconds.value()).to_payload(),'branding':self.brand.isChecked()}
-        self.service.save_finish(value);segments,_=self.service.captions();self.caption_preview.setPlainText('\n'.join(f'{s.start_ms}-{s.end_ms} ms: {s.text}' for s in segments));self.refresh()
+        await self.service.read_async('save_finish',value,canceled=lambda:self.canceled)
+        segments,_=await self.service.read_async('captions',canceled=lambda:self.canceled);self.caption_preview.setPlainText('\n'.join(f'{s.start_ms}-{s.end_ms} ms: {s.text}' for s in segments));self.finish_dirty=False
+        await self._refresh()
     async def render(self):
         if self.dirty:raise ValueError('Save/review script edits before rendering.')
-        self.require_saved();self.save_finish();await self.service.render(canceled=lambda:self.canceled,progress=self.progress);self.refresh()
+        self.require_saved(allow_finish=True);await self._save_finish();context=self.playback_context()
+        await self.service.render(canceled=lambda:self.canceled,progress=self.progress)
+        if context!=self.playback_context():raise ValueError('Director selection changed during rendering.')
+        await self._load_output(autoplay=False);await self._refresh()
+    def load_output(self,*,autoplay):
+        self.start(self._load_output(autoplay=autoplay))
+    async def _load_output(self,*,autoplay):
+        self.output_ready=False
+        m=await self.service.read_async('current_output',canceled=lambda:self.canceled);self.output_ready=True;self.status.setText('Directed Short ready. Play the verified portrait MP4 or save a copy.')
+        self.playback.load(self.service.records.store._artifact_path(m.storage_key),DisplayedMedia.DIRECTED_SHORT,self.playback_context(),autoplay=autoplay,retry=True)
     def play_output(self):
         self.require_saved()
-        m=self.service.current_output();self.end_position=None;self.player.setSource(QUrl.fromLocalFile(str(self.service.records.store._artifact_path(m.storage_key))));self.player.play()
+        self.load_output(autoplay=True)
     def copy(self,kind):
         self.require_saved()
-        video=self.service.current_output();selection=self.service.records.selection(video.artifact_id)
+        self.start(self._copy(kind))
+    async def _copy(self,kind):
+        video=await self.service.read_async('current_output',canceled=lambda:self.canceled);selection=self.service.records.selection(video.artifact_id)
         m=video if kind=='video' else self.service.records.one(selection[kind+'_id'],kind)
         suffix={'video':'.mp4','metadata':'.json','srt':'.srt'}[kind]
-        def verify():
-            if self.service.current_output().artifact_id!=video.artifact_id:raise ValueError('Director selection changed before copy.')
-            if kind!='video':self.service.records.bytes(m)
+        async def verify():
+            self.require_saved()
+            if (await self.service.read_async('current_output',canceled=lambda:self.canceled)).artifact_id!=video.artifact_id:raise ValueError('Director selection changed before copy.')
             return m
-        return copy_artifact(self,self.service.records.store,m,title='Save directed '+kind,suggested='directed-short'+suffix,revalidate=verify,suffix=suffix,file_filter='Directed '+kind+' (*'+suffix+')')
-    def refresh(self):self.status.setText(' | '.join(k.upper()+': '+v for k,v in self.service.status().items()))
-    def progress(self,label,*_):self.status.setText(label)
+        return await copy_artifact_async(self,self.service.records.store,m,title='Save directed '+kind,suggested='directed-short'+suffix,revalidate=verify,suffix=suffix,file_filter='Directed '+kind+' (*'+suffix+')',canceled=lambda:self.canceled,progress=self.progress)
+    def refresh(self):
+        if self.busy:
+            self.refresh_pending=True
+            return
+        if not self.finish_dirty:
+            self.start(self._refresh())
+            return
+        self._show_state(None)
+    async def _refresh(self):
+        self.output_ready=False
+        self.finish_readiness.setText('Checking source and saved output…')
+        state=await self.service.read_async('status',canceled=lambda:self.canceled)
+        self._show_state(state)
+    def _show_state(self,state):
+        if self.finish_dirty:
+            label='Unsaved finishing settings. Previous verified MP4 retained; save/discard these edits or render them.'
+            ready=False
+        else:
+            ready=state.get('render')=='READY' and not self.unsaved
+            label='Directed Short ready. Play the verified portrait MP4 or save a copy.' if ready else ' | '.join(k.upper()+': '+v for k,v in state.items())
+        self.finish_readiness.setText(label)
+        self.output_ready=ready
+        self.play_output_button.setEnabled(ready and not self.busy)
+        for control in self.copy_buttons.values():control.setEnabled(ready and not self.busy)
+        self.status.setText(self.playback.error_message or label)
+    def progress(self,label,*_):self.status.setText(self.playback.error_message or label)
     def start(self,coroutine):
-        if self.busy:coroutine.close();return
-        self.player.stop();self.busy=True;self.canceled=False;self.tabs.setEnabled(False);self.cancel_button.setEnabled(True)
+        if self.busy or self.owner._excerpt_busy:coroutine.close();return
+        self.status.setText(self.playback.error_message or 'Checking source')
+        self.playback.stop();self.busy=True;self.canceled=False;self.tabs.setEnabled(False);self.cancel_button.setEnabled(True)
         self.loop=asyncio.new_event_loop();self.task=self.loop.create_task(coroutine);self.timer.start()
     def cancel(self):self.canceled=True;self.status.setText('Cancellation requested; waiting for provider/process cleanup.')
     def tick(self):
         self.loop.call_soon(self.loop.stop);self.loop.run_forever()
         if not self.task.done():return
         self.timer.stop()
+        failed=False
         try:self.task.result()
-        except Exception as exc:self.status.setText(str(exc))
-        finally:self.loop.close();self.loop=self.task=None;self.busy=False;self.tabs.setEnabled(True);self.cancel_button.setEnabled(False)
+        except Exception as exc:
+            failed=True
+            self.status.setText(('Canceled: ' if isinstance(exc,RenderCanceled) else 'Failed: ')+media_error_text(exc))
+            if not self.output_ready:self.finish_readiness.setText(self.status.text())
+        finally:
+            self.loop.close();self.loop=self.task=None;self.busy=False;self.tabs.setEnabled(True);self.cancel_button.setEnabled(False)
+            self.play_output_button.setEnabled(self.output_ready and not self.unsaved)
+            for control in self.copy_buttons.values():control.setEnabled(self.play_output_button.isEnabled())
+            if getattr(self,'refresh_pending',False):
+                self.refresh_pending=False
+                if not failed:self.refresh()

@@ -1,0 +1,188 @@
+{
+  "90": {
+    "coded": [
+      1080,
+      1920
+    ],
+    "decoded": [
+      1920,
+      1080
+    ],
+    "side_data": [
+      {
+        "side_data_type": "Display Matrix",
+        "displaymatrix": "\n00000000:            0      -65536           0\n00000001:        65536           0           0\n00000002:            0           0  1073741824\n",
+        "rotation": 90
+      }
+    ],
+    "adapter_probe": {
+      "width": 1080,
+      "height": 1920,
+      "fps": "1",
+      "frame_count": 2,
+      "video_duration": "2",
+      "audio_duration": "2",
+      "sample_rate": 48000,
+      "channels": 1,
+      "audio_frames": 94,
+      "sar": "1:1",
+      "profile": "Constrained Baseline",
+      "field_order": "progressive",
+      "video_bitrate": 105176,
+      "audio_bitrate": 70052,
+      "color": {}
+    },
+    "preview_error": "Media process exited 4294967274: [Parsed_crop_1 @ 0000018c04dc7040] Invalid too big or non positive size for width '1080' or height '1920'\r\n[Parsed_crop_1 @ 0000018c04dc7040] Failed to configure input pad on Parsed_crop_1\r\n[fc#0 @ 0000018c03444d00] Error reinitializing filters!\r\n[fc#0 @ 0000018c03444d00] Task finished with error code: -22 (Invalid argument)\r\n[fc#0 @ 0000018c03444d00] Terminating thread with return code -22 (Invalid argument)\r\n[vost#0:0/png @ 0000018c04deb4c0] [enc:png @ 0000018c04e472c0] Could not open encoder before EOF\r\n[vost#0:0/png @ 0000018c04deb4c0] Task finished with error code: -22 (Invalid argument)\r\n[vost#0:0/png @ 0000018c04deb4c0] Terminating thread with return code -22 (Invalid argument)\r\n[out#0/image2 @ 0000018c04dc8440] Nothing was written into output file, because at least one of its streams received no packets.\r\n",
+    "preview_commands": [
+      [
+        "ffmpeg.exe",
+        "-nostdin",
+        "-v",
+        "error",
+        "-n",
+        "-ss",
+        "0.0",
+        "-i",
+        "source.mp4",
+        "-filter_complex_threads",
+        "1",
+        "-filter_complex",
+        "[0:v]setpts=PTS+0.0/TB[shifted];[shifted]crop=1080:1920:x='0':y=0,scale=1080:1920,setsar=1[framed];[framed]format=yuv420p[v]",
+        "-map",
+        "[v]",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "preview.png"
+      ]
+    ],
+    "source_unchanged": true
+  },
+  "270": {
+    "coded": [
+      1080,
+      1920
+    ],
+    "decoded": [
+      1920,
+      1080
+    ],
+    "side_data": [
+      {
+        "side_data_type": "Display Matrix",
+        "displaymatrix": "\n00000000:            0       65536           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n",
+        "rotation": -90
+      }
+    ],
+    "adapter_probe": {
+      "width": 1080,
+      "height": 1920,
+      "fps": "1",
+      "frame_count": 2,
+      "video_duration": "2",
+      "audio_duration": "2",
+      "sample_rate": 48000,
+      "channels": 1,
+      "audio_frames": 94,
+      "sar": "1:1",
+      "profile": "Constrained Baseline",
+      "field_order": "progressive",
+      "video_bitrate": 105176,
+      "audio_bitrate": 70052,
+      "color": {}
+    },
+    "preview_error": "Media process exited 4294967274: [Parsed_crop_1 @ 000001ec12117240] Invalid too big or non positive size for width '1080' or height '1920'\r\n[Parsed_crop_1 @ 000001ec12117240] Failed to configure input pad on Parsed_crop_1\r\n[fc#0 @ 000001ec106f4d00] Error reinitializing filters!\r\n[fc#0 @ 000001ec106f4d00] Task finished with error code: -22 (Invalid argument)\r\n[fc#0 @ 000001ec106f4d00] Terminating thread with return code -22 (Invalid argument)\r\n[vost#0:0/png @ 000001ec12133e40] [enc:png @ 000001ec12198280] Could not open encoder before EOF\r\n[vost#0:0/png @ 000001ec12133e40] Task finished with error code: -22 (Invalid argument)\r\n[vost#0:0/png @ 000001ec12133e40] Terminating thread with return code -22 (Invalid argument)\r\n[out#0/image2 @ 000001ec12117d00] Nothing was written into output file, because at least one of its streams received no packets.\r\n",
+    "preview_commands": [
+      [
+        "ffmpeg.exe",
+        "-nostdin",
+        "-v",
+        "error",
+        "-n",
+        "-ss",
+        "0.0",
+        "-i",
+        "source.mp4",
+        "-filter_complex_threads",
+        "1",
+        "-filter_complex",
+        "[0:v]setpts=PTS+0.0/TB[shifted];[shifted]crop=1080:1920:x='0':y=0,scale=1080:1920,setsar=1[framed];[framed]format=yuv420p[v]",
+        "-map",
+        "[v]",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "preview.png"
+      ]
+    ],
+    "source_unchanged": true
+  },
+  "director-1": {
+    "preview": "success",
+    "decoded": [
+      1080,
+      1920
+    ],
+    "commands": [
+      [
+        "ffmpeg.exe",
+        "-nostdin",
+        "-v",
+        "error",
+        "-n",
+        "-loop",
+        "1",
+        "-framerate",
+        "1",
+        "-i",
+        "image-0.png",
+        "-filter_complex_threads",
+        "1",
+        "-filter_complex",
+        "[0:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed0];[framed0]format=yuv420p[v0];[v0]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene0];[scene0]concat=n=1:v=1:a=0[whole]",
+        "-map",
+        "[whole]",
+        "-ss",
+        "0.5",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "preview.png"
+      ]
+    ]
+  },
+  "director-2": {
+    "preview_error": "Media process exited 4294967274: [fc#0 @ 0000026d670fd280] Invalid file index 1 in filtergraph description [0:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed0];[framed0]format=yuv420p[v0];[v0]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene0];[1:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed1];[framed1]format=yuv420p[v1];[v1]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene1];[scene0][scene1]concat=n=2:v=1:a=0[whole].\r\nError binding filtergraph inputs/outputs: Invalid argument\r\n",
+    "commands": [
+      [
+        "ffmpeg.exe",
+        "-nostdin",
+        "-v",
+        "error",
+        "-n",
+        "-loop",
+        "1",
+        "-framerate",
+        "1",
+        "-i",
+        "image-0.png",
+        "-filter_complex_threads",
+        "1",
+        "-filter_complex",
+        "[0:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed0];[framed0]format=yuv420p[v0];[v0]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene0];[1:v]crop=1080:1920:x='if(gte(t,0.0)*lt(t,1000.0),0,0)':y=0,scale=1080:1920,setsar=1[framed1];[framed1]format=yuv420p[v1];[v1]trim=end_frame=2,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[scene1];[scene0][scene1]concat=n=2:v=1:a=0[whole]",
+        "-map",
+        "[whole]",
+        "-ss",
+        "0.5",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "preview.png"
+      ]
+    ]
+  }
+}

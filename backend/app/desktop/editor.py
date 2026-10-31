@@ -524,9 +524,9 @@ class ProjectEditor(QMainWindow):
             from app.desktop.shorts_composition import compose_shorts
             self.shorts_panel.bind(compose_shorts(self.publish_panel.service))
             from app.desktop.director_composition import compose_director
-            def director(shorts, identity, language):
+            def director(shorts, identity, language, *, _verified_candidate=None):
                 provider = scene_services._generation_for(self.visuals.image_generator.currentData()).provider if scene_services else None
-                return compose_director(shorts, identity, audio_factory=self.audio_factory, image_provider=provider, language=language)
+                return compose_director(shorts, identity, audio_factory=self.audio_factory, image_provider=provider, language=language,_verified_candidate=_verified_candidate)
             self.shorts_panel.director_factory = director
             self.audio.bind(audio_services, project.language)
             self.scene_plans.bind(scene_services)
@@ -1006,13 +1006,13 @@ class ProjectEditor(QMainWindow):
             return
         self.quality_panel.player.stop()
         if self.shorts_panel.director.unsaved:
-            self.status.setText('Save or explicitly discard director script/scene edits before closing.');event.ignore();return
+            self.status.setText('Save or explicitly discard director script/scene/finishing edits before closing.');event.ignore();return
         if self.shorts_panel.busy:
             self.shorts_panel.cancel()
             self.status.setText("Waiting for Shorts process cleanup before closing.")
             event.ignore()
             return
-        self.shorts_panel.player.stop()
+        self.shorts_panel.playback.stop()
         if self.publish_panel.busy:
             self.publish_panel.cancel()
             self.status.setText("Waiting for publishing preparation cleanup before closing.")
